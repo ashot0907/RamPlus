@@ -1,0 +1,2 @@
+29 1 253:1 / / rw,relatime shared:1 master:3 - xfs /dev/mapper/vg0-root rw,attr2,inode64
+88 29 8:17 / /mnt/my\040disk rw,relatime shared:44 - ext4 /dev/sdb1 rw

@@ -1,0 +1,4 @@
+22 1 0:21 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+23 1 0:22 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+33 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw
+40 33 259:1 / /boot/efi rw,relatime shared:30 - vfat /dev/nvme0n1p1 rw,fmask=0077

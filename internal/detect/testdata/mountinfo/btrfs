@@ -1,0 +1,2 @@
+26 1 0:24 /@ / rw,relatime shared:1 - btrfs /dev/nvme0n1p2 rw,compress=zstd:1,ssd,space_cache=v2,subvolid=256,subvol=/@
+27 26 0:24 /@home /home rw,relatime shared:2 - btrfs /dev/nvme0n1p2 rw,ssd,subvolid=257,subvol=/@home
