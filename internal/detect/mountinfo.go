@@ -81,3 +81,26 @@ func FindMount(mounts []Mount, mountPoint string) (Mount, bool) {
 	}
 	return Mount{}, false
 }
+
+// FindMountForPath возвращает монтирование, которому принадлежит абсолютный
+// путь (самая длинная точка монтирования-префикс по границе компонентов).
+func FindMountForPath(mounts []Mount, path string) (Mount, bool) {
+	best, found := -1, false
+	for i, m := range mounts {
+		mp := m.MountPoint
+		if path != mp && mp != "/" && !strings.HasPrefix(path, mp+"/") {
+			continue
+		}
+		if !strings.HasPrefix(path, "/") {
+			continue
+		}
+		// При равной длине побеждает более позднее (перемонтирование).
+		if !found || len(mp) >= len(mounts[best].MountPoint) {
+			best, found = i, true
+		}
+	}
+	if !found {
+		return Mount{}, false
+	}
+	return mounts[best], true
+}

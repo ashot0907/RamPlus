@@ -19,12 +19,30 @@ type SwapDevice struct {
 	SizeBytes uint64 `json:"size_bytes"`
 	UsedBytes uint64 `json:"used_bytes"`
 	Priority  int    `json:"priority"`
+	// Managed — swap создан и управляется RamPlus.
+	Managed bool `json:"managed"`
+	// DiskKind / Transport — физический диск под swap (nvme|ssd|hdd,
+	// usb|sata|...). Пусто, если определить не удалось (или это zram).
+	DiskKind  string `json:"disk_kind,omitempty"`
+	Transport string `json:"transport,omitempty"`
 }
 
-// Swaps — активные swap-устройства. Devices никогда не nil (в JSON — []).
+// Коды предупреждений о swap.
+const (
+	WarnSwapOnUSB = "swap_on_usb" // swap на USB-диске: медленно и опасно при отключении
+)
+
+// SwapWarning — предупреждение, относящееся к конкретному swap-устройству.
+type SwapWarning struct {
+	Code string `json:"code"`
+	Path string `json:"path"`
+}
+
+// Swaps — активные swap-устройства. Devices и Warnings никогда не nil.
 type Swaps struct {
-	Devices []SwapDevice        `json:"devices"`
-	Error   *detect.Unavailable `json:"error,omitempty"`
+	Devices  []SwapDevice        `json:"devices"`
+	Warnings []SwapWarning       `json:"warnings"`
+	Error    *detect.Unavailable `json:"error,omitempty"`
 }
 
 // ParseSwaps разбирает /proc/swaps. Если swap не включён, файл содержит
@@ -68,11 +86,34 @@ func ParseSwaps(r io.Reader) ([]SwapDevice, error) {
 func ReadSwaps(path string) Swaps {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Swaps{Devices: []SwapDevice{}, Error: detect.NewUnavailable(err)}
+		return Swaps{Devices: []SwapDevice{}, Warnings: []SwapWarning{}, Error: detect.NewUnavailable(err)}
 	}
 	devs, err := ParseSwaps(bytes.NewReader(data))
 	if err != nil {
-		return Swaps{Devices: []SwapDevice{}, Error: detect.NewUnavailable(err)}
+		return Swaps{Devices: []SwapDevice{}, Warnings: []SwapWarning{}, Error: detect.NewUnavailable(err)}
 	}
-	return Swaps{Devices: devs}
+	return Swaps{Devices: devs, Warnings: []SwapWarning{}}
+}
+
+// AnnotateSwapDisks дополняет устройства сведениями о физическом диске и
+// добавляет предупреждения (swap на USB). disksFor обычно detect.DisksForPath.
+func AnnotateSwapDisks(s *Swaps, disksFor func(path string) (detect.PathDisks, error)) {
+	for i := range s.Devices {
+		d := &s.Devices[i]
+		if strings.HasPrefix(d.Path, "/dev/zram") {
+			continue
+		}
+		pd, err := disksFor(d.Path)
+		if err != nil && len(pd.Disks) == 0 {
+			continue
+		}
+		d.DiskKind = pd.Kind
+		if len(pd.Disks) > 0 {
+			d.Transport = pd.Disks[0].Transport
+		}
+		if detect.HasTransport(pd.Disks, "usb") {
+			d.Transport = "usb"
+			s.Warnings = append(s.Warnings, SwapWarning{Code: WarnSwapOnUSB, Path: d.Path})
+		}
+	}
 }

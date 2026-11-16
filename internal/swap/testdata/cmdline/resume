@@ -1,0 +1,1 @@
+BOOT_IMAGE=/vmlinuz-6.8.0 root=UUID=1111 ro quiet splash resume=UUID=aaaa-bbbb resume_offset=34816

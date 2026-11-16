@@ -135,8 +135,8 @@ func TestParseSwapsEmpty(t *testing.T) {
 	if devs == nil || len(devs) != 0 {
 		t.Fatalf("want empty non-nil slice, got %#v", devs)
 	}
-	b, _ := json.Marshal(Swaps{Devices: devs})
-	if string(b) != `{"devices":[]}` {
+	b, _ := json.Marshal(ReadSwaps(td("swaps", "empty")))
+	if string(b) != `{"devices":[],"warnings":[]}` {
 		t.Errorf("JSON = %s", b)
 	}
 }
@@ -435,5 +435,30 @@ func TestCollectFromNothing(t *testing.T) {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("JSON lacks %s: %s", want, b)
 		}
+	}
+}
+
+func TestAnnotateSwapDisks(t *testing.T) {
+	s := ReadSwaps(td("swaps", "two-devices"))
+	s.Devices = append(s.Devices, SwapDevice{Path: "/dev/zram0", Type: "partition"})
+	calls := 0
+	AnnotateSwapDisks(&s, func(path string) (detect.PathDisks, error) {
+		calls++
+		switch path {
+		case "/dev/nvme0n1p3":
+			return detect.PathDisks{Kind: detect.KindNVMe, Disks: []detect.BlockDevice{{Name: "nvme0n1", Transport: "nvme"}}}, nil
+		default:
+			return detect.PathDisks{Kind: detect.KindHDD, Disks: []detect.BlockDevice{{Name: "sdb", Transport: "usb"}}}, nil
+		}
+	})
+	if calls != 2 {
+		t.Errorf("zram must be skipped, calls = %d", calls)
+	}
+	if s.Devices[0].Transport != "nvme" || s.Devices[1].Transport != "usb" || s.Devices[2].Transport != "" {
+		t.Errorf("devices = %+v", s.Devices)
+	}
+	want := []SwapWarning{{Code: WarnSwapOnUSB, Path: "/mnt/fast ssd/swapfile"}}
+	if !reflect.DeepEqual(s.Warnings, want) {
+		t.Errorf("warnings = %+v", s.Warnings)
 	}
 }

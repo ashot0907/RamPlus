@@ -284,3 +284,27 @@ func TestReadRootDiskFromFixtures(t *testing.T) {
 		t.Errorf("overlay root: got %+v", rd)
 	}
 }
+
+func TestFindMountForPath(t *testing.T) {
+	mounts, err := ParseMountinfo(openFixture(t, "mountinfo/ext4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]string{
+		"/ramplus.swap":   "/",
+		"/boot/efi/EFI/x": "/boot/efi",
+		"/boot/efi":       "/boot/efi",
+		"/boot/efix":      "/",
+		"/proc/meminfo":   "/proc",
+		"/":               "/",
+	}
+	for path, want := range tests {
+		m, ok := FindMountForPath(mounts, path)
+		if !ok || m.MountPoint != want {
+			t.Errorf("FindMountForPath(%s) = %q, %v; want %q", path, m.MountPoint, ok, want)
+		}
+	}
+	if _, ok := FindMountForPath(mounts, "relative"); ok {
+		t.Error("relative path must not match")
+	}
+}

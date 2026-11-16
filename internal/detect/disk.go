@@ -134,15 +134,7 @@ func readRootDisk(mountinfoPath, sysRoot, mountPoint string) RootDisk {
 	}
 	rd.Source, rd.FSType = m.Source, m.FSType
 
-	maj, mnr := m.Major, m.Minor
-	if maj == 0 && strings.HasPrefix(m.Source, "/dev/") {
-		// btrfs и некоторые другие ФС отдают анонимный 0:N; берём номер
-		// из самого устройства-источника.
-		var st unix.Stat_t
-		if err := unix.Stat(m.Source, &st); err == nil && st.Mode&unix.S_IFMT == unix.S_IFBLK {
-			maj, mnr = unix.Major(st.Rdev), unix.Minor(st.Rdev)
-		}
-	}
+	maj, mnr := mountDevNum(m)
 	if maj == 0 {
 		// tmpfs, overlay, zfs и т.п. — блочного устройства нет.
 		rd.DiskError = &Unavailable{Reason: ReasonNotPresent, Detail: "no block device behind " + m.Source}
@@ -156,13 +148,90 @@ func readRootDisk(mountinfoPath, sysRoot, mountPoint string) RootDisk {
 	}
 	if len(disks) > 0 {
 		rd.Disks = disks
-		kinds := make([]string, len(disks))
-		for i, d := range disks {
-			kinds[i] = d.Kind
-		}
-		rd.Kind = SummarizeKind(kinds)
+		rd.Kind = summarizeDisks(disks)
 	}
 	return rd
+}
+
+// mountDevNum возвращает номер блочного устройства монтирования. btrfs и
+// некоторые другие ФС отдают анонимный 0:N — тогда номер берётся из самого
+// устройства-источника. 0:0 — блочного устройства нет.
+func mountDevNum(m Mount) (major, minor uint32) {
+	major, minor = m.Major, m.Minor
+	if major == 0 && strings.HasPrefix(m.Source, "/dev/") {
+		var st unix.Stat_t
+		if err := unix.Stat(m.Source, &st); err == nil && st.Mode&unix.S_IFMT == unix.S_IFBLK {
+			return unix.Major(st.Rdev), unix.Minor(st.Rdev)
+		}
+		return 0, 0
+	}
+	return major, minor
+}
+
+func summarizeDisks(disks []BlockDevice) string {
+	kinds := make([]string, len(disks))
+	for i, d := range disks {
+		kinds[i] = d.Kind
+	}
+	return SummarizeKind(kinds)
+}
+
+// HasTransport сообщает, подключён ли хотя бы один из дисков через transport.
+func HasTransport(disks []BlockDevice, transport string) bool {
+	for _, d := range disks {
+		if d.Transport == transport {
+			return true
+		}
+	}
+	return false
+}
+
+// PathDisks — на каких физических дисках лежит путь.
+type PathDisks struct {
+	Device string        `json:"device"`
+	Kind   string        `json:"kind"`
+	Disks  []BlockDevice `json:"disks"`
+}
+
+// DisksForPath находит физические диски под путём: для блочного
+// устройства — само устройство, для файла — устройство его ФС.
+func DisksForPath(path string) (PathDisks, error) {
+	return disksForPath("/proc/self/mountinfo", "/sys", path)
+}
+
+func disksForPath(mountinfoPath, sysRoot, path string) (PathDisks, error) {
+	pd := PathDisks{Kind: KindUnknown, Disks: []BlockDevice{}}
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		return pd, &os.PathError{Op: "stat", Path: path, Err: err}
+	}
+	var maj, mnr uint32
+	if st.Mode&unix.S_IFMT == unix.S_IFBLK {
+		maj, mnr = unix.Major(st.Rdev), unix.Minor(st.Rdev)
+	} else {
+		data, err := os.ReadFile(mountinfoPath)
+		if err != nil {
+			return pd, err
+		}
+		mounts, err := ParseMountinfo(strings.NewReader(string(data)))
+		if err != nil {
+			return pd, err
+		}
+		m, ok := FindMountForPath(mounts, path)
+		if !ok {
+			return pd, fmt.Errorf("mount for %s: %w", path, os.ErrNotExist)
+		}
+		if maj, mnr = mountDevNum(m); maj == 0 {
+			return pd, fmt.Errorf("no block device behind %s: %w", m.Source, os.ErrNotExist)
+		}
+	}
+	dev, disks, err := resolveBlockDevices(sysRoot, maj, mnr)
+	pd.Device = dev
+	if len(disks) > 0 {
+		pd.Disks = disks
+		pd.Kind = summarizeDisks(disks)
+	}
+	return pd, err
 }
 
 func statfs(path string) (total, free, avail uint64, err error) {

@@ -1,0 +1,4 @@
+UUID=1111-root / ext4 errors=remount-ro 0 1
+UUID=aaaa-bbbb none swap sw,pri=5 0 0
+# UUID=old-swap none swap sw 0 0
+/dev/sdb1 /mnt/my\040data ext4 defaults 0 2

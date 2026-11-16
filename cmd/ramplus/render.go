@@ -161,12 +161,34 @@ func renderSwaps(w io.Writer, st monitor.Status) error {
 	case len(st.Swaps.Devices) == 0:
 		s.line("swap не включён")
 	default:
-		s.row("ПУТЬ", "ТИП", "РАЗМЕР", "ИСПОЛЬЗОВАНО", "ПРИОРИТЕТ")
+		s.row("ПУТЬ", "ТИП", "РАЗМЕР", "ИСПОЛЬЗОВАНО", "ПРИОРИТЕТ", "ДИСК", "RAMPLUS")
 		for _, d := range st.Swaps.Devices {
-			s.row(d.Path, d.Type, humanBytes(d.SizeBytes), humanBytes(d.UsedBytes), fmt.Sprint(d.Priority))
+			disk := "—"
+			if d.DiskKind != "" {
+				disk = kindText(d.DiskKind) + ", " + d.Transport
+			}
+			managed := "нет"
+			if d.Managed {
+				managed = "да"
+			}
+			s.row(d.Path, d.Type, humanBytes(d.SizeBytes), humanBytes(d.UsedBytes), fmt.Sprint(d.Priority), disk, managed)
 		}
 	}
-	return s.end(w)
+	if err := s.end(w); err != nil {
+		return err
+	}
+	for _, wr := range st.Swaps.Warnings {
+		switch wr.Code {
+		case monitor.WarnSwapOnUSB:
+			fmt.Fprintf(w, "  ВНИМАНИЕ: %s на USB-диске — swap медленный и опасный при отключении диска\n", wr.Path)
+		default:
+			fmt.Fprintf(w, "  ВНИМАНИЕ: %s: %s\n", wr.Path, wr.Code)
+		}
+	}
+	if len(st.Swaps.Warnings) > 0 {
+		fmt.Fprintln(w)
+	}
+	return nil
 }
 
 func renderZswap(w io.Writer, st monitor.Status) error {

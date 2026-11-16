@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/swap"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -18,6 +19,7 @@ func newStatusCmd() *cobra.Command {
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			st := monitor.Collect()
+			swap.AnnotateStatus(&st, swap.OSFS{})
 			out := cmd.OutOrStdout()
 			if asJSON {
 				enc := json.NewEncoder(out)

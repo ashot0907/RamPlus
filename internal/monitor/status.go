@@ -55,6 +55,7 @@ func Collect() Status {
 	s := CollectFrom(DefaultPaths)
 	s.System = detect.ReadSystem()
 	s.RootDisk = detect.ReadRootDisk()
+	AnnotateSwapDisks(&s.Swaps, detect.DisksForPath)
 	return s
 }
 
