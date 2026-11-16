@@ -24,9 +24,42 @@ type PSILine struct {
 // PSI — давление на память. Без PSI в ядре (CONFIG_PSI=n или psi=0)
 // оба поля nil, а Error объясняет причину.
 type PSI struct {
-	Some  *PSILine            `json:"some"`
-	Full  *PSILine            `json:"full"`
-	Error *detect.Unavailable `json:"error,omitempty"`
+	Some *PSILine `json:"some"`
+	Full *PSILine `json:"full"`
+	// PressureLevel — интерпретация some avg10: normal|elevated|high|severe
+	// ("" — PSI недоступен).
+	PressureLevel string              `json:"pressure_level"`
+	Error         *detect.Unavailable `json:"error,omitempty"`
+}
+
+// Уровни давления на память.
+const (
+	PressureNormal   = "normal"
+	PressureElevated = "elevated"
+	PressureHigh     = "high"
+	PressureSevere   = "severe"
+)
+
+// Пороги по some avg10 (% времени, когда хотя бы одна задача ждала память).
+// Стартовые значения — уточняются по результатам scripts/bench.sh.
+const (
+	PressureElevatedFrom = 5.0
+	PressureHighFrom     = 20.0
+	PressureSevereFrom   = 50.0
+)
+
+// PressureLevelFor интерпретирует some avg10.
+func PressureLevelFor(someAvg10 float64) string {
+	switch {
+	case someAvg10 >= PressureSevereFrom:
+		return PressureSevere
+	case someAvg10 >= PressureHighFrom:
+		return PressureHigh
+	case someAvg10 >= PressureElevatedFrom:
+		return PressureElevated
+	default:
+		return PressureNormal
+	}
 }
 
 // ParsePSI разбирает /proc/pressure/memory:
@@ -74,6 +107,9 @@ func ParsePSI(r io.Reader) (PSI, error) {
 	}
 	if p.Some == nil && p.Full == nil {
 		return PSI{}, fmt.Errorf("%w: psi: no some/full lines", detect.ErrParse)
+	}
+	if p.Some != nil {
+		p.PressureLevel = PressureLevelFor(p.Some.Avg10)
 	}
 	return p, nil
 }

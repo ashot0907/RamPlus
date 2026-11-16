@@ -111,20 +111,89 @@ func TestUnescapeOctal(t *testing.T) {
 func TestClassifyDisk(t *testing.T) {
 	yes, no := true, false
 	tests := []struct {
-		name, transport string
-		rot             *bool
-		want            string
+		name string
+		h    DiskHints
+		want string
 	}{
-		{"nvme0n1", "nvme", &no, KindNVMe},
-		{"sda", "sata", &no, KindSSD},
-		{"sda", "sata", &yes, KindHDD},
-		{"sdb", "usb", &yes, KindHDD},
-		{"vda", "virtio", nil, KindUnknown},
+		{"nvme", DiskHints{Name: "nvme0n1", Transport: "nvme", Rotational: &no}, KindNVMe},
+		{"sata ssd", DiskHints{Name: "sda", Transport: "sata", Rotational: &no}, KindSSD},
+		{"sata hdd", DiskHints{Name: "sda", Transport: "sata", Rotational: &yes}, KindHDD},
+		{"usb hdd", DiskHints{Name: "sdb", Transport: "usb", Rotational: &yes}, KindHDD},
+		{"no rotational", DiskHints{Name: "sdc", Transport: "scsi"}, KindUnknown},
+		// Виртуальные диски сообщают rotational недостоверно.
+		{"virtio", DiskHints{Name: "vda", Transport: "virtio", Rotational: &yes}, KindVirtual},
+		{"vd* name", DiskHints{Name: "vdb", Transport: "unknown", Rotational: &yes}, KindVirtual},
+		{"xen", DiskHints{Name: "xvda", Transport: "xen", Rotational: &yes}, KindVirtual},
+		{"hyperv", DiskHints{Name: "sda", Transport: "hyperv", Rotational: &yes}, KindVirtual},
+		{"QEMU HARDDISK", DiskHints{Name: "sda", Transport: "sata", Rotational: &yes, Model: "QEMU HARDDISK", Vendor: "ATA"}, KindVirtual},
+		{"VMware", DiskHints{Name: "sda", Transport: "scsi", Rotational: &yes, Model: "Virtual disk", Vendor: "VMware"}, KindVirtual},
+		{"Hyper-V Msft", DiskHints{Name: "sda", Transport: "scsi", Rotational: &yes, Model: "Virtual Disk", Vendor: "Msft"}, KindVirtual},
+		{"QEMU NVMe", DiskHints{Name: "nvme0n1", Transport: "nvme", Rotational: &no, Model: "QEMU NVMe Ctrl"}, KindVirtual},
+		{"any disk in VM", DiskHints{Name: "sda", Transport: "scsi", Rotational: &yes, Virt: "kvm"}, KindVirtual},
+		{"usb passthrough in VM", DiskHints{Name: "sdb", Transport: "usb", Rotational: &no, Virt: "kvm"}, KindSSD},
 	}
 	for _, tt := range tests {
-		if got := ClassifyDisk(tt.name, tt.transport, tt.rot); got != tt.want {
-			t.Errorf("ClassifyDisk(%s,%s) = %s, want %s", tt.name, tt.transport, got, tt.want)
+		if got := ClassifyDisk(tt.h); got != tt.want {
+			t.Errorf("%s: ClassifyDisk = %s, want %s", tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestDetectVirt(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	metal, vm := read("cpuinfo/metal"), read("cpuinfo/vm")
+	tests := []struct {
+		dmi     map[string]string
+		cpuinfo string
+		want    string
+	}{
+		{map[string]string{"sys_vendor": "ASUS", "product_name": "System Product Name"}, metal, ""},
+		{map[string]string{"sys_vendor": "QEMU", "product_name": "Standard PC (Q35 + ICH9, 2009)"}, vm, "kvm"},
+		{map[string]string{"sys_vendor": "VMware, Inc.", "product_name": "VMware Virtual Platform"}, vm, "vmware"},
+		{map[string]string{"sys_vendor": "innotek GmbH", "product_name": "VirtualBox"}, vm, "oracle"},
+		{map[string]string{"sys_vendor": "Microsoft Corporation", "product_name": "Virtual Machine"}, vm, "microsoft"},
+		{map[string]string{"sys_vendor": "Microsoft Corporation", "product_name": "Surface Laptop 5"}, metal, ""},
+		{map[string]string{"sys_vendor": "Amazon EC2"}, vm, "amazon"},
+		{nil, vm, "vm"}, // DMI недоступен, но CPU сообщает hypervisor
+		{nil, metal, ""},
+	}
+	for _, tt := range tests {
+		if got := DetectVirt(tt.dmi, tt.cpuinfo); got != tt.want {
+			t.Errorf("DetectVirt(%v) = %q, want %q", tt.dmi, got, tt.want)
+		}
+	}
+}
+
+func TestSelectCandidateMounts(t *testing.T) {
+	mounts, err := ParseMountinfo(openFixture(t, "mountinfo/desktop"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	devNum := func(m Mount) (uint32, uint32) {
+		if m.Major == 0 && strings.HasPrefix(m.Source, "/dev/") {
+			return 259, 2 // btrfs: номер из устройства-источника
+		}
+		return m.Major, m.Minor
+	}
+	var got []string
+	for _, m := range SelectCandidateMounts(mounts, devNum) {
+		got = append(got, m.MountPoint)
+	}
+	// /boot/efi, snap, docker, tmpfs, proc/sys — отброшены; btrfs-подтом
+	// /mnt/data/media — дубликат устройства; корень первый.
+	want := "/,/mnt/data,/mnt/nas,/mnt/win"
+	if strings.Join(got, ",") != want {
+		t.Errorf("candidates = %v, want %s", got, want)
+	}
+	win, _ := FindMount(mounts, "/mnt/win")
+	if !win.ReadOnly() || IsNetworkFS(win.FSType) || !IsNetworkFS("nfs4") {
+		t.Errorf("ro/network detection: %+v", win)
 	}
 }
 
@@ -148,13 +217,15 @@ func TestSummarizeKind(t *testing.T) {
 
 func TestTransportFromSysPath(t *testing.T) {
 	tests := map[string]string{
-		"/sys/devices/pci0000:00/0000:00:06.0/0000:02:00.0/nvme/nvme0/nvme0n1":                      "nvme",
-		"/sys/devices/pci0000:00/0000:00:14.0/usb2/2-2/2-2:1.0/host8/target8:0:0/8:0:0:0/block/sda": "usb",
-		"/sys/devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:0/0:0:0:0/block/sda":             "sata",
-		"/sys/devices/pci0000:00/0000:00:04.0/virtio1/block/vda":                                    "virtio",
-		"/sys/devices/platform/fe320000.mmc/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0":                  "mmc",
-		"/sys/devices/virtual/block/loop0":                                                          "virtual",
-		"/sys/devices/pci0000:00/0000:00:10.0/host2/target2:0:0/2:0:0:0/block/sda":                  "scsi",
+		"/sys/devices/pci0000:00/0000:00:06.0/0000:02:00.0/nvme/nvme0/nvme0n1":                              "nvme",
+		"/sys/devices/pci0000:00/0000:00:14.0/usb2/2-2/2-2:1.0/host8/target8:0:0/8:0:0:0/block/sda":         "usb",
+		"/sys/devices/pci0000:00/0000:00:17.0/ata1/host0/target0:0:0/0:0:0:0/block/sda":                     "sata",
+		"/sys/devices/pci0000:00/0000:00:04.0/virtio1/block/vda":                                            "virtio",
+		"/sys/devices/platform/fe320000.mmc/mmc_host/mmc0/mmc0:aaaa/block/mmcblk0":                          "mmc",
+		"/sys/devices/vbd-51712/block/xvda":                                                                 "xen",
+		"/sys/devices/LNXSYSTM:00/LNXSYBUS:00/ACPI0004:00/VMBUS:00/abc/host0/target0:0:0/0:0:0:0/block/sda": "hyperv",
+		"/sys/devices/virtual/block/loop0":                                                                  "virtual",
+		"/sys/devices/pci0000:00/0000:00:10.0/host2/target2:0:0/2:0:0:0/block/sda":                          "scsi",
 		"/somewhere/else": "unknown",
 	}
 	for in, want := range tests {
@@ -233,7 +304,7 @@ func fakeSysfs(t *testing.T) string {
 func TestResolveBlockDevices(t *testing.T) {
 	root := fakeSysfs(t)
 
-	dev, disks, err := resolveBlockDevices(root, 253, 1)
+	dev, disks, err := resolveBlockDevices(root, "", 253, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +317,7 @@ func TestResolveBlockDevices(t *testing.T) {
 		t.Errorf("unexpected disk %+v", d)
 	}
 
-	dev, disks, err = resolveBlockDevices(root, 8, 2)
+	dev, disks, err = resolveBlockDevices(root, "", 8, 2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,13 +325,13 @@ func TestResolveBlockDevices(t *testing.T) {
 		t.Errorf("dev=%s disks=%+v", dev, disks)
 	}
 
-	if _, _, err := resolveBlockDevices(root, 9, 9); Reason(err) != ReasonNotPresent {
+	if _, _, err := resolveBlockDevices(root, "", 9, 9); Reason(err) != ReasonNotPresent {
 		t.Errorf("missing device: want not_present, got %v", err)
 	}
 }
 
 func TestReadRootDiskMissingMountinfo(t *testing.T) {
-	rd := readRootDisk(filepath.Join("testdata", "nope"), t.TempDir(), "/")
+	rd := describeFS(filepath.Join("testdata", "nope"), t.TempDir(), "", "/")
 	if rd.Error == nil || rd.Error.Reason != ReasonNotPresent {
 		t.Fatalf("want not_present error, got %+v", rd.Error)
 	}
@@ -271,7 +342,7 @@ func TestReadRootDiskMissingMountinfo(t *testing.T) {
 
 func TestReadRootDiskFromFixtures(t *testing.T) {
 	root := fakeSysfs(t)
-	rd := readRootDisk(filepath.Join("testdata", "mountinfo", "lvm-escaped"), root, "/")
+	rd := describeFS(filepath.Join("testdata", "mountinfo", "lvm-escaped"), root, "", "/")
 	if rd.Error != nil || rd.DiskError != nil {
 		t.Fatalf("errors: %+v %+v", rd.Error, rd.DiskError)
 	}
@@ -279,7 +350,7 @@ func TestReadRootDiskFromFixtures(t *testing.T) {
 		t.Errorf("got %+v", rd)
 	}
 
-	rd = readRootDisk(filepath.Join("testdata", "mountinfo", "overmount"), root, "/")
+	rd = describeFS(filepath.Join("testdata", "mountinfo", "overmount"), root, "", "/")
 	if rd.DiskError == nil || rd.DiskError.Reason != ReasonNotPresent || rd.FSType != "overlay" {
 		t.Errorf("overlay root: got %+v", rd)
 	}
@@ -306,5 +377,18 @@ func TestFindMountForPath(t *testing.T) {
 	}
 	if _, ok := FindMountForPath(mounts, "relative"); ok {
 		t.Error("relative path must not match")
+	}
+}
+
+func TestResolveBlockDevicesInVM(t *testing.T) {
+	root := fakeSysfs(t)
+	_, disks, err := resolveBlockDevices(root, "kvm", 8, 2)
+	if err != nil || disks[0].Kind != KindHDD {
+		// USB-диск, проброшенный в VM, остаётся физическим.
+		t.Errorf("usb in VM: %+v %v", disks, err)
+	}
+	_, disks, _ = resolveBlockDevices(root, "kvm", 253, 1)
+	if disks[0].Kind != KindVirtual {
+		t.Errorf("disk in VM: %+v", disks)
 	}
 }

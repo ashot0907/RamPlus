@@ -22,11 +22,13 @@ type OSRelease struct {
 
 // System — общая информация о машине.
 type System struct {
-	Hostname string       `json:"hostname"`
-	Kernel   string       `json:"kernel"`
-	Arch     string       `json:"arch"`
-	OS       *OSRelease   `json:"os"`
-	OSError  *Unavailable `json:"os_error,omitempty"`
+	Hostname string `json:"hostname"`
+	Kernel   string `json:"kernel"`
+	Arch     string `json:"arch"`
+	// Virtualization — тип VM ("" — железо): kvm, vmware, oracle, microsoft, xen, vm.
+	Virtualization string       `json:"virtualization"`
+	OS             *OSRelease   `json:"os"`
+	OSError        *Unavailable `json:"os_error,omitempty"`
 }
 
 // ParseOSRelease разбирает формат os-release: KEY=value, значения могут быть
@@ -105,6 +107,8 @@ func ReadSystem() System {
 		s.Kernel = unix.ByteSliceToString(uts.Release[:])
 		s.Arch = unix.ByteSliceToString(uts.Machine[:])
 	}
+
+	s.Virtualization = Virtualization()
 
 	var lastErr error
 	for _, p := range osReleasePaths {

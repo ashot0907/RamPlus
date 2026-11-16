@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ashot0907/ramplus/internal/detect"
 )
@@ -462,3 +463,48 @@ func TestAnnotateSwapDisks(t *testing.T) {
 		t.Errorf("warnings = %+v", s.Warnings)
 	}
 }
+
+func TestPressureLevel(t *testing.T) {
+	tests := map[float64]string{
+		0: PressureNormal, 4.99: PressureNormal, 5: PressureElevated, 19.9: PressureElevated,
+		20: PressureHigh, 49.9: PressureHigh, 50: PressureSevere, 100: PressureSevere,
+	}
+	for v, want := range tests {
+		if got := PressureLevelFor(v); got != want {
+			t.Errorf("PressureLevelFor(%v) = %s, want %s", v, got, want)
+		}
+	}
+	p, _ := ParsePSI(strings.NewReader(string(fixture(t, "psi/memory"))))
+	if p.PressureLevel != PressureNormal {
+		t.Errorf("level = %q", p.PressureLevel)
+	}
+	if ReadPSI(missing(t)).PressureLevel != "" {
+		t.Error("no PSI → empty level")
+	}
+}
+
+func TestPeaks(t *testing.T) {
+	t0 := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	mk := func(swapUsed uint64, some, full float64) Status {
+		return Status{
+			Memory: Memory{SwapUsedBytes: ptr(swapUsed), UsedBytes: ptr(uint64(GiBTest))},
+			PSI:    PSI{Some: &PSILine{Avg10: some}, Full: &PSILine{Avg10: full}},
+		}
+	}
+	p := NewPeaks(t0)
+	p.Update(mk(1*GiBTest, 3, 1), t0.Add(time.Second))
+	p.Update(mk(3*GiBTest, 70, 20), t0.Add(2*time.Second))
+	p.Update(mk(2*GiBTest, 10, 40), t0.Add(3*time.Second))
+	p.Update(Status{}, t0.Add(4*time.Second)) // всё n/a — пики не портятся
+	if p.Samples != 4 || p.SwapUsedBytes != 3*GiBTest || !p.SwapUsedAt.Equal(t0.Add(2*time.Second)) {
+		t.Errorf("swap peak: %+v", p)
+	}
+	if p.PSISomeAvg10 != 70 || p.PSIFullAvg10 != 40 || !p.PSIFullAt.Equal(t0.Add(3*time.Second)) {
+		t.Errorf("psi peaks: %+v", p)
+	}
+	if p.PressureLevel != PressureSevere {
+		t.Errorf("level = %s", p.PressureLevel)
+	}
+}
+
+const GiBTest = 1 << 30

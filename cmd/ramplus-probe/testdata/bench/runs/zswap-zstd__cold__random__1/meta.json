@@ -1,0 +1,1 @@
+{"config":"zswap-zstd","workload":"cold","data":"random","run":1,"status":"skipped","exit_code":0,"duration_s":0,"note":"zstd недоступен"}

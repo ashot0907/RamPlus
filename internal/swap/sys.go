@@ -1,5 +1,5 @@
 // Package swap управляет swapfile RamPlus: план (только чтение), применение
-// с журналом и откатом, rollback.
+// с write-ahead журналом и откатом, rollback.
 //
 // Все системные действия идут через интерфейсы FS, Executor и Kernel, чтобы
 // логику можно было тестировать на фейках без реальных изменений системы.
@@ -15,20 +15,21 @@ import (
 
 // Пути, которые использует RamPlus.
 const (
-	ManagedPath     = "/ramplus.swap"            // swapfile на ext4/xfs
-	BtrfsDir        = "/ramplus-swap"            // NOCOW-подтом на btrfs
-	BtrfsPath       = BtrfsDir + "/ramplus.swap" // swapfile на btrfs
-	StateDir        = "/var/lib/ramplus"         //
-	StatePath       = StateDir + "/state.json"   // журнал операций
-	BackupDir       = StateDir + "/backups"      // копии изменённых файлов
-	LockPath        = "/run/lock/ramplus.lock"   // защита от параллельного запуска
-	UnitDir         = "/etc/systemd/system"      //
-	FstabPath       = "/etc/fstab"               //
-	CmdlinePath     = "/proc/cmdline"            //
-	MeminfoPath     = "/proc/meminfo"            //
-	SwapsPath       = "/proc/swaps"              //
-	SystemdRunDir   = "/run/systemd/system"      // есть, если PID 1 — systemd
-	fstabDisabledBy = "# disabled by ramplus: "  // пометка закомментированной строки
+	DefaultFileName = "ramplus.swapfile"
+	ManagedPath     = "/" + DefaultFileName // по умолчанию на ext4/xfs
+	BtrfsDir        = "/ramplus-swap"       // NOCOW-подтом на btrfs (путь по умолчанию)
+	BtrfsPath       = BtrfsDir + "/" + DefaultFileName
+	StateDir        = "/var/lib/ramplus"
+	StatePath       = StateDir + "/state.json" // журнал операций
+	BackupDir       = StateDir + "/backups"    // копии изменённых файлов
+	LockPath        = "/run/lock/ramplus.lock" // защита от параллельного запуска
+	UnitDir         = "/etc/systemd/system"
+	FstabPath       = "/etc/fstab"
+	CmdlinePath     = "/proc/cmdline"
+	MeminfoPath     = "/proc/meminfo"
+	SwapsPath       = "/proc/swaps"
+	SystemdRunDir   = "/run/systemd/system" // есть, если PID 1 — systemd
+	fstabDisabledBy = "# disabled by ramplus: "
 	unitHeader      = "# Managed by RamPlus: do not edit, use `ramplus swap`.\n"
 )
 
@@ -43,14 +44,13 @@ type FS interface {
 	Mkdir(name string, perm fs.FileMode) error
 	MkdirAll(name string, perm fs.FileMode) error
 	Chmod(name string, perm fs.FileMode) error
-	// Fallocate создаёт новый файл (O_EXCL, 0600) и выделяет size байт.
-	// Если ФС не поддерживает fallocate — ошибка, совместимая с
-	// errors.Is(err, ErrFallocateUnsupported); файл при этом может остаться.
+	// Create создаёт новый пустой файл (O_EXCL). Существующий — ошибка fs.ErrExist.
+	Create(name string, perm fs.FileMode) error
+	// Fallocate выделяет size байт в существующем файле. Если ФС не умеет —
+	// ошибка, совместимая с errors.Is(err, ErrFallocateUnsupported).
 	Fallocate(name string, size uint64) error
-	// WriteZeros создаёт файл (0600, перезаписывая) и пишет size нулей.
+	// WriteZeros заполняет существующий файл size нулями.
 	WriteZeros(name string, size uint64) error
-	// Statfs возвращает размер ФС и место, доступное пользователю.
-	Statfs(path string) (total, avail uint64, err error)
 	// Lock берёт эксклюзивную блокировку (flock) без ожидания.
 	Lock(name string) (unlock func() error, err error)
 }
@@ -74,7 +74,9 @@ type System struct {
 	FS     FS
 	Exec   Executor
 	Kernel Kernel
-	// RootDisk описывает корневую ФС (обычно detect.ReadRootDisk).
-	RootDisk func() detect.RootDisk
-	Now      func() time.Time
+	// DescribeFS описывает ФС пути (обычно detect.DescribeFS).
+	DescribeFS func(path string) detect.FSInfo
+	// ListFS — смонтированные ФС-кандидаты (обычно detect.ListLocalFS).
+	ListFS func() []detect.FSInfo
+	Now    func() time.Time
 }

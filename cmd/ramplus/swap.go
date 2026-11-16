@@ -17,6 +17,8 @@ import (
 // swapFlags — флаги, общие для команд swap.
 type swapFlags struct {
 	size      string
+	path      string
+	verbose   bool
 	existing  string
 	deleteOld bool
 	force     bool
@@ -25,7 +27,7 @@ type swapFlags struct {
 }
 
 func (f *swapFlags) options(action swap.Action) (swap.Options, error) {
-	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force}
+	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force, Path: f.path}
 	if f.size != "" {
 		size, err := swap.ParseSize(f.size)
 		if err != nil {
@@ -47,10 +49,15 @@ func addPlanFlags(cmd *cobra.Command, f *swapFlags, withSize, withExisting bool)
 		cmd.Flags().StringVar(&f.size, "size", "", "размер swapfile: 4G, 512M, 1.5G (двоичные единицы)")
 	}
 	if withExisting {
+		cmd.Flags().StringVar(&f.path, "path", "", "путь swapfile (по умолчанию /"+swap.DefaultFileName+" на корневой ФС), например /mnt/nvme/"+swap.DefaultFileName)
 		cmd.Flags().StringVar(&f.existing, "existing", "", "существующий swap: keep (по умолчанию) или replace")
 		cmd.Flags().BoolVar(&f.deleteOld, "delete-old", false, "при replace удалить старые swap-файлы")
 	}
 	cmd.Flags().BoolVar(&f.force, "force", false, "продолжить несмотря на предупреждения (swap на USB-диске; нехватка места при rollback)")
+}
+
+func addVerboseFlag(cmd *cobra.Command, f *swapFlags) {
+	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "показать полное содержимое записываемых файлов (systemd-юнит)")
 }
 
 func addExecFlags(cmd *cobra.Command, f *swapFlags) {
@@ -88,10 +95,11 @@ func newPlanCmd() *cobra.Command {
 				return err
 			}
 			m := &swap.Manager{Sys: swap.DefaultSystem(), Out: cmd.OutOrStdout()}
-			return m.Plan(cmd.Context(), o).Render(cmd.OutOrStdout())
+			return m.Plan(cmd.Context(), o).RenderWith(cmd.OutOrStdout(), swap.RenderOptions{Verbose: f.verbose})
 		},
 	}
 	addPlanFlags(cmd, &f, true, true)
+	addVerboseFlag(cmd, &f)
 	return cmd
 }
 
@@ -109,9 +117,9 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 				return err
 			}
 			out := cmd.OutOrStdout()
-			m := &swap.Manager{Sys: swap.DefaultSystem(), Out: out}
+			m := &swap.Manager{Sys: swap.DefaultSystem(), Out: out, Verbose: f.verbose}
 			if f.dryRun {
-				return m.Plan(cmd.Context(), o).Render(out)
+				return m.Plan(cmd.Context(), o).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
 			}
 			_, err = m.Execute(cmd.Context(), o, confirmer(f.yes, cmd.InOrStdin(), out))
 			if errors.Is(err, swap.ErrNeedRoot) {
@@ -126,6 +134,7 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 		cmd.Flags().BoolVar(&f.force, "force", false, "продолжить несмотря на предупреждения")
 	}
 	addExecFlags(cmd, &f)
+	addVerboseFlag(cmd, &f)
 	return cmd
 }
 

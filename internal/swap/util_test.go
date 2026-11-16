@@ -48,27 +48,28 @@ func TestSizeFlagRoundTrip(t *testing.T) {
 // Ожидаемые значения получены `systemd-escape --path`.
 func TestEscapePath(t *testing.T) {
 	tests := map[string]string{
-		"/ramplus.swap":              "ramplus.swap",
-		"/ramplus-swap/ramplus.swap": `ramplus\x2dswap-ramplus.swap`,
-		"/a b/c.d-e":                 `a\x20b-c.d\x2de`,
-		"/swap.img":                  "swap.img",
-		"/.hidden/x":                 `\x2ehidden-x`,
-		"//double//slash/":           "double-slash",
-		"/":                          "-",
+		"/ramplus.swapfile":              "ramplus.swapfile",
+		"/ramplus-swap/ramplus.swapfile": `ramplus\x2dswap-ramplus.swapfile`,
+		"/mnt/nvme/ramplus.swapfile":     "mnt-nvme-ramplus.swapfile",
+		"/a b/c.d-e":                     `a\x20b-c.d\x2de`,
+		"/swap.img":                      "swap.img",
+		"/.hidden/x":                     `\x2ehidden-x`,
+		"//double//slash/":               "double-slash",
+		"/":                              "-",
 	}
 	for in, want := range tests {
 		if got := EscapePath(in); got != want {
 			t.Errorf("EscapePath(%q) = %q, want %q", in, got, want)
 		}
 	}
-	if UnitName(ManagedPath) != "ramplus.swap.swap" {
+	if UnitName(ManagedPath) != "ramplus.swapfile.swap" {
 		t.Errorf("UnitName = %s", UnitName(ManagedPath))
 	}
 }
 
 func TestUnitContent(t *testing.T) {
 	c := UnitContent(ManagedPath, 10)
-	for _, want := range []string{"[Swap]\nWhat=/ramplus.swap\nPriority=10\n", "WantedBy=swap.target", "Managed by RamPlus"} {
+	for _, want := range []string{"[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n", "WantedBy=swap.target", "Managed by RamPlus"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("unit lacks %q:\n%s", want, c)
 		}

@@ -15,7 +15,6 @@ const (
 	KindMkswap            StepKind = "mkswap"              // mkswap Path
 	KindSwapon            StepKind = "swapon"              // swapon Path с Priority
 	KindSwapoff           StepKind = "swapoff"             // swapoff Path
-	KindRemoveFile        StepKind = "remove_file"         // удалить свой файл (без восстановления)
 	KindDeleteSwapfile    StepKind = "delete_swapfile"     // удалить swapfile; откат пересоздаёт его
 	KindWriteFile         StepKind = "write_file"          // записать Content в Path
 	KindDeleteConfig      StepKind = "delete_config"       // удалить конфиг; откат восстанавливает содержимое
@@ -39,6 +38,9 @@ type Step struct {
 	Content  string   `json:"content,omitempty"`
 	Line     string   `json:"line,omitempty"`
 	Args     []string `json:"args,omitempty"`
+	// NoCOW — swapfile на btrfs: перед выделением места файлу ставится
+	// chattr +C (иначе ядро откажет в swapon).
+	NoCOW bool `json:"nocow,omitempty"`
 	// Reload — после отмены шага нужен systemctl daemon-reload (шаг меняет
 	// конфигурацию systemd: юнит или fstab).
 	Reload bool `json:"reload,omitempty"`
@@ -50,7 +52,11 @@ func daemonReload() Step { return Step{Kind: KindSystemctl, Args: []string{"daem
 func (s Step) Describe() string {
 	switch s.Kind {
 	case KindAllocate:
-		return fmt.Sprintf("создать %s, %s (fallocate; если ФС не умеет — запись нулями), права 600", s.Path, FormatSize(s.Size))
+		nocow := ""
+		if s.NoCOW {
+			nocow = ", chattr +C (NOCOW)"
+		}
+		return fmt.Sprintf("создать %s, %s (fallocate; если ФС не умеет — запись нулями), права 600%s", s.Path, FormatSize(s.Size), nocow)
 	case KindBtrfsMkswapfile:
 		return fmt.Sprintf("btrfs filesystem mkswapfile --size %s %s", sizeFlag(s.Size), s.Path)
 	case KindChmod:
@@ -64,8 +70,6 @@ func (s Step) Describe() string {
 		return fmt.Sprintf("swapon %s (приоритет %d)", s.Path, s.Priority)
 	case KindSwapoff:
 		return "swapoff " + s.Path
-	case KindRemoveFile:
-		return "удалить " + s.Path
 	case KindDeleteSwapfile:
 		return fmt.Sprintf("удалить файл %s (%s)", s.Path, FormatSize(s.Size))
 	case KindWriteFile:
@@ -92,20 +96,30 @@ func (s Step) Describe() string {
 	return string(s.Kind) + " " + s.Path
 }
 
-// Applied — выполненный шаг и действия, которые его отменяют. Undo
-// вычисляется в момент выполнения (например, сохраняет прежнее содержимое
-// файла), поэтому rollback работает по записанному, а не по догадкам.
+// Статусы записи журнала (write-ahead).
+const (
+	StepPending = "pending" // записано до выполнения шага
+	StepDone    = "done"    // шаг выполнен
+)
+
+// Applied — запись журнала о шаге и о том, как его отменить. Undo
+// вычисляется ДО выполнения (например, сохраняется прежнее содержимое
+// файла) и пишется вместе со статусом pending: если процесс упадёт посреди
+// шага, rollback знает, что проверять и как откатывать.
 type Applied struct {
 	Step   Step   `json:"step"`
+	Status string `json:"status"`
 	Undo   []Step `json:"undo"`
 	Backup string `json:"backup,omitempty"` // копия файла до изменения
 }
 
-// UndoSteps — шаги отмены списка выполненных шагов (в обратном порядке).
+// UndoSteps — шаги отмены выполненных (done) шагов, в обратном порядке.
 func UndoSteps(applied []Applied) []Step {
 	var out []Step
 	for i := len(applied) - 1; i >= 0; i-- {
-		out = append(out, applied[i].Undo...)
+		if applied[i].Status == StepDone {
+			out = append(out, applied[i].Undo...)
+		}
 	}
 	return out
 }

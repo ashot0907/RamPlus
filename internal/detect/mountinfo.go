@@ -16,8 +16,19 @@ type Mount struct {
 	Minor      uint32
 	Root       string
 	MountPoint string
+	Options    string // per-mount: rw,relatime
 	FSType     string
 	Source     string
+}
+
+// ReadOnly — точка смонтирована только для чтения.
+func (m Mount) ReadOnly() bool {
+	for _, o := range strings.Split(m.Options, ",") {
+		if o == "ro" {
+			return true
+		}
+	}
+	return false
 }
 
 // ParseMountinfo разбирает /proc/<pid>/mountinfo (см. proc(5)):
@@ -58,6 +69,7 @@ func ParseMountinfo(r io.Reader) ([]Mount, error) {
 			Minor:      uint32(mnr),
 			Root:       UnescapeOctal(f[3]),
 			MountPoint: UnescapeOctal(f[4]),
+			Options:    f[5],
 			FSType:     f[sep+1],
 			Source:     UnescapeOctal(f[sep+2]),
 		})

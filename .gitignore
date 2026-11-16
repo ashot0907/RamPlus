@@ -3,3 +3,5 @@
 /ramplus-web
 *.test
 *.out
+/ramplus-probe
+/bench-results-*/

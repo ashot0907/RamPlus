@@ -4,6 +4,9 @@ import (
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
+// WarnInterrupted — в журнале есть незавершённая операция RamPlus.
+const WarnInterrupted = "ramplus_interrupted_operation"
+
 // AnnotateStatus помечает swap, которым управляет RamPlus (managed: true).
 // Читает state.json; если он недоступен, узнаёт свой swap по пути.
 func AnnotateStatus(st *monitor.Status, fsys FS) {
@@ -12,6 +15,9 @@ func AnnotateStatus(st *monitor.Status, fsys FS) {
 		if s, err := ParseState(b); err == nil {
 			for _, p := range ManagedPaths(s) {
 				paths[p] = true
+			}
+			if op := s.Pending(); op != nil {
+				st.Swaps.Warnings = append(st.Swaps.Warnings, monitor.SwapWarning{Code: WarnInterrupted, Path: StatePath})
 			}
 		}
 	}

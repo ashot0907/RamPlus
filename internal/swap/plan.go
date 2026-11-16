@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
@@ -31,6 +32,7 @@ const (
 type Options struct {
 	Action    Action       `json:"action"`
 	Size      uint64       `json:"size,omitempty"`
+	Path      string       `json:"path,omitempty"`     // "" — по умолчанию
 	Existing  ExistingMode `json:"existing,omitempty"` // "" — не указан
 	DeleteOld bool         `json:"delete_old,omitempty"`
 	Force     bool         `json:"force,omitempty"`
@@ -46,6 +48,9 @@ func (o Options) Command() string {
 	}
 	if o.Size > 0 && (o.Action == ActionApply || o.Action == ActionResize) {
 		b.WriteString(" --size " + sizeFlag(o.Size))
+	}
+	if o.Path != "" && o.Action == ActionApply {
+		b.WriteString(" --path " + o.Path)
 	}
 	if o.Action == ActionApply && o.Existing != "" {
 		b.WriteString(" --existing=" + string(o.Existing))
@@ -97,6 +102,7 @@ type Choice struct {
 type Plan struct {
 	Action            Action     `json:"action"`
 	Options           Options    `json:"options"` // с подставленными значениями по умолчанию
+	Path              string     `json:"path"`    // путь swapfile
 	ExistingDefaulted bool       `json:"existing_defaulted"`
 	Choices           []Choice   `json:"choices"`
 	Checks            []Check    `json:"checks"`
@@ -106,7 +112,7 @@ type Plan struct {
 	Created           []string   `json:"created"`
 	Disabled          []string   `json:"disabled"`
 	Deleted           []string   `json:"deleted"`
-	MaxSize           uint64     `json:"max_size_bytes,omitempty"` // сколько можно создать при текущем месте
+	MaxSize           uint64     `json:"max_size_bytes,omitempty"` // сколько можно создать на ФС цели
 	ManagedBefore     *Managed   `json:"managed_before"`
 	ManagedAfter      *Managed   `json:"managed_after"`
 	Target            *Operation `json:"-"` // для rollback
@@ -133,10 +139,33 @@ func (p *Plan) add(l Level, title, format string, a ...any) {
 
 // Пороговые значения.
 const (
-	minFreeAfterBytes = 5 * GiB   // после создания swap должно остаться ≥ 5 GiB
-	minFreeAfterPct   = 10        // и ≥ 10% диска
+	// После создания swap на ФС должно остаться max(5 GiB, min(10%, 20 GiB)).
+	minFreeAfterBytes = 5 * GiB
+	maxFreeAfterBytes = 20 * GiB
+	minFreeAfterPct   = 10
 	memReserve        = 256 * MiB // запас RAM при swapoff
 )
+
+// RequiredFree — сколько места должно остаться на ФС размером total.
+func RequiredFree(total uint64) uint64 {
+	return max(minFreeAfterBytes, min(total/100*minFreeAfterPct, maxFreeAfterBytes))
+}
+
+func requiredFreeText() string {
+	return fmt.Sprintf("%d%% диска, но не больше %s и не меньше %s", minFreeAfterPct, FormatSize(maxFreeAfterBytes), FormatSize(minFreeAfterBytes))
+}
+
+// MaxSwapSize — какой swapfile поместится на ФС с соблюдением порога.
+func MaxSwapSize(fi detect.FSInfo) uint64 {
+	if fi.TotalBytes == nil || fi.AvailableBytes == nil {
+		return 0
+	}
+	req := RequiredFree(*fi.TotalBytes)
+	if *fi.AvailableBytes <= req {
+		return 0
+	}
+	return (*fi.AvailableBytes - req) / MiB * MiB
+}
 
 // BuildPlan строит план. Чистая функция: ничего не читает и не меняет.
 func BuildPlan(f Facts, o Options) Plan {
@@ -148,7 +177,7 @@ func BuildPlan(f Facts, o Options) Plan {
 }
 
 func buildPlan(f Facts, o Options) Plan {
-	p := Plan{Action: o.Action, Options: o, ManagedBefore: f.State.Managed, facts: f}
+	p := Plan{Action: o.Action, Options: o, ManagedBefore: f.State.Managed, facts: f, Path: f.Target.Path}
 	p.commonChecks(f)
 	switch o.Action {
 	case ActionApply:
@@ -183,8 +212,12 @@ func (p *Plan) commonChecks(f Facts) {
 	if f.StateErr != nil {
 		p.add(LevelFail, "журнал", "не удалось прочитать %s: %v", StatePath, f.StateErr)
 	}
-	if op := f.State.Pending(); op != nil && p.Action != ActionRollback {
-		p.add(LevelFail, "журнал", "операция %s (%s) не завершена — сначала выполните: sudo ramplus rollback", op.ID, op.Command)
+	if r := f.Recovery; r != nil && p.Action != ActionRollback {
+		msg := fmt.Sprintf("операция %s не завершена (процесс прервался)", r.OpID)
+		if r.Pending != nil {
+			msg += fmt.Sprintf(" на шаге «%s»: %s", r.Pending.Step.Describe(), r.Detail)
+		}
+		p.add(LevelFail, "журнал", "%s — сначала выполните: sudo ramplus rollback", msg)
 	}
 	if f.SwapsErr != nil {
 		p.add(LevelFail, "swap", "не удалось прочитать %s: %v", SwapsPath, f.SwapsErr)
@@ -203,7 +236,81 @@ func (p *Plan) checkSize(size uint64) bool {
 	return true
 }
 
-// fsMethod определяет способ создания swapfile на ФС корня.
+// Оценка ФС.
+
+var unsupportedFS = map[string]string{
+	"zfs":     "ZFS не поддерживает swapfile (возможны зависания под нагрузкой); используйте zvol или zram",
+	"tmpfs":   "tmpfs лежит в RAM — swap в нём бессмыслен",
+	"ramfs":   "ramfs лежит в RAM — swap в нём бессмыслен",
+	"overlay": "overlayfs (контейнер или live-система) не поддерживает swapfile",
+}
+
+// foreignFS — ФС Windows и флешек: swapfile на них Linux не поддерживает.
+var foreignFS = map[string]bool{"ntfs": true, "ntfs3": true, "vfat": true, "msdos": true, "exfat": true, "fuseblk": true}
+
+const foreignFSMsg = "swapfile на этой ФС не поддерживается Linux; создайте раздел ext4/xfs"
+
+// AssessFS — можно ли создать swapfile на ФС. short — пометка для списка.
+func AssessFS(fi detect.FSInfo) (ok bool, reason, short string) {
+	t := fi.FSType
+	switch {
+	case fi.Error != nil:
+		return false, "не удалось определить ФС: " + fi.Error.Detail, "ФС не определена"
+	case fi.ReadOnly:
+		return false, t + " смонтирована только для чтения", "только чтение — не подходит"
+	case fi.Network:
+		return false, t + ": сетевая ФС — swap поверх сети ненадёжен и не поддерживается", "сетевая ФС — не подходит"
+	case foreignFS[t]:
+		return false, t + ": " + foreignFSMsg, "не подходит"
+	case unsupportedFS[t] != "":
+		return false, t + ": " + unsupportedFS[t], "не подходит"
+	case strings.HasPrefix(t, "fuse"):
+		return false, t + ": FUSE не поддерживает swapfile", "не подходит"
+	case t == "ext4" || t == "xfs" || t == "btrfs":
+		return true, "", ""
+	case t == "":
+		return false, "не удалось определить ФС", "ФС не определена"
+	default:
+		return false, t + ": не поддерживается RamPlus (поддерживаются ext4, xfs, btrfs)", "не подходит"
+	}
+}
+
+func kindText(k string) string {
+	switch k {
+	case detect.KindNVMe:
+		return "NVMe"
+	case detect.KindSSD:
+		return "SSD"
+	case detect.KindHDD:
+		return "HDD"
+	case detect.KindVirtual:
+		return "виртуальный диск"
+	default:
+		return "тип не определён"
+	}
+}
+
+func onUSB(fi detect.FSInfo) bool { return detect.HasTransport(fi.Disks, "usb") }
+
+// AssessDisk — оценка диска под ФС: уровень проверки, сообщение и пометка.
+func AssessDisk(fi detect.FSInfo, force bool) (Level, string, string) {
+	switch {
+	case onUSB(fi) && force:
+		return LevelWarn, "swap на USB-диске медленный и опасный при отключении — продолжаем из-за --force", "USB"
+	case onUSB(fi):
+		return LevelFail, "swap на USB-диске медленный и опасный при отключении (выдернули диск — процессы со страницами в swap упадут). Чтобы всё равно продолжить: --force", "USB — нужен --force"
+	case fi.Kind == detect.KindVirtual:
+		return LevelInfo, "виртуальный диск: скорость зависит от хоста", "виртуальный диск"
+	case fi.Kind == detect.KindHDD:
+		return LevelWarn, "HDD: swap будет медленным", "HDD — медленно"
+	case len(fi.Disks) == 0 || fi.Kind == detect.KindUnknown:
+		return LevelWarn, "тип диска не определён", "тип диска не определён"
+	default:
+		return LevelOK, fmt.Sprintf("%s (%s)", kindText(fi.Kind), fi.Disks[0].Transport), ""
+	}
+}
+
+// fsMethod — способ создания swapfile.
 type fsMethod string
 
 const (
@@ -212,62 +319,78 @@ const (
 	methodBtrfsChattr fsMethod = "btrfs-chattr"
 )
 
-var unsupportedFS = map[string]string{
-	"zfs":     "ZFS не поддерживает swapfile (возможны зависания под нагрузкой); используйте zvol или zram",
-	"tmpfs":   "tmpfs лежит в RAM — swap в нём бессмыслен",
-	"ramfs":   "ramfs лежит в RAM — swap в нём бессмыслен",
-	"overlay": "overlayfs (контейнер или live-система) не поддерживает swapfile",
-	"nfs":     "сетевая ФС: swap поверх NFS ненадёжен и не поддерживается",
-	"nfs4":    "сетевая ФС: swap поверх NFS ненадёжен и не поддерживается",
-	"cifs":    "сетевая ФС: swap поверх SMB не поддерживается",
-	"fuse":    "FUSE не поддерживает swapfile",
+func methodFor(f Facts, fsType string) fsMethod {
+	switch {
+	case fsType != "btrfs":
+		return methodFallocate
+	case f.HasMkswapfile:
+		return methodBtrfsTool
+	default:
+		return methodBtrfsChattr
+	}
 }
 
-// checkFS проверяет ФС корня и возвращает путь, каталог (для btrfs) и метод.
-func (p *Plan) checkFS(f Facts) (path, dir string, m fsMethod, ok bool) {
-	fsType := f.Root.FSType
-	switch {
-	case fsType == "ext4" || fsType == "xfs":
-		p.add(LevelOK, "ФС", "%s на %s: swapfile через fallocate", fsType, f.Root.Source)
-		return ManagedPath, "", methodFallocate, true
-	case fsType == "btrfs":
-		if !f.HasBtrfs || !f.HasChattr {
-			p.add(LevelFail, "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
-			return "", "", "", false
-		}
-		// Каталог всегда NOCOW: тогда и пересоздание файла при откате или
-		// resize даёт корректный swapfile.
-		if f.HasMkswapfile {
-			p.add(LevelOK, "ФС", "btrfs: отдельный подтом %s с chattr +C (NOCOW) + btrfs filesystem mkswapfile", BtrfsDir)
-			return BtrfsPath, BtrfsDir, methodBtrfsTool, true
-		}
-		p.add(LevelOK, "ФС", "btrfs: отдельный подтом %s с chattr +C (NOCOW) + fallocate + mkswap (btrfs-progs < 6.1)", BtrfsDir)
-		return BtrfsPath, BtrfsDir, methodBtrfsChattr, true
-	case fsType == "":
-		p.add(LevelFail, "ФС", "не удалось определить ФС корня")
-	case strings.HasPrefix(fsType, "fuse"):
-		p.add(LevelFail, "ФС", "%s: %s", fsType, unsupportedFS["fuse"])
-	case unsupportedFS[fsType] != "":
-		p.add(LevelFail, "ФС", "%s: %s", fsType, unsupportedFS[fsType])
-	default:
-		p.add(LevelFail, "ФС", "%s: не поддерживается (поддерживаются ext4, xfs, btrfs)", fsType)
+// checkTargetFS — проверки ФС под путём swapfile.
+func (p *Plan) checkTargetFS(f Facts) (fsMethod, bool) {
+	fi := f.Target.FS
+	ok, reason, _ := AssessFS(fi)
+	if !ok {
+		p.add(LevelFail, "ФС", "%s", reason)
+		return "", false
 	}
-	return "", "", "", false
+	where := fmt.Sprintf("%s на %s (точка монтирования %s)", fi.FSType, fi.Source, fi.MountPoint)
+	if fi.FSType != "btrfs" {
+		p.add(LevelOK, "ФС", "%s: swapfile через fallocate", where)
+		return methodFallocate, true
+	}
+	if !f.HasBtrfs || !f.HasChattr {
+		p.add(LevelFail, "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
+		return "", false
+	}
+	m := methodFor(f, "btrfs")
+	how := "chattr +C (NOCOW) + fallocate + mkswap"
+	if m == methodBtrfsTool {
+		how = "btrfs filesystem mkswapfile"
+	}
+	if f.Target.Path == BtrfsPath {
+		p.add(LevelOK, "ФС", "%s: отдельный NOCOW-подтом %s, %s", where, BtrfsDir, how)
+	} else {
+		p.add(LevelOK, "ФС", "%s: %s", where, how)
+		p.add(LevelWarn, "btrfs", "снапшоты подтома с активным swapfile не создаются (snapper/timeshift будут падать); безопаснее путь по умолчанию — отдельный подтом %s", BtrfsDir)
+	}
+	return m, true
 }
 
-func (p *Plan) checkDiskType(f Facts) {
-	switch {
-	case f.onUSB() && p.Options.Force:
-		p.add(LevelWarn, "диск", "swap на USB-диске медленный и опасный при отключении — продолжаем из-за --force")
-	case f.onUSB():
-		p.add(LevelFail, "диск", "swap на USB-диске медленный и опасный при отключении (выдернули диск — процессы со страницами в swap упадут). Чтобы всё равно продолжить: --force")
-	case len(f.Root.Disks) == 0:
-		p.add(LevelWarn, "диск", "тип диска под / не определён")
-	case f.Root.Kind == "hdd":
-		p.add(LevelWarn, "диск", "корень на HDD: swap будет медленным")
-	default:
-		p.add(LevelOK, "диск", "корень на %s (%s)", strings.ToUpper(f.Root.Kind), f.Root.Disks[0].Transport)
+func (p *Plan) checkDisk(fi detect.FSInfo) {
+	level, msg, _ := AssessDisk(fi, p.Options.Force)
+	p.add(level, "диск", "%s", msg)
+}
+
+var forbiddenDirs = []string{"/proc", "/sys", "/dev", "/run", "/tmp", "/var/tmp", "/boot"}
+
+// checkPath — проверки самого пути swapfile (apply).
+func (p *Plan) checkPath(f Facts) bool {
+	t := f.Target
+	if !filepath.IsAbs(t.Path) {
+		p.add(LevelFail, "путь", "--path должен быть абсолютным: %q", t.Requested)
+		return false
 	}
+	for _, d := range forbiddenDirs {
+		if t.Path == d || strings.HasPrefix(t.Path, d+"/") {
+			p.add(LevelFail, "путь", "%s: в %s swapfile создавать нельзя (виртуальная ФС или очищается при загрузке)", t.Path, d)
+			return false
+		}
+	}
+	if t.ParentErr != nil {
+		p.add(LevelFail, "путь", "каталог %s недоступен: %v — создайте его или выберите другой путь", filepath.Dir(t.Path), t.ParentErr)
+		return false
+	}
+	how := "указан --path"
+	if t.Defaulted {
+		how = "по умолчанию"
+	}
+	p.add(LevelInfo, "путь", "%s (%s)", t.Path, how)
+	return true
 }
 
 // fileSteps — создание swapfile (без каталога, swapon и юнита).
@@ -279,27 +402,17 @@ func fileSteps(path string, size uint64, m fsMethod) []Step {
 		}
 	}
 	return []Step{
-		{Kind: KindAllocate, Path: path, Size: size},
+		{Kind: KindAllocate, Path: path, Size: size, NoCOW: m == methodBtrfsChattr},
 		{Kind: KindChmod, Path: path, Mode: 0o600},
 		{Kind: KindMkswap, Path: path},
 	}
-}
-
-func methodFor(f Facts, fsType string) fsMethod {
-	if fsType != "btrfs" {
-		return methodFallocate
-	}
-	if f.HasMkswapfile {
-		return methodBtrfsTool
-	}
-	return methodBtrfsChattr
 }
 
 // otherSwaps — активный swap, не принадлежащий RamPlus и не zram.
 func otherSwaps(f Facts) []monitor.SwapDevice {
 	var out []monitor.SwapDevice
 	for _, s := range f.Swaps {
-		if !isZram(s.Path) && !isOurPath(s.Path) && (f.State.Managed == nil || s.Path != f.State.Managed.Path) {
+		if !isZram(s.Path) && !f.isOurPath(s.Path) {
 			out = append(out, s)
 		}
 	}
@@ -317,7 +430,7 @@ func choosePriority(f Facts) (prio int, note string, conflict bool) {
 				zramMin = s.Priority
 			}
 			hasZram = true
-		case !isOurPath(s.Path):
+		case !f.isOurPath(s.Path):
 			if s.Priority > maxDisk {
 				maxDisk = s.Priority
 			}
@@ -354,8 +467,9 @@ func (p *Plan) planApply(f Facts) {
 		return
 	}
 	sizeOK := p.checkSize(o.Size)
-	path, dir, method, fsOK := p.checkFS(f)
-	p.checkDiskType(f)
+	pathOK := p.checkPath(f)
+	method, fsOK := p.checkTargetFS(f)
+	p.checkDisk(f.Target.FS)
 
 	others := otherSwaps(f)
 	switch {
@@ -387,8 +501,13 @@ func (p *Plan) planApply(f Facts) {
 		p.add(LevelInfo, "приоритет", "новый swap получит приоритет %d (%s)", prio, note)
 	}
 
-	if !fsOK {
+	if !pathOK || !fsOK {
 		return
+	}
+	path := f.Target.Path
+	dir := ""
+	if path == BtrfsPath && f.Target.FS.FSType == "btrfs" {
+		dir = BtrfsDir
 	}
 	unit := UnitName(path)
 	unitPath := filepath.Join(UnitDir, unit)
@@ -441,7 +560,7 @@ func (p *Plan) planApply(f Facts) {
 		p.Steps = append(p.Steps, deletes...)
 	}
 
-	p.ManagedAfter = &Managed{Path: path, Dir: dir, SizeBytes: o.Size, Priority: prio, Unit: unit, FSType: f.Root.FSType}
+	p.ManagedAfter = &Managed{Path: path, Dir: dir, SizeBytes: o.Size, Priority: prio, Unit: unit, FSType: f.Target.FS.FSType}
 }
 
 func (p *Plan) checkResume(f Facts, what string) {
@@ -470,10 +589,9 @@ func (p *Plan) planResize(f Facts) {
 		return
 	}
 	p.add(LevelInfo, "размер", "%s → %s", FormatSize(m.SizeBytes), FormatSize(o.Size))
-	p.checkDiskType(f)
-	method := methodFor(f, m.FSType)
-	if m.FSType == "btrfs" && !f.HasBtrfs {
-		p.add(LevelFail, "ФС", "btrfs: нужна утилита btrfs (btrfs-progs)")
+	p.checkDisk(f.Target.FS)
+	if m.FSType == "btrfs" && (!f.HasBtrfs || !f.HasChattr) {
+		p.add(LevelFail, "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
 	}
 	if _, active := f.swapByPath(m.Path); active {
 		p.Steps = append(p.Steps, Step{Kind: KindSwapoff, Path: m.Path, Priority: m.Priority, Size: m.SizeBytes})
@@ -481,9 +599,9 @@ func (p *Plan) planResize(f Facts) {
 		p.add(LevelWarn, "swap RamPlus", "%s сейчас не активен", m.Path)
 	}
 	if f.Exists[m.Path] {
-		p.Steps = append(p.Steps, Step{Kind: KindDeleteSwapfile, Path: m.Path, Size: m.SizeBytes})
+		p.Steps = append(p.Steps, Step{Kind: KindDeleteSwapfile, Path: m.Path, Size: m.SizeBytes, NoCOW: m.FSType == "btrfs"})
 	}
-	p.Steps = append(p.Steps, fileSteps(m.Path, o.Size, method)...)
+	p.Steps = append(p.Steps, fileSteps(m.Path, o.Size, methodFor(f, m.FSType))...)
 	p.Steps = append(p.Steps, Step{Kind: KindSwapon, Path: m.Path, Priority: m.Priority, Size: o.Size})
 	after := *m
 	after.SizeBytes = o.Size
@@ -508,7 +626,7 @@ func (p *Plan) planRemove(f Facts) {
 		)
 	}
 	if f.Exists[m.Path] {
-		p.Steps = append(p.Steps, Step{Kind: KindDeleteSwapfile, Path: m.Path, Size: m.SizeBytes})
+		p.Steps = append(p.Steps, Step{Kind: KindDeleteSwapfile, Path: m.Path, Size: m.SizeBytes, NoCOW: m.FSType == "btrfs"})
 	}
 	if m.Dir != "" {
 		p.Steps = append(p.Steps, Step{Kind: KindBtrfsSubvolDelete, Path: m.Dir})
@@ -557,41 +675,54 @@ func (p *Plan) planRollback(f Facts) {
 	p.Target = &op
 	p.add(LevelInfo, "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
 	if op.Status == OpInProgress {
-		p.add(LevelWarn, "rollback", "операция была прервана посреди выполнения — откатываются только записанные в журнал шаги")
+		p.add(LevelWarn, "rollback", "операция была прервана посреди выполнения — откатываются записанные в журнал шаги")
+		if r := f.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
+			step := r.Pending.Step.Describe()
+			switch r.Verdict {
+			case VerdictPresent:
+				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — будет откачен", step, r.Detail)
+				p.Steps = append(p.Steps, r.Pending.Undo...)
+			case VerdictAbsent:
+				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — откатывать нечего", step, r.Detail)
+			default:
+				p.add(LevelFail, "прерванный шаг", "«%s»: %s — RamPlus не будет это трогать, нужна ручная проверка", step, r.Detail)
+			}
+		}
 	}
-	p.Steps = UndoSteps(op.Applied)
+	p.Steps = append(p.Steps, UndoSteps(op.Applied)...)
 	p.ManagedAfter = op.ManagedBefore
 }
 
-// diskCheck: после создания должно остаться ≥ 10% диска и ≥ 5 GiB.
+// diskCheck: после создания на ФС цели должно остаться RequiredFree.
 func (p *Plan) diskCheck(f Facts) {
+	fi := f.Target.FS
 	var running, peak int64
 	for _, s := range p.Steps {
 		switch s.Kind {
 		case KindAllocate, KindBtrfsMkswapfile:
 			running += int64(s.Size)
 		case KindDeleteSwapfile:
-			if isOurPath(s.Path) {
+			if f.isOurPath(s.Path) {
 				running -= int64(s.Size)
 			}
 		}
 		peak = max(peak, running)
 	}
-	required := max(f.DiskTotal/100*minFreeAfterPct, minFreeAfterBytes)
-	if p.Action == ActionApply && f.DiskErr == nil && f.DiskAvail > required {
-		p.MaxSize = (f.DiskAvail - required) / MiB * MiB
+	if p.Action == ActionApply {
+		p.MaxSize = MaxSwapSize(fi)
 	}
 	if peak == 0 {
 		return
 	}
-	if f.DiskErr != nil {
-		p.add(LevelFail, "место", "не удалось узнать свободное место на /: %v", f.DiskErr)
+	if fi.TotalBytes == nil || fi.AvailableBytes == nil {
+		p.add(LevelFail, "место", "не удалось узнать свободное место на %s", fi.MountPoint)
 		return
 	}
-	remaining := int64(f.DiskAvail) - peak
-	msg := fmt.Sprintf("на / доступно %s из %s; после создания останется %s, нужно ≥ %s (≥ %d%% диска и ≥ %s)",
-		FormatSize(f.DiskAvail), FormatSize(f.DiskTotal), formatSigned(remaining), FormatSize(required),
-		minFreeAfterPct, FormatSize(minFreeAfterBytes))
+	total, avail := *fi.TotalBytes, *fi.AvailableBytes
+	required := RequiredFree(total)
+	remaining := int64(avail) - peak
+	msg := fmt.Sprintf("на %s доступно %s из %s; после создания останется %s, нужно ≥ %s (%s)",
+		fi.MountPoint, FormatSize(avail), FormatSize(total), formatSigned(remaining), FormatSize(required), requiredFreeText())
 	switch {
 	case remaining >= int64(required):
 		p.add(LevelOK, "место", "%s", msg)
@@ -681,7 +812,7 @@ func (p *Plan) summarize(f Facts) {
 		case KindSwapoff:
 			delete(active, s.Path)
 			disabled[s.Path] = true
-		case KindDeleteSwapfile, KindDeleteConfig, KindRemoveFile, KindRmdir, KindBtrfsSubvolDelete:
+		case KindDeleteSwapfile, KindDeleteConfig, KindRmdir, KindBtrfsSubvolDelete:
 			if created[s.Path] {
 				delete(created, s.Path)
 			} else {
@@ -696,15 +827,9 @@ func (p *Plan) summarize(f Facts) {
 	for _, sz := range active {
 		p.SwapAfter += sz
 	}
-	// swapoff+swapon того же пути (resize) — не «отключение».
-	for path := range disabled {
+	for path := range disabled { // swapoff+swapon того же пути (resize) — не «отключение»
 		if _, on := active[path]; on {
 			delete(disabled, path)
-		}
-	}
-	for path := range deleted {
-		if created[path] {
-			delete(deleted, path)
 		}
 	}
 	p.Created, p.Disabled, p.Deleted = sortedKeys(created), sortedKeys(disabled), sortedKeys(deleted)
@@ -731,19 +856,64 @@ func swapList(devs []monitor.SwapDevice) string {
 	return strings.Join(parts, ", ")
 }
 
+// candidateSummary — описание варианта места для swapfile.
+func candidateSummary(fi detect.FSInfo, size uint64, force bool) string {
+	parts := []string{fi.FSType + " на " + fi.Source}
+	if len(fi.Disks) > 0 {
+		parts = append(parts, kindText(fi.Kind)+"/"+fi.Disks[0].Transport)
+	}
+	if fi.AvailableBytes != nil && fi.TotalBytes != nil {
+		parts = append(parts, fmt.Sprintf("свободно %s из %s", FormatSize(*fi.AvailableBytes), FormatSize(*fi.TotalBytes)))
+	}
+	var marks []string
+	if ok, _, short := AssessFS(fi); !ok {
+		marks = append(marks, short)
+	} else {
+		if _, _, short := AssessDisk(fi, force); short != "" {
+			marks = append(marks, short)
+		}
+		maxSize := MaxSwapSize(fi)
+		switch {
+		case maxSize < MinSize:
+			marks = append(marks, "мало места")
+		case size > maxSize:
+			marks = append(marks, "мало места: можно до "+FormatSize(maxSize))
+		default:
+			marks = append(marks, "можно до "+FormatSize(maxSize))
+		}
+	}
+	return strings.Join(parts, ", ") + " — " + strings.Join(marks, "; ")
+}
+
 // applyChoices — выбор пользователя и альтернативы с последствиями.
 func applyChoices(f Facts, o Options, p Plan) []Choice {
+	// Место.
+	where := Choice{Title: "Место", Flag: "--path", Value: f.Target.Path, Defaulted: f.Target.Defaulted}
+	selected := false
+	for _, fi := range f.Candidates {
+		alt := Alternative{Value: SuggestedPath(fi), Summary: candidateSummary(fi, o.Size, o.Force)}
+		if fi.MountPoint == f.Target.FS.MountPoint && !selected {
+			alt.Value, alt.Selected, selected = f.Target.Path, true, true
+		}
+		where.Alternatives = append(where.Alternatives, alt)
+	}
+	if !selected && f.Target.FS.MountPoint != "" {
+		where.Alternatives = append([]Alternative{{Value: f.Target.Path, Selected: true,
+			Summary: candidateSummary(f.Target.FS, o.Size, o.Force)}}, where.Alternatives...)
+	}
+	where.Note = "варианты — смонтированные ФС; другой путь: --path /точка/монтирования/" + DefaultFileName
+
 	size := Choice{Title: "Размер", Flag: "--size", Value: "не указан"}
 	if o.Size > 0 {
 		size.Value = FormatSize(o.Size)
 	}
 	switch {
 	case p.MaxSize >= MinSize:
-		size.Note = "при текущем свободном месте допустимо до " + FormatSize(p.MaxSize)
-	case f.DiskErr == nil && f.DiskTotal > 0:
-		size.Note = "свободного места не хватает даже на минимальный swap (" + FormatSize(MinSize) + ")"
+		size.Note = fmt.Sprintf("на %s допустимо до %s", f.Target.FS.MountPoint, FormatSize(p.MaxSize))
+	case f.Target.FS.TotalBytes != nil:
+		size.Note = fmt.Sprintf("на %s не хватает места даже на минимальный swap (%s)", f.Target.FS.MountPoint, FormatSize(MinSize))
 	}
-	choices := []Choice{size}
+	choices := []Choice{where, size}
 
 	others := otherSwaps(f)
 	if len(others) == 0 {

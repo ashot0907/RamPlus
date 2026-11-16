@@ -1,0 +1,1 @@
+{"config":"no-swap","workload":"hot","data":"stress-ng","run":1,"status":"failed","exit_code":3,"duration_s":0.4,"note":"exit 3"}

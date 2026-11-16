@@ -12,15 +12,31 @@ import (
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
+// Target — куда ляжет swapfile.
+type Target struct {
+	Path      string // абсолютный путь (каталог с разрешёнными симлинками)
+	Requested string // как указал пользователь ("" — по умолчанию)
+	Defaulted bool
+	ParentErr error // каталог не существует или недоступен
+	FS        detect.FSInfo
+}
+
+// Recovery — незавершённая операция, найденная в журнале.
+type Recovery struct {
+	OpID    string
+	Pending *Applied // запись pending (процесс упал посреди шага), может быть nil
+	Verdict Verdict
+	Detail  string
+}
+
 // Facts — всё, что планировщик знает о системе. Собирается Gather (только
 // чтение); в тестах заполняется вручную.
 type Facts struct {
 	EUID int
 
-	Root      detect.RootDisk
-	DiskTotal uint64 // statfs("/")
-	DiskAvail uint64
-	DiskErr   error
+	Target     Target
+	RootFS     detect.FSInfo
+	Candidates []detect.FSInfo
 
 	Swaps    []monitor.SwapDevice
 	SwapsErr error
@@ -35,21 +51,47 @@ type Facts struct {
 
 	State    State
 	StateErr error
+	Recovery *Recovery
 
 	Systemd       bool
 	HasBtrfs      bool
 	HasMkswapfile bool
 	HasChattr     bool
 
-	// Exists — какие из наших путей уже существуют.
+	// Exists — какие из интересующих путей уже существуют.
 	Exists map[string]bool
 }
 
-// Gather собирает факты. Ничего не меняет и не требует root.
-func Gather(ctx context.Context, sys System) Facts {
+// DefaultPathFor — путь swapfile по умолчанию для ФС корня.
+func DefaultPathFor(rootFSType string) string {
+	if rootFSType == "btrfs" {
+		return BtrfsPath
+	}
+	return ManagedPath
+}
+
+// SuggestedPath — путь swapfile на точке монтирования.
+func SuggestedPath(fi detect.FSInfo) string {
+	if fi.MountPoint == "/" {
+		return DefaultPathFor(fi.FSType)
+	}
+	return filepath.Join(fi.MountPoint, DefaultFileName)
+}
+
+// Gather собирает факты. Ничего не меняет и не требует root. requested —
+// значение --path ("" — путь по умолчанию или путь уже созданного swap).
+func Gather(ctx context.Context, sys System, requested string) Facts {
 	f := Facts{EUID: sys.Kernel.Geteuid(), FstabResolved: map[string]string{}, Exists: map[string]bool{}}
-	f.Root = sys.RootDisk()
-	f.DiskTotal, f.DiskAvail, f.DiskErr = sys.FS.Statfs("/")
+
+	if b, err := sys.FS.ReadFile(StatePath); err == nil {
+		f.State, f.StateErr = ParseState(b)
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		f.StateErr = err
+	}
+
+	f.RootFS = sys.DescribeFS("/")
+	f.Target = resolveTarget(sys, requested, f.State.Managed, f.RootFS)
+	f.Candidates = sys.ListFS()
 
 	if b, err := sys.FS.ReadFile(SwapsPath); err != nil {
 		f.SwapsErr = err
@@ -76,16 +118,11 @@ func Gather(ctx context.Context, sys System) Facts {
 			}
 		}
 	}
-	if b, err := sys.FS.ReadFile(StatePath); err == nil {
-		f.State, f.StateErr = ParseState(b)
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		f.StateErr = err
-	}
 
 	_, err := sys.FS.Stat(SystemdRunDir)
 	f.Systemd = err == nil
 
-	if f.Root.FSType == "btrfs" {
+	if f.Target.FS.FSType == "btrfs" {
 		if _, err := sys.Exec.LookPath("btrfs"); err == nil {
 			f.HasBtrfs = true
 			// btrfs-progs >= 6.1; старые версии отвечают ошибкой на неизвестную команду.
@@ -96,18 +133,59 @@ func Gather(ctx context.Context, sys System) Facts {
 		f.HasChattr = err == nil
 	}
 
-	for _, p := range []string{ManagedPath, BtrfsPath, BtrfsDir,
-		filepath.Join(UnitDir, UnitName(ManagedPath)), filepath.Join(UnitDir, UnitName(BtrfsPath))} {
+	check := []string{f.Target.Path, filepath.Join(UnitDir, UnitName(f.Target.Path))}
+	if f.Target.Path == BtrfsPath {
+		check = append(check, BtrfsDir)
+	}
+	if m := f.State.Managed; m != nil {
+		check = append(check, m.Path, filepath.Join(UnitDir, m.Unit))
+	}
+	for _, p := range check {
 		if _, err := sys.FS.Stat(p); err == nil {
 			f.Exists[p] = true
 		}
 	}
-	if m := f.State.Managed; m != nil {
-		if _, err := sys.FS.Stat(filepath.Join(UnitDir, m.Unit)); err == nil {
-			f.Exists[filepath.Join(UnitDir, m.Unit)] = true
+
+	if op := f.State.Pending(); op != nil {
+		rec := &Recovery{OpID: op.ID}
+		if n := len(op.Applied); n > 0 && op.Applied[n-1].Status == StepPending {
+			a := op.Applied[n-1]
+			rec.Pending = &a
+			rec.Verdict, rec.Detail = VerifyPending(sys, a)
 		}
+		f.Recovery = rec
 	}
 	return f
+}
+
+func resolveTarget(sys System, requested string, managed *Managed, root detect.FSInfo) Target {
+	t := Target{Requested: requested}
+	path := requested
+	switch {
+	case path != "":
+	case managed != nil:
+		path = managed.Path
+	default:
+		path = DefaultPathFor(root.FSType)
+		t.Defaulted = true
+	}
+	path = filepath.Clean(path)
+	if filepath.IsAbs(path) {
+		// Каталог разрешаем: в юнит и журнал попадает реальный путь.
+		dir := filepath.Dir(path)
+		if path == BtrfsPath && t.Defaulted {
+			dir = "/" // каталог /ramplus-swap создаст RamPlus
+		} else if real, err := sys.FS.EvalSymlinks(dir); err != nil {
+			t.ParentErr = err
+		} else if st, err := sys.FS.Stat(real); err != nil || !st.IsDir() {
+			t.ParentErr = &fs.PathError{Op: "stat", Path: real, Err: errors.New("не каталог")}
+		} else if path != BtrfsPath {
+			path = filepath.Join(real, filepath.Base(path))
+		}
+	}
+	t.Path = path
+	t.FS = sys.DescribeFS(path)
+	return t
 }
 
 // swapByPath ищет активный swap.
@@ -122,7 +200,13 @@ func (f Facts) swapByPath(path string) (monitor.SwapDevice, bool) {
 
 func isZram(path string) bool { return strings.HasPrefix(path, "/dev/zram") }
 
-func isOurPath(path string) bool { return path == ManagedPath || path == BtrfsPath }
+// isOurPath — путь swap RamPlus: из журнала или один из путей по умолчанию.
+func (f Facts) isOurPath(path string) bool {
+	if m := f.State.Managed; m != nil && m.Path == path {
+		return true
+	}
+	return path == ManagedPath || path == BtrfsPath
+}
 
 // fstabEntriesFor — строки fstab, описывающие активный swap path.
 func (f Facts) fstabEntriesFor(path string) []FstabEntry {
@@ -134,5 +218,3 @@ func (f Facts) fstabEntriesFor(path string) []FstabEntry {
 	}
 	return out
 }
-
-func (f Facts) onUSB() bool { return detect.HasTransport(f.Root.Disks, "usb") }

@@ -44,10 +44,23 @@ type fakeWorld struct {
 	mkswapfile        bool
 	fallocUnsupported bool
 
-	failAt    int // упасть на N-м изменяющем вызове (0 — никогда)
+	failAt    int  // упасть на N-м изменяющем вызове (0 — никогда)
+	crash     bool // вместо ошибки — «падение процесса» (panic crashed{})
 	mutations int
-	log       []string
+	// mounts — дополнительные ФС для --path (точка монтирования → описание).
+	mounts map[string]fakeMount
+	log    []string
 }
+
+// fakeMount — ФС в фейковой системе.
+type fakeMount struct {
+	fsType, transport, kind string
+	total, avail            uint64
+	readOnly, network       bool
+}
+
+// crashed — «процесс упал»: тест перехватывает panic.
+type crashed struct{ at string }
 
 const defaultFstab = "# /etc/fstab\n/dev/disk/by-uuid/1111 / ext4 defaults 0 1\n"
 
@@ -55,7 +68,8 @@ func newWorld(t *testing.T) *fakeWorld {
 	w := &fakeWorld{
 		t: t, files: map[string]*fakeFile{}, links: map[string]string{},
 		active: map[string]int{}, used: map[string]uint64{}, enabled: map[string]bool{},
-		euid: 0, fsType: "ext4", transport: "nvme",
+		mounts: map[string]fakeMount{},
+		euid:   0, fsType: "ext4", transport: "nvme",
 		total: 500 * GiB, avail: 300 * GiB, memAvail: 8 * GiB,
 		cmdline: "BOOT_IMAGE=/vmlinuz root=UUID=1111 ro quiet",
 	}
@@ -78,24 +92,62 @@ func (w *fakeWorld) withOldSwap(used uint64) *fakeWorld {
 func (w *fakeWorld) sys() System {
 	return System{
 		FS: &fakeFS{w}, Exec: &fakeExec{w}, Kernel: &fakeKernel{w},
-		RootDisk: func() detect.RootDisk {
-			kind := detect.KindNVMe
-			if w.transport == "usb" {
-				kind = detect.KindHDD
+		DescribeFS: w.describeFS,
+		ListFS: func() []detect.FSInfo {
+			out := []detect.FSInfo{w.describeFS("/")}
+			mps := make([]string, 0, len(w.mounts))
+			for mp := range w.mounts {
+				mps = append(mps, mp)
 			}
-			return detect.RootDisk{
-				MountPoint: "/", Source: "/dev/sda2", FSType: w.fsType, Kind: kind,
-				Disks: []detect.BlockDevice{{Name: "sda", Kind: kind, Transport: w.transport}},
+			sort.Strings(mps)
+			for _, mp := range mps {
+				out = append(out, w.describeFS(mp))
 			}
+			return out
 		},
 		Now: func() time.Time { return time.Date(2026, 11, 16, 12, 0, w.mutations%60, 0, time.UTC) },
 	}
+}
+
+func (w *fakeWorld) mount(path string) (string, fakeMount) {
+	best, m := "/", fakeMount{fsType: w.fsType, transport: w.transport, total: w.total, avail: w.avail}
+	for mp, fm := range w.mounts {
+		if (path == mp || strings.HasPrefix(path, mp+"/")) && len(mp) > len(best) {
+			best, m = mp, fm
+		}
+	}
+	return best, m
+}
+
+func (w *fakeWorld) describeFS(path string) detect.FSInfo {
+	mp, m := w.mount(path)
+	kind := m.kind
+	if kind == "" {
+		kind = detect.KindNVMe
+		if m.transport == "usb" {
+			kind = detect.KindHDD
+		}
+	}
+	total, avail := m.total, m.avail
+	fi := detect.FSInfo{
+		MountPoint: mp, Source: "/dev/fake" + strings.ReplaceAll(mp, "/", "_"), FSType: m.fsType,
+		ReadOnly: m.readOnly, Network: m.network, Kind: kind,
+		Disks:      []detect.BlockDevice{{Name: "sda", Kind: kind, Transport: m.transport}},
+		TotalBytes: &total, AvailableBytes: &avail,
+	}
+	if m.network {
+		fi.Disks, fi.Kind = []detect.BlockDevice{}, detect.KindUnknown
+	}
+	return fi
 }
 
 func (w *fakeWorld) mutate(op string) error {
 	w.mutations++
 	w.log = append(w.log, op)
 	if w.failAt != 0 && w.mutations == w.failAt {
+		if w.crash {
+			panic(crashed{op})
+		}
 		return fmt.Errorf("injected failure #%d at %s", w.mutations, op)
 	}
 	return nil
@@ -319,26 +371,28 @@ func (f *fakeFS) Chmod(name string, perm fs.FileMode) error {
 	return nil
 }
 
-func (f *fakeFS) create(op, name string, size uint64) (*fakeFile, error) {
-	if err := f.w.mutate(op + " " + name); err != nil {
-		return nil, err
+func (f *fakeFS) Create(name string, perm fs.FileMode) error {
+	if err := f.w.mutate("create " + name); err != nil {
+		return err
 	}
 	if _, ok := f.w.files[name]; ok {
-		return nil, &fs.PathError{Op: op, Path: name, Err: fs.ErrExist}
+		return &fs.PathError{Op: "create", Path: name, Err: fs.ErrExist}
 	}
 	parent, ok := f.w.files[filepath.Dir(name)]
 	if !ok || !parent.dir {
-		return nil, notExist(op, name)
+		return notExist("create", name)
 	}
-	file := &fakeFile{mode: 0o600, nocow: parent.nocow}
-	f.w.files[name] = file
-	return file, nil
+	f.w.files[name] = &fakeFile{mode: perm, nocow: parent.nocow}
+	return nil
 }
 
 func (f *fakeFS) Fallocate(name string, size uint64) error {
-	file, err := f.create("fallocate", name, size)
-	if err != nil {
+	if err := f.w.mutate("fallocate " + name); err != nil {
 		return err
+	}
+	file, ok := f.w.files[name]
+	if !ok {
+		return notExist("fallocate", name)
 	}
 	if f.w.fallocUnsupported {
 		return fmt.Errorf("%s: %w", name, ErrFallocateUnsupported)
@@ -348,15 +402,16 @@ func (f *fakeFS) Fallocate(name string, size uint64) error {
 }
 
 func (f *fakeFS) WriteZeros(name string, size uint64) error {
-	file, err := f.create("zeros", name, size)
-	if err != nil {
+	if err := f.w.mutate("zeros " + name); err != nil {
 		return err
+	}
+	file, ok := f.w.files[name]
+	if !ok {
+		return notExist("zeros", name)
 	}
 	file.size = size
 	return nil
 }
-
-func (f *fakeFS) Statfs(string) (uint64, uint64, error) { return f.w.total, f.w.avail, nil }
 
 func (f *fakeFS) Lock(string) (func() error, error) { return func() error { return nil }, nil }
 
@@ -418,8 +473,11 @@ func (e *fakeExec) Run(_ context.Context, name string, args ...string) ([]byte, 
 		w.files[last] = &fakeFile{size: size, mode: 0o600, swap: true, nocow: true}
 	case cmd == "chattr +C "+last:
 		f, ok := w.files[last]
-		if !ok {
+		switch {
+		case !ok:
 			return nil, notExist("chattr", last)
+		case !f.dir && f.size > 0:
+			return nil, fmt.Errorf("chattr: +C на непустом файле не действует: %s", last)
 		}
 		f.nocow = true
 	default:
@@ -447,7 +505,7 @@ func (k *fakeKernel) Swapon(path string, prio int) error {
 		return syscall.EINVAL // нет сигнатуры mkswap
 	case f.mode&0o077 != 0:
 		return fmt.Errorf("insecure permissions %o", f.mode)
-	case w.fsType == "btrfs" && strings.HasPrefix(path, BtrfsDir) && !f.nocow:
+	case w.fsOf(path) == "btrfs" && !f.nocow:
 		return syscall.EINVAL // btrfs отвергает COW-swapfile
 	case hasKey(w.active, path):
 		return syscall.EBUSY
@@ -468,3 +526,5 @@ func (k *fakeKernel) Swapoff(path string) error {
 	delete(w.used, path)
 	return nil
 }
+
+func (w *fakeWorld) fsOf(path string) string { _, m := w.mount(path); return m.fsType }

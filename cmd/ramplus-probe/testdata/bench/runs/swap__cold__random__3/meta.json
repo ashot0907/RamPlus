@@ -1,0 +1,1 @@
+{"config":"swap","workload":"cold","data":"random","run":3,"status":"oom","exit_code":137,"duration_s":20.1,"note":"SIGKILL"}

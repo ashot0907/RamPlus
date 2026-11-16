@@ -42,3 +42,21 @@ func TestSwapCommandsRegistered(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanFlags(t *testing.T) {
+	root := newRootCmd()
+	plan, _, _ := root.Find([]string{"swap", "plan"})
+	for _, flag := range []string{"size", "path", "existing", "delete-old", "force", "verbose"} {
+		if plan.Flags().Lookup(flag) == nil {
+			t.Errorf("plan lacks --%s", flag)
+		}
+	}
+	resize, _, _ := root.Find([]string{"swap", "resize"})
+	if resize.Flags().Lookup("path") != nil {
+		t.Error("--path is only for apply/plan")
+	}
+	o, _ := (&swapFlags{size: "4G", path: "/mnt/nvme/ramplus.swapfile"}).options(swap.ActionApply)
+	if o.Path != "/mnt/nvme/ramplus.swapfile" {
+		t.Errorf("path = %q", o.Path)
+	}
+}

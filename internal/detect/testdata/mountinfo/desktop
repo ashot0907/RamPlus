@@ -1,0 +1,11 @@
+22 1 0:21 / /sys rw,nosuid,nodev,noexec,relatime shared:7 - sysfs sysfs rw
+23 1 0:22 / /proc rw,nosuid,nodev,noexec,relatime shared:13 - proc proc rw
+33 1 8:2 / / rw,relatime shared:1 - ext4 /dev/sda2 rw
+40 33 8:1 / /boot/efi rw,relatime shared:30 - vfat /dev/sda1 rw,fmask=0077
+41 33 7:3 / /snap/core22/1380 ro,nodev,relatime shared:31 - squashfs /dev/loop3 ro
+50 33 0:60 / /var/lib/docker/overlay2/abc/merged rw,relatime - overlay overlay rw,lowerdir=/l
+60 33 0:30 /@data /mnt/data rw,relatime shared:40 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@data
+61 33 0:30 /@data/media /mnt/data/media rw,relatime shared:41 - btrfs /dev/nvme0n1p2 rw,ssd,subvol=/@data/media
+62 33 259:4 / /mnt/win ro,relatime shared:42 - fuseblk /dev/nvme1n1p3 ro,user_id=0
+70 33 0:70 / /mnt/nas rw,relatime shared:50 - nfs4 nas:/export rw,vers=4.2
+71 33 0:71 / /tmp rw,nosuid,nodev shared:51 - tmpfs tmpfs rw

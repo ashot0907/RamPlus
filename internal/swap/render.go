@@ -18,8 +18,16 @@ var levelTag = map[Level]string{
 	LevelOK: "[ok]  ", LevelInfo: "[info]", LevelWarn: "[warn]", LevelFail: "[FAIL]",
 }
 
+// RenderOptions — настройки вывода плана.
+type RenderOptions struct {
+	Verbose bool // полное содержимое записываемых файлов (systemd-юнит)
+}
+
 // Render печатает план для человека.
-func (p Plan) Render(w io.Writer) error {
+func (p Plan) Render(w io.Writer) error { return p.RenderWith(w, RenderOptions{}) }
+
+// RenderWith печатает план с настройками.
+func (p Plan) RenderWith(w io.Writer, opts RenderOptions) error {
 	f := p.facts
 	pr := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
 
@@ -44,18 +52,17 @@ func (p Plan) Render(w io.Writer) error {
 		fmt.Fprintf(tw, "  swap\t%s\t%s\t%s\tзанято %s\tприоритет %d\t%s\n",
 			s.Path, s.Type, FormatSize(s.SizeBytes), FormatSize(s.UsedBytes), s.Priority, strings.Join(tags, ", "))
 	}
-	root := f.Root.FSType
-	if root == "" {
-		root = "n/a"
+	fi := f.Target.FS
+	if fi.FSType != "" {
+		disk := "диск n/a"
+		if len(fi.Disks) > 0 {
+			d := fi.Disks[0]
+			disk = fmt.Sprintf("%s, %s, %s", d.Name, kindText(fi.Kind), d.Transport)
+		}
+		fmt.Fprintf(tw, "  ФС цели\t%s на %s, точка %s (%s)\n", fi.FSType, fi.Source, fi.MountPoint, disk)
 	}
-	disk := "n/a"
-	if len(f.Root.Disks) > 0 {
-		d := f.Root.Disks[0]
-		disk = fmt.Sprintf("%s, %s, %s", d.Name, strings.ToUpper(f.Root.Kind), d.Transport)
-	}
-	fmt.Fprintf(tw, "  корень\t%s на %s (%s)\n", root, f.Root.Source, disk)
-	if f.DiskErr == nil {
-		fmt.Fprintf(tw, "  место на /\tдоступно %s из %s\n", FormatSize(f.DiskAvail), FormatSize(f.DiskTotal))
+	if fi.TotalBytes != nil && fi.AvailableBytes != nil {
+		fmt.Fprintf(tw, "  место на %s\tдоступно %s из %s\n", fi.MountPoint, FormatSize(*fi.AvailableBytes), FormatSize(*fi.TotalBytes))
 	}
 	if v, ok := f.Mem["MemAvailable"]; ok {
 		fmt.Fprintf(tw, "  RAM\tдоступно %s из %s\n", FormatSize(v), FormatSize(f.Mem["MemTotal"]))
@@ -97,6 +104,16 @@ func (p Plan) Render(w io.Writer) error {
 	}
 	for i, s := range p.Steps {
 		pr("  %2d. %s\n", i+1, s.Describe())
+		if opts.Verbose && s.Kind == KindWriteFile {
+			pr("      ┌── %s\n", s.Path)
+			for _, line := range strings.Split(strings.TrimSuffix(s.Content, "\n"), "\n") {
+				pr("      │ %s\n", line)
+			}
+			pr("      └──\n")
+		}
+	}
+	if !opts.Verbose && hasKind(p.Steps, KindWriteFile) {
+		pr("  (содержимое записываемых файлов: --verbose)\n")
 	}
 
 	pr("\nИтог\n")
@@ -119,4 +136,13 @@ func (p Plan) Render(w io.Writer) error {
 	}
 	_, err := fmt.Fprintf(w, "Результат: план выполним. Применить: sudo %s\n", p.Options.Command())
 	return err
+}
+
+func hasKind(steps []Step, k StepKind) bool {
+	for _, s := range steps {
+		if s.Kind == k {
+			return true
+		}
+	}
+	return false
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,9 +15,12 @@ import (
 
 // Типы накопителей.
 const (
-	KindNVMe    = "nvme"
-	KindSSD     = "ssd"
-	KindHDD     = "hdd"
+	KindNVMe = "nvme"
+	KindSSD  = "ssd"
+	KindHDD  = "hdd"
+	// KindVirtual — диск виртуальной машины: rotational у него
+	// недостоверен, скорость зависит от хоста.
+	KindVirtual = "virtual"
 	KindUnknown = "unknown"
 )
 
@@ -27,15 +31,18 @@ type BlockDevice struct {
 	Rotational *bool   `json:"rotational"`
 	Transport  string  `json:"transport"`
 	Model      string  `json:"model,omitempty"`
+	Vendor     string  `json:"vendor,omitempty"`
 	SizeBytes  *uint64 `json:"size_bytes"`
 }
 
-// RootDisk — что лежит под корневой ФС.
-type RootDisk struct {
+// FSInfo — файловая система, которой принадлежит путь, и диски под ней.
+type FSInfo struct {
 	MountPoint string `json:"mount_point"`
 	Source     string `json:"source"`
 	Device     string `json:"device"` // имя в sysfs: sda2, nvme0n1p2, dm-0
 	FSType     string `json:"fs_type"`
+	ReadOnly   bool   `json:"read_only"`
+	Network    bool   `json:"network"`
 	// Kind — сводный тип по всем физическим дискам (худший из них).
 	Kind           string        `json:"kind"`
 	Disks          []BlockDevice `json:"disks"`
@@ -47,15 +54,55 @@ type RootDisk struct {
 	Error          *Unavailable  `json:"error,omitempty"`
 }
 
-// ClassifyDisk определяет тип накопителя по имени, транспорту и флагу
-// queue/rotational.
-func ClassifyDisk(name, transport string, rotational *bool) string {
+// RootDisk — ФС корня (в status — root_disk).
+type RootDisk = FSInfo
+
+// DiskHints — то, по чему определяется тип накопителя.
+type DiskHints struct {
+	Name       string
+	Transport  string
+	Rotational *bool
+	Model      string
+	Vendor     string
+	// Virt — тип виртуализации системы ("" — железо).
+	Virt string
+}
+
+// virtualModels — модели и производители виртуальных дисков.
+var virtualModels = []string{"qemu", "virtual disk", "vmware", "vbox", "virtio", "msft", "xen", "bochs"}
+
+// IsVirtualDisk: диск виртуальный, если об этом говорит шина (virtio, xen,
+// hyperv), имя (vd*, xvd*), модель/производитель, или система работает в VM
+// (кроме проброшенных USB-дисков).
+func IsVirtualDisk(h DiskHints) bool {
+	switch h.Transport {
+	case "virtio", "xen", "hyperv":
+		return true
+	case "usb":
+		return false
+	}
+	if strings.HasPrefix(h.Name, "vd") || strings.HasPrefix(h.Name, "xvd") {
+		return true
+	}
+	mv := strings.ToLower(h.Model + " " + h.Vendor)
+	for _, v := range virtualModels {
+		if strings.Contains(mv, v) {
+			return true
+		}
+	}
+	return h.Virt != ""
+}
+
+// ClassifyDisk определяет тип накопителя.
+func ClassifyDisk(h DiskHints) string {
 	switch {
-	case strings.HasPrefix(name, "nvme") || transport == "nvme":
+	case IsVirtualDisk(h):
+		return KindVirtual
+	case strings.HasPrefix(h.Name, "nvme") || h.Transport == "nvme":
 		return KindNVMe
-	case rotational == nil:
+	case h.Rotational == nil:
 		return KindUnknown
-	case *rotational:
+	case *h.Rotational:
 		return KindHDD
 	default:
 		return KindSSD
@@ -68,7 +115,7 @@ func SummarizeKind(kinds []string) string {
 	if len(kinds) == 0 {
 		return KindUnknown
 	}
-	rank := map[string]int{KindHDD: 3, KindUnknown: 2, KindSSD: 1, KindNVMe: 0}
+	rank := map[string]int{KindHDD: 4, KindUnknown: 3, KindVirtual: 2, KindSSD: 1, KindNVMe: 0}
 	worst := kinds[0]
 	for _, k := range kinds[1:] {
 		if rank[k] > rank[worst] {
@@ -88,6 +135,10 @@ func TransportFromSysPath(p string) string {
 		return "usb"
 	case strings.Contains(p, "/virtio"):
 		return "virtio"
+	case strings.Contains(p, "/xen/") || strings.Contains(p, "/vbd-") || strings.HasPrefix(filepath.Base(p), "xvd"):
+		return "xen"
+	case strings.Contains(strings.ToLower(p), "/vmbus"):
+		return "hyperv"
 	case strings.Contains(p, "/mmc_host/") || strings.HasPrefix(filepath.Base(p), "mmcblk"):
 		return "mmc"
 	case strings.Contains(p, "/ata"):
@@ -101,56 +152,151 @@ func TransportFromSysPath(p string) string {
 	}
 }
 
-// ReadRootDisk описывает диск под "/". Не возвращает ошибку: всё, что не
-// удалось узнать, отражено в полях *Error.
-func ReadRootDisk() RootDisk {
-	return readRootDisk("/proc/self/mountinfo", "/sys", "/")
+// ReadRootDisk описывает ФС корня.
+func ReadRootDisk() RootDisk { return DescribeFS("/") }
+
+// DescribeFS описывает ФС, которой принадлежит путь (путь может ещё не
+// существовать — ищется самая длинная точка монтирования-префикс).
+// Не возвращает ошибку: недоступное отражено в полях *Error.
+func DescribeFS(path string) FSInfo {
+	return describeFS("/proc/self/mountinfo", "/sys", Virtualization(), path)
 }
 
-func readRootDisk(mountinfoPath, sysRoot, mountPoint string) RootDisk {
-	rd := RootDisk{MountPoint: mountPoint, Kind: KindUnknown, Disks: []BlockDevice{}}
-
-	if total, free, avail, err := statfs(mountPoint); err != nil {
-		rd.SpaceError = NewUnavailable(err)
-	} else {
-		rd.TotalBytes, rd.FreeBytes, rd.AvailableBytes = &total, &free, &avail
-	}
-
-	f, err := os.Open(mountinfoPath)
+func describeFS(mountinfoPath, sysRoot, virt, path string) FSInfo {
+	fi := FSInfo{Kind: KindUnknown, Disks: []BlockDevice{}}
+	data, err := os.ReadFile(mountinfoPath)
 	if err != nil {
-		rd.Error = NewUnavailable(err)
-		return rd
+		fi.Error = NewUnavailable(err)
+		return fi
 	}
-	mounts, err := ParseMountinfo(f)
-	f.Close()
+	mounts, err := ParseMountinfo(bytes.NewReader(data))
 	if err != nil {
-		rd.Error = NewUnavailable(err)
-		return rd
+		fi.Error = NewUnavailable(err)
+		return fi
 	}
-	m, ok := FindMount(mounts, mountPoint)
+	m, ok := FindMountForPath(mounts, path)
 	if !ok {
-		rd.Error = NewUnavailable(fmt.Errorf("mount %s: %w", mountPoint, os.ErrNotExist))
-		return rd
+		fi.Error = NewUnavailable(fmt.Errorf("mount for %s: %w", path, os.ErrNotExist))
+		return fi
 	}
-	rd.Source, rd.FSType = m.Source, m.FSType
+	return fsFromMount(sysRoot, virt, m)
+}
 
+func fsFromMount(sysRoot, virt string, m Mount) FSInfo {
+	fi := FSInfo{
+		MountPoint: m.MountPoint, Source: m.Source, FSType: m.FSType,
+		ReadOnly: m.ReadOnly(), Network: IsNetworkFS(m.FSType),
+		Kind: KindUnknown, Disks: []BlockDevice{},
+	}
+	if total, free, avail, err := statfs(m.MountPoint); err != nil {
+		fi.SpaceError = NewUnavailable(err)
+	} else {
+		fi.TotalBytes, fi.FreeBytes, fi.AvailableBytes = &total, &free, &avail
+	}
 	maj, mnr := mountDevNum(m)
 	if maj == 0 {
-		// tmpfs, overlay, zfs и т.п. — блочного устройства нет.
-		rd.DiskError = &Unavailable{Reason: ReasonNotPresent, Detail: "no block device behind " + m.Source}
-		return rd
+		// tmpfs, overlay, zfs, сетевые ФС — блочного устройства нет.
+		fi.DiskError = &Unavailable{Reason: ReasonNotPresent, Detail: "no block device behind " + m.Source}
+		return fi
 	}
-
-	dev, disks, err := resolveBlockDevices(sysRoot, maj, mnr)
-	rd.Device = dev
+	dev, disks, err := resolveBlockDevices(sysRoot, virt, maj, mnr)
+	fi.Device = dev
 	if err != nil {
-		rd.DiskError = NewUnavailable(err)
+		fi.DiskError = NewUnavailable(err)
 	}
 	if len(disks) > 0 {
-		rd.Disks = disks
-		rd.Kind = summarizeDisks(disks)
+		fi.Disks = disks
+		fi.Kind = summarizeDisks(disks)
 	}
-	return rd
+	return fi
+}
+
+// networkFS — сетевые ФС.
+var networkFS = map[string]bool{
+	"nfs": true, "nfs4": true, "cifs": true, "smb3": true, "smbfs": true, "9p": true,
+	"ceph": true, "glusterfs": true, "fuse.sshfs": true, "fuse.glusterfs": true, "afs": true,
+}
+
+// IsNetworkFS сообщает, сетевая ли ФС.
+func IsNetworkFS(fsType string) bool { return networkFS[fsType] }
+
+// skipFS — ФС, которые не бывают местом для swapfile и только засоряют
+// список вариантов (образы snap, ISO).
+var skipFS = map[string]bool{"squashfs": true, "iso9660": true, "udf": true}
+
+// ListLocalFS — смонтированные ФС, пригодные для выбора места swapfile:
+// на блочных устройствах (по одной точке на устройство) и сетевые.
+// Корень всегда первый.
+func ListLocalFS() []FSInfo {
+	data, err := os.ReadFile("/proc/self/mountinfo")
+	if err != nil {
+		return nil
+	}
+	mounts, err := ParseMountinfo(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	var out []FSInfo
+	for _, m := range SelectCandidateMounts(mounts, mountDevNum) {
+		out = append(out, fsFromMount("/sys", Virtualization(), m))
+	}
+	return out
+}
+
+// SelectCandidateMounts выбирает точки монтирования для ListLocalFS.
+// devNum возвращает номер устройства (0 — нет блочного устройства).
+func SelectCandidateMounts(mounts []Mount, devNum func(Mount) (uint32, uint32)) []Mount {
+	type key struct{ maj, min uint32 }
+	best := map[key]int{}
+	var order []key
+	var network []Mount
+	for i, m := range mounts {
+		mp := m.MountPoint
+		if skipFS[m.FSType] || isSystemMount(mp) {
+			continue
+		}
+		if IsNetworkFS(m.FSType) {
+			network = append(network, m)
+			continue
+		}
+		maj, mnr := devNum(m)
+		if maj == 0 {
+			continue
+		}
+		k := key{maj, mnr}
+		j, seen := best[k]
+		switch {
+		case !seen:
+			best[k] = i
+			order = append(order, k)
+		case len(mp) < len(mounts[j].MountPoint): // btrfs-подтома: берём самую короткую точку
+			best[k] = i
+		}
+	}
+	var out []Mount
+	for _, k := range order {
+		out = append(out, mounts[best[k]])
+	}
+	out = append(out, network...)
+	sort.SliceStable(out, func(a, b int) bool {
+		if out[a].MountPoint == "/" || out[b].MountPoint == "/" {
+			return out[a].MountPoint == "/"
+		}
+		return out[a].MountPoint < out[b].MountPoint
+	})
+	return out
+}
+
+func isSystemMount(mp string) bool {
+	if mp == "/" {
+		return false
+	}
+	for _, p := range []string{"/proc", "/sys", "/dev", "/run", "/boot", "/snap", "/var/lib/docker", "/var/lib/containers", "/var/snap"} {
+		if mp == p || strings.HasPrefix(mp, p+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // mountDevNum возвращает номер блочного устройства монтирования. btrfs и
@@ -225,7 +371,7 @@ func disksForPath(mountinfoPath, sysRoot, path string) (PathDisks, error) {
 			return pd, fmt.Errorf("no block device behind %s: %w", m.Source, os.ErrNotExist)
 		}
 	}
-	dev, disks, err := resolveBlockDevices(sysRoot, maj, mnr)
+	dev, disks, err := resolveBlockDevices(sysRoot, Virtualization(), maj, mnr)
 	pd.Device = dev
 	if len(disks) > 0 {
 		pd.Disks = disks
@@ -245,7 +391,7 @@ func statfs(path string) (total, free, avail uint64, err error) {
 
 // resolveBlockDevices по номеру устройства находит его имя в sysfs и все
 // физические диски под ним: раздел → диск, dm/md → slaves (рекурсивно).
-func resolveBlockDevices(sysRoot string, major, minor uint32) (string, []BlockDevice, error) {
+func resolveBlockDevices(sysRoot, virt string, major, minor uint32) (string, []BlockDevice, error) {
 	link := filepath.Join(sysRoot, "dev", "block", fmt.Sprintf("%d:%d", major, minor))
 	real, err := filepath.EvalSymlinks(link)
 	if err != nil {
@@ -253,13 +399,13 @@ func resolveBlockDevices(sysRoot string, major, minor uint32) (string, []BlockDe
 	}
 	var disks []BlockDevice
 	seen := map[string]bool{}
-	err = collectDisks(sysRoot, real, seen, &disks, 0)
+	err = collectDisks(sysRoot, virt, real, seen, &disks, 0)
 	return filepath.Base(real), disks, err
 }
 
 const maxStackDepth = 8
 
-func collectDisks(sysRoot, real string, seen map[string]bool, out *[]BlockDevice, depth int) error {
+func collectDisks(sysRoot, virt, real string, seen map[string]bool, out *[]BlockDevice, depth int) error {
 	if depth > maxStackDepth {
 		return errors.New("block device stack too deep")
 	}
@@ -277,7 +423,7 @@ func collectDisks(sysRoot, real string, seen map[string]bool, out *[]BlockDevice
 		for _, s := range slaves {
 			sr, err := filepath.EvalSymlinks(filepath.Join(sysRoot, "class", "block", s.Name()))
 			if err == nil {
-				err = collectDisks(sysRoot, sr, seen, out, depth+1)
+				err = collectDisks(sysRoot, virt, sr, seen, out, depth+1)
 			}
 			if err != nil && firstErr == nil {
 				firstErr = err
@@ -286,11 +432,11 @@ func collectDisks(sysRoot, real string, seen map[string]bool, out *[]BlockDevice
 		return firstErr
 	}
 
-	*out = append(*out, describeDisk(real))
+	*out = append(*out, describeDisk(real, virt))
 	return nil
 }
 
-func describeDisk(real string) BlockDevice {
+func describeDisk(real, virt string) BlockDevice {
 	name := filepath.Base(real)
 	d := BlockDevice{Name: name, Transport: TransportFromSysPath(real)}
 	if v, err := readTrimmed(filepath.Join(real, "queue", "rotational")); err == nil {
@@ -312,7 +458,10 @@ func describeDisk(real string) BlockDevice {
 	if v, err := readTrimmed(filepath.Join(real, "device", "model")); err == nil {
 		d.Model = v
 	}
-	d.Kind = ClassifyDisk(name, d.Transport, d.Rotational)
+	if v, err := readTrimmed(filepath.Join(real, "device", "vendor")); err == nil {
+		d.Vendor = v
+	}
+	d.Kind = ClassifyDisk(DiskHints{Name: name, Transport: d.Transport, Rotational: d.Rotational, Model: d.Model, Vendor: d.Vendor, Virt: virt})
 	return d
 }
 

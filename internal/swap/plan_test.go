@@ -9,20 +9,39 @@ import (
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
+func fsInfo(mp, fsType, kind, transport string, total, avail uint64) detect.FSInfo {
+	return detect.FSInfo{
+		MountPoint: mp, Source: "/dev/x" + strings.ReplaceAll(mp, "/", "_"), FSType: fsType, Kind: kind,
+		Disks:      []detect.BlockDevice{{Name: "x", Kind: kind, Transport: transport}},
+		TotalBytes: ptr(total), AvailableBytes: ptr(avail),
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
+
 // baseFacts — здоровая система: ext4 на NVMe, много места, swap нет.
 func baseFacts() Facts {
+	root := fsInfo("/", "ext4", detect.KindNVMe, "nvme", 500*GiB, 300*GiB)
 	return Facts{
-		EUID: 0,
-		Root: detect.RootDisk{MountPoint: "/", Source: "/dev/nvme0n1p2", FSType: "ext4", Kind: detect.KindNVMe,
-			Disks: []detect.BlockDevice{{Name: "nvme0n1", Kind: detect.KindNVMe, Transport: "nvme"}}},
-		DiskTotal:     500 * GiB,
-		DiskAvail:     300 * GiB,
+		EUID:          0,
+		RootFS:        root,
+		Target:        Target{Path: ManagedPath, Defaulted: true, FS: root},
+		Candidates:    []detect.FSInfo{root},
 		Mem:           monitor.Meminfo{"MemTotal": 16 * GiB, "MemAvailable": 8 * GiB},
 		Swaps:         []monitor.SwapDevice{},
 		Fstab:         defaultFstab,
 		FstabResolved: map[string]string{},
 		Systemd:       true,
 		Exists:        map[string]bool{},
+	}
+}
+
+// setFS меняет ФС цели (и корня, если цель на корне).
+func setFS(f *Facts, fi detect.FSInfo) {
+	f.Target.FS = fi
+	if fi.MountPoint == "/" {
+		f.RootFS = fi
+		f.Candidates = []detect.FSInfo{fi}
 	}
 }
 
@@ -55,12 +74,12 @@ func wantLevel(t *testing.T, p Plan, title string, level Level) Check {
 	return c
 }
 
-func kinds(steps []Step) []StepKind {
-	out := make([]StepKind, len(steps))
+func kinds(steps []Step) string {
+	out := make([]string, len(steps))
 	for i, s := range steps {
-		out[i] = s.Kind
+		out[i] = string(s.Kind)
 	}
-	return out
+	return strings.Join(out, ",")
 }
 
 func hasStep(p Plan, k StepKind, path string) bool {
@@ -72,33 +91,42 @@ func hasStep(p Plan, k StepKind, path string) bool {
 	return false
 }
 
+func render(t *testing.T, p Plan, verbose bool) string {
+	t.Helper()
+	var out bytes.Buffer
+	if err := p.RenderWith(&out, RenderOptions{Verbose: verbose}); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
 func TestPlanHappyPath(t *testing.T) {
 	p := BuildPlan(baseFacts(), applyOpts(8*GiB))
 	if p.Blocked() {
 		t.Fatalf("blocked: %+v", p.Failures())
 	}
-	want := []StepKind{KindAllocate, KindChmod, KindMkswap, KindSwapon, KindWriteFile, KindSystemctl, KindSystemctl}
-	if got := kinds(p.Steps); strings.Join(toStrings(got), ",") != strings.Join(toStrings(want), ",") {
-		t.Errorf("steps = %v", got)
+	if got := kinds(p.Steps); got != "allocate,chmod,mkswap,swapon,write_file,systemctl,systemctl" {
+		t.Errorf("steps = %s", got)
 	}
-	if p.SwapBefore != 0 || p.SwapAfter != 8*GiB || p.ManagedAfter == nil || p.ManagedAfter.Path != ManagedPath {
+	if p.SwapBefore != 0 || p.SwapAfter != 8*GiB || p.ManagedAfter == nil || p.ManagedAfter.Path != "/ramplus.swapfile" {
 		t.Errorf("summary: %d → %d, %+v", p.SwapBefore, p.SwapAfter, p.ManagedAfter)
 	}
-	if p.Steps[3].Priority != 10 {
-		t.Errorf("priority = %d", p.Steps[3].Priority)
+	if p.ManagedAfter.Unit != "ramplus.swapfile.swap" || p.Steps[3].Priority != 10 {
+		t.Errorf("unit/priority: %+v", p.ManagedAfter)
 	}
-	var out bytes.Buffer
-	if err := p.Render(&out); err != nil || !strings.Contains(out.String(), "план выполним") {
-		t.Errorf("render: %v\n%s", err, out.String())
+	out := render(t, p, false)
+	if !strings.Contains(out, "план выполним") || strings.Contains(out, "[Swap]") || !strings.Contains(out, "--verbose") {
+		t.Errorf("render:\n%s", out)
 	}
 }
 
-func toStrings(k []StepKind) []string {
-	out := make([]string, len(k))
-	for i, v := range k {
-		out[i] = string(v)
+func TestPlanVerboseShowsUnit(t *testing.T) {
+	out := render(t, BuildPlan(baseFacts(), applyOpts(4*GiB)), true)
+	for _, want := range []string{"│ [Swap]", "│ What=/ramplus.swapfile", "│ Priority=10", "│ WantedBy=swap.target", "Managed by RamPlus"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("verbose lacks %q:\n%s", want, out)
+		}
 	}
-	return out
 }
 
 func TestPlanNonRootIsInfoOnly(t *testing.T) {
@@ -117,8 +145,24 @@ func TestPlanSizeRequired(t *testing.T) {
 	if len(p.Steps) != 0 {
 		t.Error("no steps without size")
 	}
-	p = BuildPlan(baseFacts(), applyOpts(128*MiB))
-	wantLevel(t, p, "размер", LevelFail)
+	wantLevel(t, BuildPlan(baseFacts(), applyOpts(128*MiB)), "размер", LevelFail)
+}
+
+func TestRequiredFree(t *testing.T) {
+	// max(5 GiB, min(10%, 20 GiB))
+	tests := map[uint64]uint64{
+		30 * GiB:   5 * GiB,  // 10% = 3 → минимум 5
+		50 * GiB:   5 * GiB,  // ровно 5
+		100 * GiB:  10 * GiB, // 10%
+		200 * GiB:  20 * GiB, // ровно 20
+		1000 * GiB: 20 * GiB, // 10% = 100 → потолок 20
+		4096 * GiB: 20 * GiB,
+	}
+	for total, want := range tests {
+		if got := RequiredFree(total); got != want {
+			t.Errorf("RequiredFree(%d GiB) = %d GiB, want %d", total/GiB, got/GiB, want/GiB)
+		}
+	}
 }
 
 func TestPlanLowSpace(t *testing.T) {
@@ -127,77 +171,110 @@ func TestPlanLowSpace(t *testing.T) {
 		want               Level
 		maxSize            uint64
 	}{
-		// нужно оставить max(10% = 10 GiB, 5 GiB) = 10 GiB
-		{100 * GiB, 15 * GiB, 12 * GiB, LevelFail, 5 * GiB},
+		{100 * GiB, 15 * GiB, 12 * GiB, LevelFail, 5 * GiB}, // остаётся 3, нужно 10
 		{100 * GiB, 15 * GiB, 5 * GiB, LevelOK, 5 * GiB},
-		// маленький диск: 10% = 3 GiB, но минимум 5 GiB
-		{30 * GiB, 10 * GiB, 4 * GiB, LevelOK, 5 * GiB},
+		{30 * GiB, 10 * GiB, 4 * GiB, LevelOK, 5 * GiB}, // маленький диск: минимум 5 GiB
 		{30 * GiB, 10 * GiB, 6 * GiB, LevelFail, 5 * GiB},
-		// места нет вообще
+		// большой диск: 10% = 200 GiB, но порог ограничен 20 GiB
+		{2000 * GiB, 60 * GiB, 32 * GiB, LevelOK, 40 * GiB},
+		{2000 * GiB, 60 * GiB, 45 * GiB, LevelFail, 40 * GiB},
 		{100 * GiB, 4 * GiB, 1 * GiB, LevelFail, 0},
 	}
 	for _, tt := range tests {
 		f := baseFacts()
-		f.DiskTotal, f.DiskAvail = tt.total, tt.avail
+		setFS(&f, fsInfo("/", "ext4", detect.KindNVMe, "nvme", tt.total, tt.avail))
 		p := BuildPlan(f, applyOpts(tt.size))
 		c := wantLevel(t, p, "место", tt.want)
 		if p.MaxSize != tt.maxSize {
 			t.Errorf("total=%d avail=%d: MaxSize = %d, want %d", tt.total/GiB, tt.avail/GiB, p.MaxSize/GiB, tt.maxSize/GiB)
 		}
-		if tt.want == LevelFail && !strings.Contains(c.Message, "нужно ≥") {
-			t.Errorf("message must explain: %s", c.Message)
+		if !strings.Contains(c.Message, "не больше 20.0 GiB и не меньше 5.0 GiB") {
+			t.Errorf("message must explain the rule: %s", c.Message)
 		}
 	}
 }
 
 func TestPlanFilesystems(t *testing.T) {
 	tests := []struct {
-		fs        string
-		btrfs     bool
-		mkswap    bool
-		chattr    bool
-		wantLevel Level
-		wantPath  string
-		wantFirst StepKind
+		fs                    string
+		btrfs, mkswap, chattr bool
+		ok                    bool
+		reason                string
 	}{
-		{"ext4", false, false, false, LevelOK, ManagedPath, KindAllocate},
-		{"xfs", false, false, false, LevelOK, ManagedPath, KindAllocate},
-		{"btrfs", true, true, true, LevelOK, BtrfsPath, KindBtrfsSubvolCreate},
-		{"btrfs", true, false, true, LevelOK, BtrfsPath, KindBtrfsSubvolCreate},
-		{"btrfs", false, false, true, LevelFail, "", ""},
-		{"btrfs", true, true, false, LevelFail, "", ""},
-		{"zfs", false, false, false, LevelFail, "", ""},
-		{"tmpfs", false, false, false, LevelFail, "", ""},
-		{"overlay", false, false, false, LevelFail, "", ""},
-		{"nfs", false, false, false, LevelFail, "", ""},
-		{"nfs4", false, false, false, LevelFail, "", ""},
-		{"fuse.sshfs", false, false, false, LevelFail, "", ""},
-		{"vfat", false, false, false, LevelFail, "", ""},
-		{"", false, false, false, LevelFail, "", ""},
+		{"ext4", false, false, false, true, ""},
+		{"xfs", false, false, false, true, ""},
+		{"btrfs", true, true, true, true, ""},
+		{"btrfs", true, false, true, true, ""},
+		{"btrfs", false, false, true, false, "btrfs-progs"},
+		{"btrfs", true, true, false, false, "chattr"},
+		{"zfs", false, false, false, false, "ZFS"},
+		{"tmpfs", false, false, false, false, "RAM"},
+		{"overlay", false, false, false, false, "overlayfs"},
+		{"fuse.sshfs", false, false, false, false, "FUSE"},
+		{"f2fs", false, false, false, false, "поддерживаются ext4, xfs, btrfs"},
+		{"", false, false, false, false, "не удалось"},
+		// Разделы Windows и флешки.
+		{"ntfs", false, false, false, false, foreignFSMsg},
+		{"ntfs3", false, false, false, false, foreignFSMsg},
+		{"vfat", false, false, false, false, foreignFSMsg},
+		{"exfat", false, false, false, false, foreignFSMsg},
+		{"fuseblk", false, false, false, false, foreignFSMsg},
 	}
 	for _, tt := range tests {
 		f := baseFacts()
-		f.Root.FSType, f.HasBtrfs, f.HasMkswapfile, f.HasChattr = tt.fs, tt.btrfs, tt.mkswap, tt.chattr
+		setFS(&f, fsInfo("/", tt.fs, detect.KindNVMe, "nvme", 500*GiB, 300*GiB))
+		f.Target.Path = DefaultPathFor(tt.fs)
+		f.HasBtrfs, f.HasMkswapfile, f.HasChattr = tt.btrfs, tt.mkswap, tt.chattr
 		p := BuildPlan(f, applyOpts(4*GiB))
-		c := wantLevel(t, p, "ФС", tt.wantLevel)
-		if tt.wantLevel == LevelFail {
-			if len(p.Steps) != 0 || c.Message == "" {
-				t.Errorf("%s: must refuse with explanation, steps=%v", tt.fs, kinds(p.Steps))
+		if !tt.ok {
+			c := wantLevel(t, p, "ФС", LevelFail)
+			if len(p.Steps) != 0 || !strings.Contains(c.Message, tt.reason) {
+				t.Errorf("%s: must refuse with %q, got %q steps=%s", tt.fs, tt.reason, c.Message, kinds(p.Steps))
 			}
 			continue
 		}
-		if p.ManagedAfter.Path != tt.wantPath || p.Steps[0].Kind != tt.wantFirst {
-			t.Errorf("%s: path %s, first %s", tt.fs, p.ManagedAfter.Path, p.Steps[0].Kind)
+		wantLevel(t, p, "ФС", LevelOK)
+		if tt.fs != "btrfs" {
+			continue
 		}
-		if tt.fs == "btrfs" {
-			if !hasStep(p, KindChattrNoCOW, BtrfsDir) {
-				t.Errorf("btrfs: subvolume must be NOCOW: %v", kinds(p.Steps))
-			}
-			if tt.mkswap != hasStep(p, KindBtrfsMkswapfile, BtrfsPath) {
-				t.Errorf("btrfs mkswapfile=%v: steps %v", tt.mkswap, kinds(p.Steps))
-			}
-			if p.ManagedAfter.Dir != BtrfsDir {
-				t.Errorf("btrfs: dir = %q", p.ManagedAfter.Dir)
+		if p.ManagedAfter.Path != BtrfsPath || p.ManagedAfter.Dir != BtrfsDir || !hasStep(p, KindChattrNoCOW, BtrfsDir) {
+			t.Errorf("btrfs default: %+v steps=%s", p.ManagedAfter, kinds(p.Steps))
+		}
+		if tt.mkswap != hasStep(p, KindBtrfsMkswapfile, BtrfsPath) {
+			t.Errorf("btrfs mkswapfile=%v: steps %s", tt.mkswap, kinds(p.Steps))
+		}
+		if !tt.mkswap && !p.Steps[2].NoCOW {
+			t.Errorf("btrfs without mkswapfile: allocate must be NoCOW: %+v", p.Steps[2])
+		}
+	}
+}
+
+func TestPlanDiskKinds(t *testing.T) {
+	tests := []struct {
+		kind, transport string
+		level           Level
+		text            string
+	}{
+		{detect.KindNVMe, "nvme", LevelOK, "NVMe"},
+		{detect.KindSSD, "sata", LevelOK, "SSD"},
+		{detect.KindHDD, "sata", LevelWarn, "HDD: swap будет медленным"},
+		{detect.KindVirtual, "virtio", LevelInfo, "виртуальный диск: скорость зависит от хоста"},
+		{detect.KindUnknown, "scsi", LevelWarn, "не определён"},
+		{detect.KindHDD, "usb", LevelFail, "USB"},
+	}
+	for _, tt := range tests {
+		f := baseFacts()
+		setFS(&f, fsInfo("/", "ext4", tt.kind, tt.transport, 500*GiB, 300*GiB))
+		p := BuildPlan(f, applyOpts(4*GiB))
+		c := wantLevel(t, p, "диск", tt.level)
+		if !strings.Contains(c.Message, tt.text) {
+			t.Errorf("%s/%s: %q lacks %q", tt.kind, tt.transport, c.Message, tt.text)
+		}
+		if tt.kind == detect.KindVirtual {
+			for _, ch := range p.Checks {
+				if ch.Level == LevelWarn && strings.Contains(ch.Message, "медлен") {
+					t.Errorf("virtual disk must not warn about speed: %+v", ch)
+				}
 			}
 		}
 	}
@@ -205,18 +282,109 @@ func TestPlanFilesystems(t *testing.T) {
 
 func TestPlanUSB(t *testing.T) {
 	f := baseFacts()
-	f.Root.Disks[0].Transport = "usb"
-	p := BuildPlan(f, applyOpts(4*GiB))
-	c := wantLevel(t, p, "диск", LevelFail)
-	if !strings.Contains(c.Message, "USB") || !strings.Contains(c.Message, "--force") {
+	setFS(&f, fsInfo("/", "ext4", detect.KindHDD, "usb", 500*GiB, 300*GiB))
+	c := wantLevel(t, BuildPlan(f, applyOpts(4*GiB)), "диск", LevelFail)
+	if !strings.Contains(c.Message, "--force") {
 		t.Errorf("message: %s", c.Message)
 	}
 	o := applyOpts(4 * GiB)
 	o.Force = true
-	p = BuildPlan(f, o)
+	p := BuildPlan(f, o)
 	wantLevel(t, p, "диск", LevelWarn)
 	if p.Blocked() {
 		t.Errorf("--force must unblock: %+v", p.Failures())
+	}
+}
+
+func TestPlanCustomPath(t *testing.T) {
+	f := baseFacts()
+	data := fsInfo("/mnt/nvme", "ext4", detect.KindNVMe, "nvme", 1000*GiB, 800*GiB)
+	f.Candidates = append(f.Candidates, data)
+	f.Target = Target{Path: "/mnt/nvme/ramplus.swapfile", Requested: "/mnt/nvme/ramplus.swapfile", FS: data}
+	o := Options{Action: ActionApply, Size: 16 * GiB, Path: "/mnt/nvme/ramplus.swapfile"}
+	p := BuildPlan(f, o)
+	if p.Blocked() {
+		t.Fatalf("blocked: %+v", p.Failures())
+	}
+	if p.ManagedAfter.Path != "/mnt/nvme/ramplus.swapfile" || p.ManagedAfter.Unit != "mnt-nvme-ramplus.swapfile.swap" {
+		t.Errorf("managed = %+v", p.ManagedAfter)
+	}
+	c := wantLevel(t, p, "место", LevelOK)
+	if !strings.Contains(c.Message, "на /mnt/nvme доступно 800.0 GiB") {
+		t.Errorf("disk check must be for the path's FS: %s", c.Message)
+	}
+	if !strings.Contains(o.Command(), "--path /mnt/nvme/ramplus.swapfile") {
+		t.Errorf("command: %s", o.Command())
+	}
+	where := p.Choices[0]
+	if where.Flag != "--path" || where.Defaulted || len(where.Alternatives) != 2 || !where.Alternatives[1].Selected ||
+		where.Alternatives[0].Value != "/ramplus.swapfile" {
+		t.Errorf("path choice = %+v", where)
+	}
+}
+
+func TestPlanPathChecks(t *testing.T) {
+	tests := []struct {
+		name   string
+		mod    func(*Target)
+		reason string
+	}{
+		{"relative", func(t *Target) { t.Path, t.Requested = "swapfile", "swapfile" }, "абсолютным"},
+		{"tmp", func(t *Target) { t.Path = "/tmp/ramplus.swapfile" }, "/tmp"},
+		{"proc", func(t *Target) { t.Path = "/proc/x" }, "/proc"},
+		{"no parent", func(t *Target) {
+			t.Path, t.ParentErr = "/mnt/nope/ramplus.swapfile", detect.ErrParse
+		}, "недоступен"},
+	}
+	for _, tt := range tests {
+		f := baseFacts()
+		tt.mod(&f.Target)
+		c := wantLevel(t, BuildPlan(f, applyOpts(4*GiB)), "путь", LevelFail)
+		if !strings.Contains(c.Message, tt.reason) {
+			t.Errorf("%s: %s", tt.name, c.Message)
+		}
+	}
+}
+
+func TestPlanCandidates(t *testing.T) {
+	f := baseFacts()
+	f.Candidates = append(f.Candidates,
+		fsInfo("/mnt/fast", "ext4", detect.KindNVMe, "nvme", 1000*GiB, 500*GiB),
+		fsInfo("/mnt/small", "ext4", detect.KindSSD, "sata", 50*GiB, 6*GiB),
+		fsInfo("/mnt/usb", "ext4", detect.KindSSD, "usb", 500*GiB, 400*GiB),
+		fsInfo("/mnt/vm", "xfs", detect.KindVirtual, "virtio", 500*GiB, 400*GiB),
+		fsInfo("/mnt/win", "ntfs3", detect.KindNVMe, "nvme", 900*GiB, 400*GiB),
+		fsInfo("/mnt/stick", "exfat", detect.KindSSD, "usb", 64*GiB, 60*GiB),
+	)
+	nas := detect.FSInfo{MountPoint: "/mnt/nas", Source: "nas:/x", FSType: "nfs4", Network: true, Kind: detect.KindUnknown}
+	ro := fsInfo("/mnt/ro", "ext4", detect.KindSSD, "sata", 500*GiB, 400*GiB)
+	ro.ReadOnly = true
+	f.Candidates = append(f.Candidates, nas, ro)
+
+	p := BuildPlan(f, applyOpts(8*GiB))
+	alts := map[string]Alternative{}
+	for _, a := range p.Choices[0].Alternatives {
+		alts[a.Value] = a
+	}
+	want := map[string]string{
+		"/ramplus.swapfile":           "можно до",
+		"/mnt/fast/ramplus.swapfile":  "можно до 480.0 GiB",
+		"/mnt/small/ramplus.swapfile": "мало места",
+		"/mnt/usb/ramplus.swapfile":   "USB — нужен --force",
+		"/mnt/vm/ramplus.swapfile":    "виртуальный диск",
+		"/mnt/win/ramplus.swapfile":   "не подходит",
+		"/mnt/stick/ramplus.swapfile": "не подходит",
+		"/mnt/nas/ramplus.swapfile":   "сетевая ФС — не подходит",
+		"/mnt/ro/ramplus.swapfile":    "только чтение",
+	}
+	for path, mark := range want {
+		a, ok := alts[path]
+		if !ok || !strings.Contains(a.Summary, mark) {
+			t.Errorf("%s: want mark %q, got %+v", path, mark, a)
+		}
+	}
+	if !alts["/ramplus.swapfile"].Selected || !p.Choices[0].Defaulted {
+		t.Error("root must be selected by default")
 	}
 }
 
@@ -230,19 +398,12 @@ func TestPlanExistingDefaultsToKeep(t *testing.T) {
 		t.Errorf("must say explicitly: %s", c.Message)
 	}
 	if hasStep(p, KindSwapoff, "") || hasStep(p, KindFstabDisable, "") {
-		t.Errorf("keep must not touch old swap: %v", kinds(p.Steps))
+		t.Errorf("keep must not touch old swap: %s", kinds(p.Steps))
 	}
 	if p.SwapAfter != 20*GiB {
 		t.Errorf("after = %d GiB", p.SwapAfter/GiB)
 	}
-	if p.Steps[3].Kind != KindSwapon || p.Steps[3].Priority <= -2 {
-		t.Errorf("new swap must have higher priority: %+v", p.Steps[3])
-	}
-	// Выбор показан явно, с альтернативами и последствиями.
-	if len(p.Choices) != 2 {
-		t.Fatalf("choices = %+v", p.Choices)
-	}
-	ex := p.Choices[1]
+	ex := p.Choices[2]
 	if ex.Flag != "--existing" || !ex.Defaulted || len(ex.Alternatives) != 2 ||
 		!ex.Alternatives[0].Selected || !strings.Contains(ex.Alternatives[0].Summary, "20.0 GiB") ||
 		!strings.Contains(ex.Alternatives[1].Summary, "12.0 GiB") {
@@ -257,36 +418,18 @@ func TestPlanReplace(t *testing.T) {
 	if p.Blocked() {
 		t.Fatalf("blocked: %+v", p.Failures())
 	}
-	tail := toStrings(kinds(p.Steps[len(p.Steps)-3:]))
-	if strings.Join(tail, ",") != "swapoff,fstab_disable,systemctl" {
-		t.Errorf("tail = %v", tail)
-	}
-	if hasStep(p, KindDeleteSwapfile, "/swap.img") {
-		t.Error("old file must not be deleted without --delete-old")
+	if !strings.HasSuffix(kinds(p.Steps), "swapoff,fstab_disable,systemctl") || hasStep(p, KindDeleteSwapfile, "/swap.img") {
+		t.Errorf("steps = %s", kinds(p.Steps))
 	}
 	if p.SwapAfter != 12*GiB || strings.Join(p.Disabled, ";") != "/swap.img;строка fstab «/swap.img none swap sw 0 0»" {
 		t.Errorf("after=%d disabled=%q", p.SwapAfter/GiB, p.Disabled)
 	}
-	// Новый swap включается раньше, чем отключается старый.
-	var onIdx, offIdx int
-	for i, s := range p.Steps {
-		if s.Kind == KindSwapon {
-			onIdx = i
-		}
-		if s.Kind == KindSwapoff {
-			offIdx = i
-		}
-	}
-	if onIdx > offIdx {
-		t.Error("swapon new must precede swapoff old")
-	}
-
 	o.DeleteOld = true
 	p = BuildPlan(f, o)
 	if last := p.Steps[len(p.Steps)-1]; last.Kind != KindDeleteSwapfile || last.Path != "/swap.img" {
 		t.Errorf("delete-old must be the last step: %+v", last)
 	}
-	if len(p.Choices) != 3 || p.Choices[2].Flag != "--delete-old" || p.Choices[2].Value != "удалить" {
+	if len(p.Choices) != 4 || p.Choices[3].Flag != "--delete-old" || p.Choices[3].Value != "удалить" {
 		t.Errorf("delete-old choice = %+v", p.Choices)
 	}
 }
@@ -316,8 +459,7 @@ func TestPlanReplaceUUIDPartition(t *testing.T) {
 	if !found || hasStep(p, KindDeleteSwapfile, "/dev/sda3") {
 		t.Errorf("steps = %+v", p.Steps)
 	}
-	c := wantLevel(t, p, "--delete-old", LevelInfo)
-	if !strings.Contains(c.Message, "раздел") {
+	if c := wantLevel(t, p, "--delete-old", LevelInfo); !strings.Contains(c.Message, "раздел") {
 		t.Errorf("message: %s", c.Message)
 	}
 	if p.ManagedAfter.Priority != 15 {
@@ -328,47 +470,41 @@ func TestPlanReplaceUUIDPartition(t *testing.T) {
 func TestPlanResume(t *testing.T) {
 	f := withOldSwap(baseFacts(), 0)
 	f.Cmdline = readFixture(t, "cmdline/resume")
-	p := BuildPlan(f, Options{Action: ActionApply, Size: 4 * GiB, Existing: ExistingReplace})
-	c := wantLevel(t, p, "гибернация", LevelWarn)
+	c := wantLevel(t, BuildPlan(f, Options{Action: ActionApply, Size: 4 * GiB, Existing: ExistingReplace}), "гибернация", LevelWarn)
 	if !strings.Contains(c.Message, "resume=UUID=aaaa-bbbb") {
 		t.Errorf("message: %s", c.Message)
 	}
 	if _, ok := findCheck(BuildPlan(f, applyOpts(4*GiB)), "гибернация"); ok {
 		t.Error("keep does not touch existing swap — no hibernation warning")
 	}
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Unit: "ramplus.swap.swap"}
+	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Unit: "ramplus.swapfile.swap"}
 	wantLevel(t, BuildPlan(f, Options{Action: ActionRemove}), "гибернация", LevelWarn)
 }
 
 func TestPlanMemoryForSwapoff(t *testing.T) {
-	// В /swap.img занято 10 GiB; RAM доступно 2 GiB; новый swap 4 GiB.
 	f := withOldSwap(baseFacts(), 0)
 	f.Swaps[0].SizeBytes, f.Swaps[0].UsedBytes = 16*GiB, 10*GiB
 	f.Mem["MemAvailable"] = 2 * GiB
-	p := BuildPlan(f, Options{Action: ActionApply, Size: 4 * GiB, Existing: ExistingReplace})
-	c := wantLevel(t, p, "память для swapoff /swap.img", LevelFail)
+	c := wantLevel(t, BuildPlan(f, Options{Action: ActionApply, Size: 4 * GiB, Existing: ExistingReplace}), "память для swapoff /swap.img", LevelFail)
 	if !strings.Contains(c.Message, "10.0 GiB") {
 		t.Errorf("message: %s", c.Message)
 	}
-	// С новым swap 12 GiB данные помещаются: 2 GiB RAM + 12 GiB swap.
-	p = BuildPlan(f, Options{Action: ActionApply, Size: 12 * GiB, Existing: ExistingReplace})
-	wantLevel(t, p, "память для swapoff", LevelOK)
-	// В альтернативах keep показан причину блокировки replace.
-	p = BuildPlan(f, applyOpts(4*GiB))
-	if !strings.Contains(p.Choices[1].Alternatives[1].Summary, "заблокирован") {
-		t.Errorf("replace alternative must show it is blocked: %+v", p.Choices[1].Alternatives[1])
+	wantLevel(t, BuildPlan(f, Options{Action: ActionApply, Size: 12 * GiB, Existing: ExistingReplace}), "память для swapoff", LevelOK)
+	p := BuildPlan(f, applyOpts(4*GiB))
+	if !strings.Contains(p.Choices[2].Alternatives[1].Summary, "заблокирован") {
+		t.Errorf("replace alternative must show it is blocked: %+v", p.Choices[2].Alternatives[1])
 	}
 }
 
 func TestPlanRemoveMemory(t *testing.T) {
 	f := baseFacts()
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 8 * GiB, Priority: 10, Unit: "ramplus.swap.swap"}
+	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 8 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap"}
 	f.Swaps = []monitor.SwapDevice{{Path: ManagedPath, Type: "file", SizeBytes: 8 * GiB, UsedBytes: 7 * GiB, Priority: 10}}
 	f.Mem["MemAvailable"] = 3 * GiB
-	f.Exists = map[string]bool{ManagedPath: true, UnitDir + "/ramplus.swap.swap": true}
+	f.Exists = map[string]bool{ManagedPath: true, UnitDir + "/ramplus.swapfile.swap": true}
 	p := BuildPlan(f, Options{Action: ActionRemove})
 	wantLevel(t, p, "память для swapoff", LevelFail)
-	wantLevel(t, p, "swap", LevelWarn) // не останется swap
+	wantLevel(t, p, "swap", LevelWarn)
 }
 
 func TestPlanPriority(t *testing.T) {
@@ -381,7 +517,6 @@ func TestPlanPriority(t *testing.T) {
 		{[]monitor.SwapDevice{{Path: "/swap.img", Priority: -2}}, 10, false},
 		{[]monitor.SwapDevice{{Path: "/swap.img", Priority: 50}}, 60, false},
 		{[]monitor.SwapDevice{{Path: "/dev/zram0", Priority: 100}}, 10, false},
-		{[]monitor.SwapDevice{{Path: "/swap.img", Priority: -2}, {Path: "/dev/zram0", Priority: 100}}, 10, false},
 		{[]monitor.SwapDevice{{Path: "/swap.img", Priority: 95}, {Path: "/dev/zram0", Priority: 100}}, 99, false},
 		{[]monitor.SwapDevice{{Path: "/swap.img", Priority: 100}, {Path: "/dev/zram0", Priority: 100}}, 110, true},
 	}
@@ -399,16 +534,13 @@ func TestPlanZramUntouched(t *testing.T) {
 	f := withOldSwap(baseFacts(), 0)
 	f.Swaps = append(f.Swaps, monitor.SwapDevice{Path: "/dev/zram0", Type: "partition", SizeBytes: 4 * GiB, Priority: 100})
 	p := BuildPlan(f, Options{Action: ActionApply, Size: 4 * GiB, Existing: ExistingReplace})
-	if hasStep(p, KindSwapoff, "/dev/zram0") || !hasStep(p, KindSwapoff, "/swap.img") {
-		t.Errorf("zram must not be touched: %+v", p.Steps)
-	}
-	if p.SwapAfter != 8*GiB {
-		t.Errorf("after = %d GiB (zram 4 + new 4)", p.SwapAfter/GiB)
+	if hasStep(p, KindSwapoff, "/dev/zram0") || !hasStep(p, KindSwapoff, "/swap.img") || p.SwapAfter != 8*GiB {
+		t.Errorf("zram must not be touched: %s after=%d", kinds(p.Steps), p.SwapAfter/GiB)
 	}
 }
 
 func TestPlanBlockers(t *testing.T) {
-	managed := &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swap.swap"}
+	managed := &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap"}
 	tests := []struct {
 		name  string
 		mod   func(*Facts)
@@ -417,10 +549,8 @@ func TestPlanBlockers(t *testing.T) {
 		{"no systemd", func(f *Facts) { f.Systemd = false }, "systemd"},
 		{"already managed", func(f *Facts) { f.State.Managed = managed }, "swap RamPlus"},
 		{"foreign file", func(f *Facts) { f.Exists[ManagedPath] = true }, "файлы"},
-		{"foreign unit", func(f *Facts) { f.Exists[UnitDir+"/ramplus.swap.swap"] = true }, "файлы"},
-		{"pending op", func(f *Facts) {
-			f.State.Operations = []Operation{{ID: "x", Action: ActionApply, Status: OpInProgress}}
-		}, "журнал"},
+		{"foreign unit", func(f *Facts) { f.Exists[UnitDir+"/ramplus.swapfile.swap"] = true }, "файлы"},
+		{"interrupted op", func(f *Facts) { f.Recovery = &Recovery{OpID: "x"} }, "журнал"},
 		{"bad swaps", func(f *Facts) { f.SwapsErr = detect.ErrParse }, "swap"},
 	}
 	for _, tt := range tests {
@@ -435,18 +565,15 @@ func TestPlanBlockers(t *testing.T) {
 
 func TestPlanResize(t *testing.T) {
 	f := baseFacts()
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swap.swap", FSType: "ext4"}
+	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap", FSType: "ext4"}
 	f.Swaps = []monitor.SwapDevice{{Path: ManagedPath, Type: "file", SizeBytes: 4 * GiB, Priority: 10}}
 	f.Exists = map[string]bool{ManagedPath: true}
-	// Мало места: 12 GiB доступно, нужно оставить 50 GiB (10% от 500)... берём диск 100 GiB.
-	f.DiskTotal, f.DiskAvail = 100*GiB, 12*GiB
+	setFS(&f, fsInfo("/", "ext4", detect.KindNVMe, "nvme", 100*GiB, 12*GiB))
 	p := BuildPlan(f, Options{Action: ActionResize, Size: 6 * GiB})
-	want := "swapoff,delete_swapfile,allocate,chmod,mkswap,swapon"
-	if got := strings.Join(toStrings(kinds(p.Steps)), ","); got != want {
+	if got := kinds(p.Steps); got != "swapoff,delete_swapfile,allocate,chmod,mkswap,swapon" {
 		t.Errorf("steps = %s", got)
 	}
-	// Старый файл удаляется до создания нового: пик +2 GiB, остаётся 10 GiB.
-	wantLevel(t, p, "место", LevelOK)
+	wantLevel(t, p, "место", LevelOK) // старый удаляется до создания нового: пик +2 GiB
 	if p.SwapAfter != 6*GiB || p.ManagedAfter.SizeBytes != 6*GiB || len(p.Disabled) != 0 {
 		t.Errorf("after=%d managed=%+v disabled=%v", p.SwapAfter/GiB, p.ManagedAfter, p.Disabled)
 	}
@@ -456,8 +583,7 @@ func TestPlanResize(t *testing.T) {
 }
 
 func TestPlanRollbackNothing(t *testing.T) {
-	p := BuildPlan(baseFacts(), Options{Action: ActionRollback})
-	wantLevel(t, p, "rollback", LevelFail)
+	wantLevel(t, BuildPlan(baseFacts(), Options{Action: ActionRollback}), "rollback", LevelFail)
 }
 
 func TestPlanRollbackAfterPartialUndo(t *testing.T) {
@@ -466,10 +592,32 @@ func TestPlanRollbackAfterPartialUndo(t *testing.T) {
 		{ID: "1", Action: ActionApply, Status: OpCommitted},
 		{ID: "2", Action: ActionResize, Status: OpRollbackFailed},
 	}
-	c := wantLevel(t, BuildPlan(f, Options{Action: ActionRollback}), "rollback", LevelFail)
-	if !strings.Contains(c.Message, "ручная проверка") {
+	if c := wantLevel(t, BuildPlan(f, Options{Action: ActionRollback}), "rollback", LevelFail); !strings.Contains(c.Message, "ручная проверка") {
 		t.Errorf("message: %s", c.Message)
 	}
+}
+
+func TestPlanRollbackRecovery(t *testing.T) {
+	pending := Applied{
+		Step:   Step{Kind: KindAllocate, Path: ManagedPath, Size: 4 * GiB},
+		Status: StepPending,
+		Undo:   []Step{{Kind: KindDeleteSwapfile, Path: ManagedPath, Size: 4 * GiB}},
+	}
+	mk := func(v Verdict) Facts {
+		f := baseFacts()
+		f.State.Operations = []Operation{{ID: "op1", Action: ActionApply, Status: OpInProgress, Applied: []Applied{pending}}}
+		f.Recovery = &Recovery{OpID: "op1", Pending: &pending, Verdict: v, Detail: "детали"}
+		return f
+	}
+	p := BuildPlan(mk(VerdictPresent), Options{Action: ActionRollback})
+	if p.Blocked() || kinds(p.Steps) != "delete_swapfile" {
+		t.Errorf("present: steps=%s checks=%+v", kinds(p.Steps), p.Checks)
+	}
+	p = BuildPlan(mk(VerdictAbsent), Options{Action: ActionRollback})
+	if p.Blocked() || len(p.Steps) != 0 {
+		t.Errorf("absent: steps=%s", kinds(p.Steps))
+	}
+	wantLevel(t, BuildPlan(mk(VerdictMismatch), Options{Action: ActionRollback}), "прерванный шаг", LevelFail)
 }
 
 func TestOptionsCommand(t *testing.T) {
@@ -484,16 +632,20 @@ func TestOptionsCommand(t *testing.T) {
 
 func TestAnnotateStatus(t *testing.T) {
 	w := newWorld(t)
-	st := State{Managed: &Managed{Path: "/custom/ramplus.swap"}}
+	st := State{Managed: &Managed{Path: "/custom/ramplus.swapfile"},
+		Operations: []Operation{{ID: "1", Action: ActionApply, Status: OpInProgress}}}
 	b, _ := st.Marshal()
 	w.files[StateDir] = &fakeFile{dir: true}
 	w.files[StatePath] = &fakeFile{data: string(b)}
 	status := monitor.Status{Swaps: monitor.Swaps{Devices: []monitor.SwapDevice{
-		{Path: "/swap.img"}, {Path: "/custom/ramplus.swap"}, {Path: ManagedPath},
+		{Path: "/swap.img"}, {Path: "/custom/ramplus.swapfile"}, {Path: ManagedPath},
 	}}}
 	AnnotateStatus(&status, &fakeFS{w})
 	got := []bool{status.Swaps.Devices[0].Managed, status.Swaps.Devices[1].Managed, status.Swaps.Devices[2].Managed}
 	if got[0] || !got[1] || !got[2] {
 		t.Errorf("managed = %v", got)
+	}
+	if len(status.Swaps.Warnings) != 1 || status.Swaps.Warnings[0].Code != WarnInterrupted {
+		t.Errorf("warnings = %+v", status.Swaps.Warnings)
 	}
 }

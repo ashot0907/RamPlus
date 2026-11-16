@@ -38,4 +38,4 @@ jobs:
         run: go test ./...
 
       - name: shellcheck
-        run: shellcheck --severity=warning scripts/*.sh
+        run: shellcheck scripts/*.sh

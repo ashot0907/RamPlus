@@ -19,13 +19,14 @@ type Confirm func(p Plan) (bool, error)
 
 // Manager выполняет операции: план → подтверждение → шаги с журналом.
 type Manager struct {
-	Sys System
-	Out io.Writer
+	Sys     System
+	Out     io.Writer
+	Verbose bool
 }
 
 // Plan строит план без изменений системы (root не нужен).
 func (m *Manager) Plan(ctx context.Context, o Options) Plan {
-	return BuildPlan(Gather(ctx, m.Sys), o)
+	return BuildPlan(Gather(ctx, m.Sys, o.Path), o)
 }
 
 // Execute выполняет операцию. Порядок:
@@ -46,9 +47,9 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	}
 	defer unlock()
 
-	f := Gather(ctx, m.Sys)
+	f := Gather(ctx, m.Sys, o.Path)
 	p := BuildPlan(f, o)
-	if err := p.Render(m.Out); err != nil {
+	if err := p.RenderWith(m.Out, RenderOptions{Verbose: m.Verbose}); err != nil {
 		return p, err
 	}
 	if p.Blocked() {
@@ -98,8 +99,8 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	r := &Runner{
 		Sys:  m.Sys,
 		OpID: op.ID,
-		Journal: func(applied []Applied) error {
-			state.Operations[cur].Applied = applied
+		Journal: func(entries []Applied) error {
+			state.Operations[cur].Applied = entries
 			return save()
 		},
 		Progress: func(ev Event) {

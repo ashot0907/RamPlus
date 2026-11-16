@@ -341,3 +341,215 @@ func TestStepErrorMessage(t *testing.T) {
 		t.Errorf("message: %v", err)
 	}
 }
+
+// runCrash запускает операцию, которая «падает» (panic crashed{}) на
+// failAt-м изменяющем вызове. Возвращает true, если падение произошло.
+func runCrash(t *testing.T, w *fakeWorld, o Options) (crashedAt string) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			c, ok := r.(crashed)
+			if !ok {
+				panic(r)
+			}
+			crashedAt = c.at
+		}
+	}()
+	w.crash = true
+	_, _, _ = run(t, w, o)
+	return ""
+}
+
+// TestCrashAtEveryPoint: процесс падает в любой точке → следующий запуск
+// видит незавершённую операцию, apply блокируется, rollback возвращает
+// систему в исходное состояние.
+func TestCrashAtEveryPoint(t *testing.T) {
+	scenarios := []struct {
+		name   string
+		setup  func(*fakeWorld)
+		before []Options
+		op     Options
+	}{
+		{"apply", nil, nil, apply4G},
+		{"apply-replace-delete", func(w *fakeWorld) { w.withOldSwap(1 * GiB) }, nil,
+			Options{Action: ActionApply, Size: 12 * GiB, Existing: ExistingReplace, DeleteOld: true}},
+		{"apply-btrfs", func(w *fakeWorld) { w.fsType, w.btrfsTool = "btrfs", true }, nil, apply4G},
+		{"resize", nil, []Options{apply4G}, resize6G},
+		{"remove", nil, []Options{apply4G}, remove},
+	}
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			prepare := func() *fakeWorld {
+				w := newWorld(t)
+				if sc.setup != nil {
+					sc.setup(w)
+				}
+				for _, o := range sc.before {
+					mustRun(t, w, o)
+				}
+				return w
+			}
+			ref := prepare()
+			start := ref.mutations
+			mustRun(t, ref, sc.op)
+			total := ref.mutations - start
+
+			recovered := 0
+			for n := 1; n <= total; n++ {
+				w := prepare()
+				before := w.snap()
+				w.failAt = w.mutations + n
+				at := runCrash(t, w, sc.op)
+				if at == "" {
+					t.Fatalf("n=%d: no crash", n)
+				}
+				w.failAt, w.crash = 0, false
+
+				if w.state().Pending() == nil {
+					// Упали до записи операции в журнал — система не тронута.
+					if d := before.diff(w.snap()); d != "" {
+						t.Fatalf("n=%d (%s): no journal entry, but system changed:\n%s", n, at, d)
+					}
+					continue
+				}
+				if _, _, err := run(t, w, apply4G); !errors.Is(err, ErrBlocked) {
+					t.Fatalf("n=%d: apply after crash must be blocked, got %v", n, err)
+				}
+				if _, out, err := run(t, w, rollback); err != nil {
+					t.Fatalf("n=%d (crash at %s): rollback: %v\n%s", n, at, err, out)
+				}
+				if d := before.diff(w.snap()); d != "" {
+					t.Fatalf("n=%d (crash at %s): not restored:\n%s", n, at, d)
+				}
+				recovered++
+			}
+			if recovered < total/2 {
+				t.Errorf("rollback after crash exercised only %d of %d points", recovered, total)
+			}
+			t.Logf("%d точек падения, из них с восстановлением через rollback: %d", total, recovered)
+		})
+	}
+}
+
+// Сбой после шага, но до записи "done": в журнале pending, артефакт
+// совпадает с записью → rollback его убирает.
+func TestCrashAfterStepBeforeDone(t *testing.T) {
+	ref := newWorld(t)
+	mustRun(t, ref, apply4G)
+	// Номер записи журнала сразу после fallocate.
+	idx := -1
+	for i, op := range ref.log {
+		if op == "fallocate "+ManagedPath {
+			for j := i + 1; j < len(ref.log); j++ {
+				if ref.log[j] == "write "+StatePath {
+					idx = j + 1 // mutations считаются с 1
+					break
+				}
+			}
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatalf("log: %v", ref.log)
+	}
+
+	w := newWorld(t)
+	before := w.snap()
+	w.failAt = idx
+	if at := runCrash(t, w, apply4G); at != "write "+StatePath {
+		t.Fatalf("crashed at %q", at)
+	}
+	w.failAt, w.crash = 0, false
+	if f := w.files[ManagedPath]; f == nil || f.size != 4*GiB {
+		t.Fatalf("step must have happened: %+v", f)
+	}
+	op := w.state().Pending()
+	last := op.Applied[len(op.Applied)-1]
+	if last.Status != StepPending || last.Step.Kind != KindAllocate {
+		t.Fatalf("journal: last entry %+v", last)
+	}
+
+	f := Gather(context.Background(), w.sys(), "")
+	if f.Recovery == nil || f.Recovery.Verdict != VerdictPresent {
+		t.Fatalf("recovery = %+v", f.Recovery)
+	}
+	p := BuildPlan(f, rollback)
+	if c, _ := findCheck(p, "прерванный шаг"); !strings.Contains(c.Message, "будет откачен") {
+		t.Errorf("plan must explain: %+v", p.Checks)
+	}
+	mustRun(t, w, rollback)
+	if d := before.diff(w.snap()); d != "" {
+		t.Errorf("not restored:\n%s", d)
+	}
+}
+
+// Артефакт подменён после падения → RamPlus его не трогает.
+func TestCrashArtifactMismatch(t *testing.T) {
+	w := newWorld(t)
+	ref := newWorld(t)
+	mustRun(t, ref, apply4G)
+	n := 0
+	for i, op := range ref.log {
+		if op == "create "+ManagedPath {
+			n = i + 1 // упасть на самом create: pending записан, файла ещё нет
+		}
+	}
+	w.failAt = n
+	runCrash(t, w, apply4G)
+	w.failAt, w.crash = 0, false
+	// Кто-то положил на это место свой файл.
+	w.files[ManagedPath] = &fakeFile{data: "важные данные", mode: 0o644}
+	_, out, err := run(t, w, rollback)
+	if !errors.Is(err, ErrBlocked) || !strings.Contains(out, "ручная проверка") {
+		t.Fatalf("err=%v\n%s", err, out)
+	}
+	if w.files[ManagedPath].data != "важные данные" {
+		t.Error("foreign file touched")
+	}
+}
+
+func TestApplyCustomPathBtrfs(t *testing.T) {
+	w := newWorld(t)
+	w.mounts["/mnt/data"] = fakeMount{fsType: "btrfs", transport: "nvme", total: 1000 * GiB, avail: 800 * GiB}
+	w.files["/mnt"] = &fakeFile{dir: true, mode: 0o755}
+	w.files["/mnt/data"] = &fakeFile{dir: true, mode: 0o755}
+	w.links["/mnt/link"] = "/mnt/data"
+	w.btrfsTool = true
+	s0 := w.snap()
+
+	o := Options{Action: ActionApply, Size: 4 * GiB, Path: "/mnt/link/ramplus.swapfile"}
+	p, out, err := run(t, w, o)
+	if err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	const path = "/mnt/data/ramplus.swapfile"
+	if p.Path != path {
+		t.Errorf("symlink must be resolved: %s", p.Path)
+	}
+	if f := w.files[path]; f == nil || !f.nocow || !f.swap || !hasKey(w.active, path) {
+		t.Fatalf("swapfile = %+v", f)
+	}
+	if !w.enabled["mnt-data-ramplus.swapfile.swap"] {
+		t.Errorf("enabled = %v", w.enabled)
+	}
+	if !strings.Contains(out, "снапшоты подтома") {
+		t.Error("custom path on btrfs must warn about snapshots")
+	}
+	mustRun(t, w, Options{Action: ActionResize, Size: 6 * GiB}) // NoCOW сохраняется при пересоздании
+	mustRun(t, w, rollback)
+	mustRun(t, w, rollback)
+	if d := s0.diff(w.snap()); d != "" {
+		t.Errorf("not restored:\n%s", d)
+	}
+}
+
+func TestApplyRefusesForeignFS(t *testing.T) {
+	w := newWorld(t)
+	w.mounts["/mnt/win"] = fakeMount{fsType: "ntfs3", transport: "nvme", total: 900 * GiB, avail: 400 * GiB}
+	w.files["/mnt"] = &fakeFile{dir: true}
+	w.files["/mnt/win"] = &fakeFile{dir: true}
+	_, out, err := run(t, w, Options{Action: ActionApply, Size: 4 * GiB, Path: "/mnt/win/ramplus.swapfile"})
+	if !errors.Is(err, ErrBlocked) || !strings.Contains(out, "создайте раздел ext4/xfs") {
+		t.Fatalf("err=%v\n%s", err, out)
+	}
+}

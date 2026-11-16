@@ -8,6 +8,7 @@ import (
 
 	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/swap"
 )
 
 // reasonText — человекочитаемые причины n/a; context переопределяет общие.
@@ -128,6 +129,9 @@ func renderSystem(w io.Writer, st monitor.Status) error {
 		kernel += " (" + sys.Arch + ")"
 	}
 	s.kv("Ядро", kernel)
+	if sys.Virtualization != "" {
+		s.kv("Виртуализация", sys.Virtualization+" (скорость дисков зависит от хоста)")
+	}
 	if sys.OS != nil {
 		s.kv("Дистрибутив", sys.OS.PrettyName)
 	} else {
@@ -181,6 +185,8 @@ func renderSwaps(w io.Writer, st monitor.Status) error {
 		switch wr.Code {
 		case monitor.WarnSwapOnUSB:
 			fmt.Fprintf(w, "  ВНИМАНИЕ: %s на USB-диске — swap медленный и опасный при отключении диска\n", wr.Path)
+		case swap.WarnInterrupted:
+			fmt.Fprintf(w, "  ВНИМАНИЕ: операция RamPlus прервана (%s) — выполните: sudo ramplus rollback\n", wr.Path)
 		default:
 			fmt.Fprintf(w, "  ВНИМАНИЕ: %s: %s\n", wr.Path, wr.Code)
 		}
@@ -272,6 +278,9 @@ func renderPSI(w io.Writer, st monitor.Status) error {
 		}
 		s.row(l.name, fmt.Sprintf("%.2f", l.v.Avg10), fmt.Sprintf("%.2f", l.v.Avg60), fmt.Sprintf("%.2f", l.v.Avg300))
 	}
+	if p.PressureLevel != "" {
+		s.row("оценка", pressureText(p.PressureLevel)+" (по some avg10)")
+	}
 	return s.end(w)
 }
 
@@ -283,8 +292,26 @@ func kindText(k string) string {
 		return "SSD"
 	case detect.KindHDD:
 		return "HDD"
+	case detect.KindVirtual:
+		return "виртуальный"
 	default:
 		return "неизвестно"
+	}
+}
+
+// pressureText — интерпретация уровня давления на память.
+func pressureText(level string) string {
+	switch level {
+	case monitor.PressureNormal:
+		return "норма"
+	case monitor.PressureElevated:
+		return "повышенное давление"
+	case monitor.PressureHigh:
+		return "система тормозит"
+	case monitor.PressureSevere:
+		return "сильные тормоза"
+	default:
+		return "n/a"
 	}
 }
 

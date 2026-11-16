@@ -1,6 +1,7 @@
 package swap
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
 // ErrFallocateUnsupported — ФС не поддерживает fallocate.
@@ -22,14 +25,20 @@ type Event struct {
 	Err   error
 }
 
-// Runner выполняет шаги по одному. Если шаг падает, уже выполненные шаги
-// этого запуска откатываются в обратном порядке.
+// Runner выполняет шаги по одному с write-ahead журналом:
+//
+//	prepare (вычислить отмену, сохранить бэкап) → журнал pending →
+//	выполнить → журнал done.
+//
+// Если шаг падает, уже выполненные шаги этого запуска откатываются в
+// обратном порядке.
 type Runner struct {
 	Sys  System
 	OpID string
-	// Journal вызывается после каждого успешного шага; ошибка журнала
-	// считается ошибкой шага (без журнала нельзя гарантировать rollback).
-	Journal  func(applied []Applied) error
+	// Journal вызывается с полным списком записей (done + последняя
+	// pending). Ошибка журнала до шага — шаг не выполняется; после шага —
+	// шаг откатывается (без журнала нельзя гарантировать rollback).
+	Journal  func(entries []Applied) error
 	Progress func(Event)
 }
 
@@ -62,44 +71,65 @@ func (r *Runner) progress(ev Event) {
 	}
 }
 
+func (r *Runner) journal(entries []Applied) error {
+	if r.Journal == nil {
+		return nil
+	}
+	if err := r.Journal(entries); err != nil {
+		return fmt.Errorf("запись журнала %s: %w", StatePath, err)
+	}
+	return nil
+}
+
 // Run выполняет steps. При ошибке возвращает *StepError и выполненные
 // (уже откаченные) шаги.
 func (r *Runner) Run(ctx context.Context, steps []Step) ([]Applied, error) {
-	var applied []Applied
+	var done []Applied
 	for i, s := range steps {
-		ev := Event{Index: i + 1, Total: len(steps), Step: s}
-		a, err := r.exec(ctx, s)
-		if err == nil {
-			applied = append(applied, a)
-			if r.Journal != nil {
-				if jerr := r.Journal(applied); jerr != nil {
-					err = fmt.Errorf("запись журнала %s: %w", StatePath, jerr)
-				}
+		fail := func(err error, undoAlso *Applied) ([]Applied, error) {
+			r.progress(Event{Index: i + 1, Total: len(steps), Step: s, Err: err})
+			toUndo := append([]Applied(nil), done...)
+			if undoAlso != nil {
+				toUndo = append(toUndo, *undoAlso)
 			}
-		}
-		ev.Err = err
-		r.progress(ev)
-		if err != nil {
 			se := &StepError{Index: i + 1, Total: len(steps), Step: s, Err: err}
-			se.RollbackErrors = r.undo(ctx, applied)
-			return applied, se
+			se.RollbackErrors = r.undo(ctx, toUndo)
+			return toUndo, se
 		}
+
+		a, err := r.prepare(s)
+		if err != nil {
+			return fail(err, nil)
+		}
+		a.Status = StepPending
+		if err := r.journal(append(append([]Applied(nil), done...), a)); err != nil {
+			return fail(err, nil)
+		}
+		if err := r.do(ctx, s); err != nil {
+			return fail(err, nil)
+		}
+		a.Status = StepDone
+		if err := r.journal(append(append([]Applied(nil), done...), a)); err != nil {
+			return fail(err, &a)
+		}
+		done = append(done, a)
+		r.progress(Event{Index: i + 1, Total: len(steps), Step: s})
 	}
-	return applied, nil
+	return done, nil
 }
 
-// undo откатывает applied в обратном порядке, продолжая после ошибок.
-// После отката каждого шага журнал укорачивается, чтобы state.json не
-// содержал уже отменённых шагов (иначе rollback отменил бы их повторно).
-func (r *Runner) undo(ctx context.Context, applied []Applied) []error {
+// undo откатывает записи в обратном порядке, продолжая после ошибок.
+// После отката каждой записи журнал укорачивается, чтобы state.json не
+// содержал уже отменённых шагов.
+func (r *Runner) undo(ctx context.Context, entries []Applied) []error {
 	var errs []error
-	total := len(UndoSteps(applied))
+	total := len(UndoSteps(entries))
 	n := 0
-	for i := len(applied) - 1; i >= 0; i-- {
+	for i := len(entries) - 1; i >= 0; i-- {
 		ok := true
-		for _, s := range applied[i].Undo {
+		for _, s := range entries[i].Undo {
 			n++
-			_, err := r.exec(ctx, s)
+			err := r.exec(ctx, s)
 			r.progress(Event{Undo: true, Index: n, Total: total, Step: s, Err: err})
 			if err != nil {
 				ok = false
@@ -109,10 +139,18 @@ func (r *Runner) undo(ctx context.Context, applied []Applied) []error {
 		if ok && r.Journal != nil {
 			// Ошибка журнала здесь не делает откат неполным: система уже
 			// восстановлена, итоговый статус запишет вызывающий.
-			_ = r.Journal(applied[:i])
+			_ = r.Journal(entries[:i])
 		}
 	}
 	return errs
+}
+
+// exec — prepare + do без журнала (для шагов отката).
+func (r *Runner) exec(ctx context.Context, s Step) error {
+	if _, err := r.prepare(s); err != nil {
+		return err
+	}
+	return r.do(ctx, s)
 }
 
 func (r *Runner) run(ctx context.Context, name string, args ...string) error {
@@ -120,8 +158,16 @@ func (r *Runner) run(ctx context.Context, name string, args ...string) error {
 	return err
 }
 
-// exec выполняет один шаг и вычисляет, как его отменить.
-func (r *Runner) exec(ctx context.Context, s Step) (Applied, error) {
+func (r *Runner) perm(path string, def fs.FileMode) fs.FileMode {
+	if st, err := r.Sys.FS.Stat(path); err == nil {
+		return st.Mode().Perm()
+	}
+	return def
+}
+
+// prepare читает состояние до шага и вычисляет его отмену. Систему не
+// меняет (кроме копии файла в BackupDir).
+func (r *Runner) prepare(s Step) (Applied, error) {
 	fsys := r.Sys.FS
 	a := Applied{Step: s}
 	withReload := func(undo ...Step) []Step {
@@ -130,153 +176,68 @@ func (r *Runner) exec(ctx context.Context, s Step) (Applied, error) {
 		}
 		return undo
 	}
-
 	switch s.Kind {
-	case KindAllocate:
-		err := fsys.Fallocate(s.Path, s.Size)
-		if errors.Is(err, fs.ErrExist) {
-			return a, err // чужой файл — не трогаем
-		}
-		if errors.Is(err, ErrFallocateUnsupported) {
-			_ = fsys.Remove(s.Path)
-			err = fsys.WriteZeros(s.Path, s.Size)
-		}
-		if err != nil {
-			_ = fsys.Remove(s.Path) // недописанный файл — наш
-			return a, err
-		}
-		// Отмена — delete_swapfile: он сам обратим (пересоздаёт файл), поэтому
-		// откат отката тоже работает.
-		a.Undo = []Step{{Kind: KindDeleteSwapfile, Path: s.Path, Size: s.Size}}
-
-	case KindBtrfsMkswapfile:
+	case KindAllocate, KindBtrfsMkswapfile:
 		if _, err := fsys.Stat(s.Path); err == nil {
-			return a, &fs.PathError{Op: "create", Path: s.Path, Err: fs.ErrExist}
+			return a, &fs.PathError{Op: "create", Path: s.Path, Err: fs.ErrExist} // чужой файл не трогаем
 		}
-		if err := r.run(ctx, "btrfs", "filesystem", "mkswapfile", "--size", strconv.FormatUint(s.Size, 10), s.Path); err != nil {
-			if _, serr := fsys.Stat(s.Path); serr == nil {
-				_ = fsys.Remove(s.Path)
-			}
-			return a, err
-		}
-		a.Undo = []Step{{Kind: KindDeleteSwapfile, Path: s.Path, Size: s.Size}}
-
-	case KindChmod:
-		if err := fsys.Chmod(s.Path, fs.FileMode(s.Mode)); err != nil {
-			return a, err
-		}
-
-	case KindMkswap:
-		if err := r.run(ctx, "mkswap", s.Path); err != nil {
-			return a, err
-		}
-
+		a.Undo = []Step{{Kind: KindDeleteSwapfile, Path: s.Path, Size: s.Size, NoCOW: s.NoCOW}}
 	case KindSwapon:
-		if err := r.Sys.Kernel.Swapon(s.Path, s.Priority); err != nil {
-			return a, fmt.Errorf("swapon %s: %w", s.Path, err)
-		}
 		a.Undo = []Step{{Kind: KindSwapoff, Path: s.Path, Priority: s.Priority, Size: s.Size}}
-
 	case KindSwapoff:
-		if err := r.Sys.Kernel.Swapoff(s.Path); err != nil {
-			return a, fmt.Errorf("swapoff %s: %w", s.Path, err)
-		}
 		a.Undo = []Step{{Kind: KindSwapon, Path: s.Path, Priority: s.Priority, Size: s.Size}}
-
-	case KindRemoveFile:
-		if err := fsys.Remove(s.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return a, err
-		}
-
 	case KindDeleteSwapfile:
 		st, err := fsys.Stat(s.Path)
 		if err != nil {
 			return a, err
 		}
+		// Содержимое swap после swapoff не нужно — пустой swapfile того же
+		// размера эквивалентен исходному.
 		size := uint64(st.Size())
-		if err := fsys.Remove(s.Path); err != nil {
-			return a, err
-		}
-		// Содержимое swap после swapoff не нужно — пересоздание пустого
-		// swapfile того же размера эквивалентно восстановлению.
 		a.Undo = []Step{
-			{Kind: KindAllocate, Path: s.Path, Size: size},
+			{Kind: KindAllocate, Path: s.Path, Size: size, NoCOW: s.NoCOW},
 			{Kind: KindChmod, Path: s.Path, Mode: 0o600},
 			{Kind: KindMkswap, Path: s.Path},
 		}
-
 	case KindWriteFile:
 		prev, err := fsys.ReadFile(s.Path)
-		existed := err == nil
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return a, err
-		}
-		mode := fs.FileMode(s.Mode)
-		if mode == 0 {
-			mode = 0o644
-		}
-		if existed {
-			prevMode := mode
-			if st, err := fsys.Stat(s.Path); err == nil {
-				prevMode = st.Mode().Perm()
-			}
+		switch {
+		case err == nil:
 			if a.Backup, err = r.backup(s.Path, prev); err != nil {
 				return a, err
 			}
-			a.Undo = withReload(Step{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(prevMode)})
-		} else {
+			a.Undo = withReload(Step{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(r.perm(s.Path, 0o644)), Reload: s.Reload})
+		case errors.Is(err, fs.ErrNotExist):
 			a.Undo = withReload(Step{Kind: KindDeleteConfig, Path: s.Path, Reload: s.Reload})
-		}
-		if err := fsys.WriteFileAtomic(s.Path, []byte(s.Content), mode); err != nil {
+		default:
 			return a, err
 		}
-
 	case KindDeleteConfig:
 		prev, err := fsys.ReadFile(s.Path)
 		if err != nil {
 			return a, err
 		}
-		mode := fs.FileMode(0o644)
-		if st, err := fsys.Stat(s.Path); err == nil {
-			mode = st.Mode().Perm()
-		}
 		if a.Backup, err = r.backup(s.Path, prev); err != nil {
 			return a, err
 		}
-		if err := fsys.Remove(s.Path); err != nil {
-			return a, err
-		}
-		a.Undo = withReload(Step{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(mode), Reload: s.Reload})
-
+		a.Undo = withReload(Step{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(r.perm(s.Path, 0o644)), Reload: s.Reload})
 	case KindFstabDisable, KindFstabEnable:
 		content, err := fsys.ReadFile(s.Path)
 		if err != nil {
 			return a, err
 		}
-		edit, inverse := DisableFstabLine, KindFstabEnable
-		if s.Kind == KindFstabEnable {
-			edit, inverse = EnableFstabLine, KindFstabDisable
-		}
-		updated, err := edit(string(content), s.Line)
-		if err != nil {
+		if _, err := fstabEdit(s)(string(content), s.Line); err != nil {
 			return a, err
-		}
-		mode := fs.FileMode(0o644)
-		if st, err := fsys.Stat(s.Path); err == nil {
-			mode = st.Mode().Perm()
 		}
 		if a.Backup, err = r.backup(s.Path, content); err != nil {
 			return a, err
 		}
-		if err := fsys.WriteFileAtomic(s.Path, []byte(updated), mode); err != nil {
-			return a, err
+		inverse := KindFstabEnable
+		if s.Kind == KindFstabEnable {
+			inverse = KindFstabDisable
 		}
 		a.Undo = withReload(Step{Kind: inverse, Path: s.Path, Line: s.Line, Reload: s.Reload})
-
 	case KindSystemctl:
-		if err := r.run(ctx, "systemctl", s.Args...); err != nil {
-			return a, err
-		}
 		if len(s.Args) >= 2 {
 			switch s.Args[0] {
 			case "enable":
@@ -285,40 +246,112 @@ func (r *Runner) exec(ctx context.Context, s Step) (Applied, error) {
 				a.Undo = []Step{{Kind: KindSystemctl, Args: append([]string{"enable"}, s.Args[1:]...)}}
 			}
 		}
-
 	case KindMkdir:
-		if err := fsys.Mkdir(s.Path, 0o700); err != nil {
-			return a, err
-		}
 		a.Undo = []Step{{Kind: KindRmdir, Path: s.Path}}
-
 	case KindRmdir:
-		if err := fsys.Remove(s.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return a, err
-		}
 		a.Undo = []Step{{Kind: KindMkdir, Path: s.Path}}
-
-	case KindChattrNoCOW:
-		if err := r.run(ctx, "chattr", "+C", s.Path); err != nil {
-			return a, err
-		}
-
 	case KindBtrfsSubvolCreate:
-		if err := r.run(ctx, "btrfs", "subvolume", "create", s.Path); err != nil {
-			return a, err
-		}
 		a.Undo = []Step{{Kind: KindBtrfsSubvolDelete, Path: s.Path}}
-
 	case KindBtrfsSubvolDelete:
-		if err := r.run(ctx, "btrfs", "subvolume", "delete", s.Path); err != nil {
-			return a, err
-		}
 		a.Undo = []Step{{Kind: KindBtrfsSubvolCreate, Path: s.Path}, {Kind: KindChattrNoCOW, Path: s.Path}}
-
+	case KindChmod, KindMkswap, KindChattrNoCOW:
+		// отменять нечего
 	default:
 		return a, fmt.Errorf("неизвестный шаг %q", s.Kind)
 	}
 	return a, nil
+}
+
+func fstabEdit(s Step) func(content, line string) (string, error) {
+	if s.Kind == KindFstabEnable {
+		return EnableFstabLine
+	}
+	return DisableFstabLine
+}
+
+// do выполняет шаг.
+func (r *Runner) do(ctx context.Context, s Step) error {
+	fsys := r.Sys.FS
+	switch s.Kind {
+	case KindAllocate:
+		if err := fsys.Create(s.Path, 0o600); err != nil {
+			return err // в т.ч. fs.ErrExist: чужой файл не трогаем
+		}
+		err := func() error {
+			if s.NoCOW {
+				// +C можно поставить только пустому файлу.
+				if err := r.run(ctx, "chattr", "+C", s.Path); err != nil {
+					return err
+				}
+			}
+			err := fsys.Fallocate(s.Path, s.Size)
+			if errors.Is(err, ErrFallocateUnsupported) {
+				err = fsys.WriteZeros(s.Path, s.Size)
+			}
+			return err
+		}()
+		if err != nil {
+			_ = fsys.Remove(s.Path) // файл создан нами — убираем недописанный
+		}
+		return err
+
+	case KindBtrfsMkswapfile:
+		err := r.run(ctx, "btrfs", "filesystem", "mkswapfile", "--size", strconv.FormatUint(s.Size, 10), s.Path)
+		if err != nil {
+			if _, serr := fsys.Stat(s.Path); serr == nil {
+				_ = fsys.Remove(s.Path)
+			}
+		}
+		return err
+
+	case KindChmod:
+		return fsys.Chmod(s.Path, fs.FileMode(s.Mode))
+	case KindMkswap:
+		return r.run(ctx, "mkswap", s.Path)
+	case KindSwapon:
+		if err := r.Sys.Kernel.Swapon(s.Path, s.Priority); err != nil {
+			return fmt.Errorf("swapon %s: %w", s.Path, err)
+		}
+	case KindSwapoff:
+		if err := r.Sys.Kernel.Swapoff(s.Path); err != nil {
+			return fmt.Errorf("swapoff %s: %w", s.Path, err)
+		}
+	case KindDeleteSwapfile, KindDeleteConfig:
+		return fsys.Remove(s.Path)
+	case KindWriteFile:
+		mode := fs.FileMode(s.Mode)
+		if mode == 0 {
+			mode = 0o644
+		}
+		return fsys.WriteFileAtomic(s.Path, []byte(s.Content), mode)
+	case KindFstabDisable, KindFstabEnable:
+		content, err := fsys.ReadFile(s.Path)
+		if err != nil {
+			return err
+		}
+		updated, err := fstabEdit(s)(string(content), s.Line)
+		if err != nil {
+			return err
+		}
+		return fsys.WriteFileAtomic(s.Path, []byte(updated), r.perm(s.Path, 0o644))
+	case KindSystemctl:
+		return r.run(ctx, "systemctl", s.Args...)
+	case KindMkdir:
+		return fsys.Mkdir(s.Path, 0o700)
+	case KindRmdir:
+		if err := fsys.Remove(s.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	case KindChattrNoCOW:
+		return r.run(ctx, "chattr", "+C", s.Path)
+	case KindBtrfsSubvolCreate:
+		return r.run(ctx, "btrfs", "subvolume", "create", s.Path)
+	case KindBtrfsSubvolDelete:
+		return r.run(ctx, "btrfs", "subvolume", "delete", s.Path)
+	default:
+		return fmt.Errorf("неизвестный шаг %q", s.Kind)
+	}
+	return nil
 }
 
 // backup сохраняет копию файла перед изменением в BackupDir.
@@ -332,4 +365,147 @@ func (r *Runner) backup(path string, content []byte) (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// Verdict — что осталось в системе от шага, прерванного на середине.
+type Verdict string
+
+const (
+	VerdictAbsent   Verdict = "absent"   // шаг не успел изменить систему — откатывать нечего
+	VerdictPresent  Verdict = "present"  // артефакт есть и совпадает с записью — откатить
+	VerdictMismatch Verdict = "mismatch" // что-то есть, но не то, что записано — нужна ручная проверка
+)
+
+// VerifyPending проверяет артефакт записи со статусом pending (процесс
+// упал между записью pending и done). Только чтение.
+func VerifyPending(sys System, a Applied) (Verdict, string) {
+	s := a.Step
+	fsys := sys.FS
+	stat := func() (fs.FileInfo, bool) {
+		st, err := fsys.Stat(s.Path)
+		return st, err == nil
+	}
+	activeSwap := func() bool {
+		b, err := fsys.ReadFile(SwapsPath)
+		if err != nil {
+			return false
+		}
+		devs, _ := monitor.ParseSwaps(bytes.NewReader(b))
+		for _, d := range devs {
+			if d.Path == s.Path {
+				return true
+			}
+		}
+		return false
+	}
+	readFile := func() (string, bool) {
+		b, err := fsys.ReadFile(s.Path)
+		return string(b), err == nil
+	}
+	prevContent := func() (string, bool) { // содержимое до шага, из записи отмены
+		for _, u := range a.Undo {
+			if u.Kind == KindWriteFile {
+				return u.Content, true
+			}
+		}
+		return "", false
+	}
+
+	switch s.Kind {
+	case KindAllocate, KindBtrfsMkswapfile:
+		st, ok := stat()
+		switch {
+		case !ok:
+			return VerdictAbsent, s.Path + " не создан"
+		case st.Mode().IsRegular() && st.Mode().Perm() == 0o600 && uint64(st.Size()) <= s.Size:
+			return VerdictPresent, fmt.Sprintf("%s: путь, права 600 и размер (%s ≤ %s) совпадают с записью",
+				s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
+		default:
+			return VerdictMismatch, fmt.Sprintf("%s существует, но не похож на файл RamPlus (права %o, размер %s, ожидалось ≤ %s)",
+				s.Path, st.Mode().Perm(), FormatSize(uint64(st.Size())), FormatSize(s.Size))
+		}
+	case KindSwapon:
+		if activeSwap() {
+			return VerdictPresent, s.Path + " активен"
+		}
+		return VerdictAbsent, s.Path + " не активен"
+	case KindSwapoff:
+		if activeSwap() {
+			return VerdictAbsent, s.Path + " всё ещё активен"
+		}
+		return VerdictPresent, s.Path + " отключён"
+	case KindDeleteSwapfile:
+		st, ok := stat()
+		switch {
+		case !ok:
+			return VerdictPresent, s.Path + " удалён"
+		case s.Size == 0 || uint64(st.Size()) == s.Size:
+			return VerdictAbsent, s.Path + " на месте"
+		default:
+			return VerdictMismatch, fmt.Sprintf("%s: размер %s, в записи %s", s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
+		}
+	case KindWriteFile:
+		cur, ok := readFile()
+		prev, hadPrev := prevContent()
+		switch {
+		case ok && cur == s.Content:
+			return VerdictPresent, s.Path + " совпадает с содержимым из журнала RamPlus"
+		case ok && hadPrev && cur == prev, !ok && !hadPrev:
+			return VerdictAbsent, s.Path + " не изменён"
+		default:
+			return VerdictMismatch, s.Path + " не совпадает ни с прежним, ни с записанным содержимым"
+		}
+	case KindDeleteConfig:
+		cur, ok := readFile()
+		prev, _ := prevContent()
+		switch {
+		case !ok:
+			return VerdictPresent, s.Path + " удалён"
+		case cur == prev:
+			return VerdictAbsent, s.Path + " на месте"
+		default:
+			return VerdictMismatch, s.Path + " изменён после записи в журнал"
+		}
+	case KindFstabDisable, KindFstabEnable:
+		cur, ok := readFile()
+		if !ok {
+			return VerdictMismatch, s.Path + " недоступен"
+		}
+		marked, plain := hasLine(cur, fstabDisabledBy+s.Line), hasLine(cur, s.Line)
+		disabled, enabled := marked && !plain, plain && !marked
+		switch {
+		case (s.Kind == KindFstabDisable && disabled) || (s.Kind == KindFstabEnable && enabled):
+			return VerdictPresent, "строка в " + s.Path + " изменена"
+		case (s.Kind == KindFstabDisable && enabled) || (s.Kind == KindFstabEnable && disabled):
+			return VerdictAbsent, "строка в " + s.Path + " не изменена"
+		default:
+			return VerdictMismatch, "строка «" + strings.TrimSpace(s.Line) + "» в " + s.Path + " не в ожидаемом виде"
+		}
+	case KindSystemctl:
+		if len(a.Undo) > 0 {
+			return VerdictPresent, "systemctl " + strings.Join(s.Args, " ") + " — отмена безопасна при любом исходе"
+		}
+		return VerdictAbsent, "отменять нечего"
+	case KindMkdir, KindBtrfsSubvolCreate:
+		if _, ok := stat(); ok {
+			return VerdictPresent, s.Path + " существует"
+		}
+		return VerdictAbsent, s.Path + " не создан"
+	case KindRmdir, KindBtrfsSubvolDelete:
+		if _, ok := stat(); ok {
+			return VerdictAbsent, s.Path + " на месте"
+		}
+		return VerdictPresent, s.Path + " удалён"
+	default: // chmod, mkswap, chattr — отменять нечего
+		return VerdictAbsent, "отменять нечего"
+	}
+}
+
+func hasLine(content, line string) bool {
+	for _, l := range strings.Split(content, "\n") {
+		if l == line {
+			return true
+		}
+	}
+	return false
 }

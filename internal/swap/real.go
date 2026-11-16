@@ -19,7 +19,8 @@ import (
 
 // DefaultSystem — реальная система.
 func DefaultSystem() System {
-	return System{FS: OSFS{}, Exec: OSExec{}, Kernel: OSKernel{}, RootDisk: detect.ReadRootDisk, Now: time.Now}
+	return System{FS: OSFS{}, Exec: OSExec{}, Kernel: OSKernel{},
+		DescribeFS: detect.DescribeFS, ListFS: detect.ListLocalFS, Now: time.Now}
 }
 
 // OSFS — FS поверх os и unix.
@@ -69,8 +70,16 @@ func (OSFS) WriteFileAtomic(name string, data []byte, perm fs.FileMode) error {
 	return nil
 }
 
+func (OSFS) Create(name string, perm fs.FileMode) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 func (OSFS) Fallocate(name string, size uint64) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(name, os.O_WRONLY, 0)
 	if err != nil {
 		return err
 	}
@@ -85,7 +94,7 @@ func (OSFS) Fallocate(name string, size uint64) error {
 }
 
 func (OSFS) WriteZeros(name string, size uint64) error {
-	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 0)
 	if err != nil {
 		return err
 	}
@@ -99,14 +108,6 @@ func (OSFS) WriteZeros(name string, size uint64) error {
 		left -= n
 	}
 	return f.Sync()
-}
-
-func (OSFS) Statfs(path string) (total, avail uint64, err error) {
-	var st unix.Statfs_t
-	if err := unix.Statfs(path, &st); err != nil {
-		return 0, 0, err
-	}
-	return st.Blocks * uint64(st.Bsize), st.Bavail * uint64(st.Bsize), nil
 }
 
 func (OSFS) Lock(name string) (func() error, error) {
