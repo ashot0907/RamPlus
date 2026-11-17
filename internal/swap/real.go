@@ -28,6 +28,7 @@ type OSFS struct{}
 
 func (OSFS) ReadFile(name string) ([]byte, error)         { return os.ReadFile(name) }
 func (OSFS) Stat(name string) (fs.FileInfo, error)        { return os.Stat(name) }
+func (OSFS) Glob(pattern string) ([]string, error)        { return filepath.Glob(pattern) }
 func (OSFS) EvalSymlinks(path string) (string, error)     { return filepath.EvalSymlinks(path) }
 func (OSFS) Remove(name string) error                     { return os.Remove(name) }
 func (OSFS) Mkdir(name string, perm fs.FileMode) error    { return os.Mkdir(name, perm) }

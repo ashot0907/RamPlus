@@ -103,8 +103,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Чистый старт: нашего swap и журнала быть не должно.
-[[ ! -e $SWAPFILE && ! -e $STATE ]] || die "VM не чистая: есть $SWAPFILE или $STATE"
+# Чистый старт по фактическому состоянию: нет управляемого swap, активного
+# swap RamPlus, юнитов, незавершённых операций. Журнал с историей — не помеха.
+if ! clean_report=$("$BIN" swap check-clean 2>&1); then
+	die "VM не чистая:\n$clean_report"
+fi
+echo "$clean_report"
 cp -p /etc/fstab "$FSTAB_ORIG"
 INITIAL_SWAPS=$(swaps)
 
@@ -157,6 +161,7 @@ rp rollback --yes
 assert_no_swap "$SWAPFILE"
 assert_eq "$(swaps)" "$INITIAL_SWAPS" "swap как в начале"
 assert_same_file "$FSTAB_ORIG" /etc/fstab "fstab как в начале"
+"$BIN" swap check-clean || die "после полного rollback остались следы"
 if rp rollback --yes; then
 	die "лишний rollback должен отказать"
 fi

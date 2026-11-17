@@ -75,6 +75,7 @@ func newSwapCmd() *cobra.Command {
 		newExecCmd(swap.ActionApply, "apply", "Создать swapfile (нужен root)", true, true),
 		newExecCmd(swap.ActionResize, "resize", "Изменить размер swapfile RamPlus (нужен root)", true, false),
 		newExecCmd(swap.ActionRemove, "remove", "Удалить swapfile RamPlus (нужен root)", false, false),
+		newCheckCleanCmd(),
 	)
 	return cmd
 }
@@ -162,4 +163,28 @@ func confirmer(yes bool, in io.Reader, out io.Writer) swap.Confirm {
 func isTerminal(f *os.File) bool {
 	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
 	return err == nil
+}
+
+func newCheckCleanCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "check-clean",
+		Short: "Проверить, что в системе нет следов RamPlus (управляемого swap, юнитов, незавершённых операций)",
+		Long: "Смотрит на фактическое состояние: managed в журнале, активный swap RamPlus,\n" +
+			"юниты *ramplus*.swap, незавершённые операции, файлы по путям RamPlus.\n" +
+			"Журнал с историей откаченных операций следом не считается. Код выхода 1 — не чисто.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			f := swap.Gather(cmd.Context(), swap.DefaultSystem(), "")
+			problems := swap.CleanProblems(f)
+			out := cmd.OutOrStdout()
+			if len(problems) == 0 {
+				fmt.Fprintln(out, "чисто: следов RamPlus нет")
+				return nil
+			}
+			for _, p := range problems {
+				fmt.Fprintln(out, "- "+p)
+			}
+			return fmt.Errorf("найдены следы RamPlus: %d", len(problems))
+		},
+	}
 }

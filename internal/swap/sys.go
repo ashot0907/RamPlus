@@ -19,6 +19,7 @@ const (
 	ManagedPath     = "/" + DefaultFileName // по умолчанию на ext4/xfs
 	BtrfsDir        = "/ramplus-swap"       // NOCOW-подтом на btrfs (путь по умолчанию)
 	BtrfsPath       = BtrfsDir + "/" + DefaultFileName
+	LegacyPath      = "/ramplus.swap" // путь по умолчанию в state.json v1
 	StateDir        = "/var/lib/ramplus"
 	StatePath       = StateDir + "/state.json" // журнал операций
 	BackupDir       = StateDir + "/backups"    // копии изменённых файлов
@@ -51,6 +52,8 @@ type FS interface {
 	Fallocate(name string, size uint64) error
 	// WriteZeros заполняет существующий файл size нулями.
 	WriteZeros(name string, size uint64) error
+	// Glob — как filepath.Glob.
+	Glob(pattern string) ([]string, error)
 	// Lock берёт эксклюзивную блокировку (flock) без ожидания.
 	Lock(name string) (unlock func() error, err error)
 }

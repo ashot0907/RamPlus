@@ -29,7 +29,7 @@ func TestSwapFlagsOptions(t *testing.T) {
 
 func TestSwapCommandsRegistered(t *testing.T) {
 	root := newRootCmd()
-	for _, path := range [][]string{{"swap", "plan"}, {"swap", "apply"}, {"swap", "resize"}, {"swap", "remove"}, {"rollback"}} {
+	for _, path := range [][]string{{"swap", "plan"}, {"swap", "apply"}, {"swap", "resize"}, {"swap", "remove"}, {"swap", "check-clean"}, {"rollback"}} {
 		cmd, _, err := root.Find(path)
 		if err != nil || cmd.Name() != path[len(path)-1] {
 			t.Errorf("%v: %v", path, err)

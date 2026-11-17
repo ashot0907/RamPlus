@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "managed": {
+    "path": "/ramplus.swap",
+    "size_bytes": 4294967296,
+    "priority": 10,
+    "unit": "ramplus.swap.swap",
+    "fs_type": "ext4",
+    "created_at": "2026-11-16T15:10:02Z"
+  },
+  "operations": [
+    {
+      "id": "20261116T151002Z",
+      "action": "apply",
+      "command": "ramplus swap apply --size 4G --existing=keep",
+      "status": "committed",
+      "started_at": "2026-11-16T15:10:02Z",
+      "finished_at": "2026-11-16T15:10:04Z",
+      "applied": [
+        {"step": {"kind": "allocate", "path": "/ramplus.swap", "size": 4294967296},
+         "undo": [{"kind": "remove_file", "path": "/ramplus.swap"}]},
+        {"step": {"kind": "chmod", "path": "/ramplus.swap", "mode": 384}, "undo": null},
+        {"step": {"kind": "mkswap", "path": "/ramplus.swap"}, "undo": null},
+        {"step": {"kind": "swapon", "path": "/ramplus.swap", "size": 4294967296, "priority": 10},
+         "undo": [{"kind": "swapoff", "path": "/ramplus.swap", "size": 4294967296, "priority": 10}]},
+        {"step": {"kind": "write_file", "path": "/etc/systemd/system/ramplus.swap.swap", "mode": 420, "reload": true,
+                  "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swap\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swap\nPriority=10\n\n[Install]\nWantedBy=swap.target\n"},
+         "undo": [{"kind": "remove_file", "path": "/etc/systemd/system/ramplus.swap.swap"},
+                  {"kind": "systemctl", "args": ["daemon-reload"]}]},
+        {"step": {"kind": "systemctl", "args": ["daemon-reload"]}, "undo": null},
+        {"step": {"kind": "systemctl", "args": ["enable", "ramplus.swap.swap"]},
+         "undo": [{"kind": "systemctl", "args": ["disable", "ramplus.swap.swap"]}]}
+      ],
+      "managed_before": null,
+      "managed_after": {"path": "/ramplus.swap", "size_bytes": 4294967296, "priority": 10, "unit": "ramplus.swap.swap", "fs_type": "ext4", "created_at": "0001-01-01T00:00:00Z"}
+    }
+  ]
+}

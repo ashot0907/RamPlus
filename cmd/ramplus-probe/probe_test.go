@@ -3,11 +3,16 @@ package main
 import (
 	"bytes"
 	"compress/flate"
+	"context"
+	"errors"
 	"math"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 func TestPercentileMedian(t *testing.T) {
@@ -130,19 +135,31 @@ func TestReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runs) != 5 || runs[3].Latency != nil {
-		t.Fatalf("runs = %d; empty latency.json (process killed) must be ignored", len(runs))
+	if len(runs) != 6 {
+		t.Fatalf("runs = %d", len(runs))
+	}
+	for _, r := range runs {
+		if r.Config == "swap" && r.Run == 3 && r.Latency != nil {
+			t.Error("empty latency.json (process killed) must be ignored")
+		}
 	}
 	var csvOut bytes.Buffer
 	if err := WriteCSV(&csvOut, runs); err != nil {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(csvOut.String()), "\n")
-	if len(lines) != 6 || !strings.HasPrefix(lines[0], "config,workload,data,run,status") {
+	if len(lines) != 7 || !strings.Contains(lines[0], "zswap_pool_limit_hit,zswap_written_back_pages") {
 		t.Errorf("csv:\n%s", csvOut.String())
 	}
+	if !strings.Contains(csvOut.String(), "zswap-lz4,cold,random,1,ok,0,30.20,,,,,,,,,,,,20,12,4096,8,0,") {
+		t.Errorf("zswap deltas missing:\n%s", csvOut.String())
+	}
 
-	groups := GroupRuns(runs)
+	var env Env
+	if _, err := readJSON(filepath.Join(dir, "env.json"), &env); err != nil {
+		t.Fatal(err)
+	}
+	groups := GroupRuns(runs, env)
 	var swapCold Group
 	for _, g := range groups {
 		if g.Config == "swap" && g.Workload == "cold" {
@@ -150,25 +167,25 @@ func TestReport(t *testing.T) {
 		}
 	}
 	if swapCold.Total != 3 || swapCold.OK != 2 || swapCold.Duration != 35.5 || swapCold.PeakSwap != 2200 ||
-		swapCold.SomePeak != 75 || swapCold.LatP99 != 90 {
+		swapCold.SomePeak != 75 || swapCold.LatP99 != 90 || swapCold.LatMax != 500 {
 		t.Errorf("swap/cold group = %+v", swapCold)
 	}
 
-	var env Env
-	if _, err := readJSON(filepath.Join(dir, "env.json"), &env); err != nil {
-		t.Fatal(err)
-	}
 	var md bytes.Buffer
-	if err := WriteMarkdown(&md, env, groups); err != nil {
+	if err := WriteMarkdown(&md, env, runs); err != nil {
 		t.Fatal(err)
 	}
 	out := md.String()
 	for _, want := range []string{
 		"Запуск в VM: цифры производительности нерепрезентативны",
 		"## cold / random",
-		"| swap | 2/3 (oom ×1) | 35.5 | 2200 | 0 | 75.0 / 32.0 | 45.0 / 13.0 | 1.3 / 90.0 | 2.50 |",
+		"| swap | 2/3 (oom ×1) | 35.5 | 2200 | 0 | — | 75.0 / 32.0 | 45.0 / 13.0 | 1.3 / 90.0 | 2.50 |",
+		"| zswap-lz4 | 1/1 | 30.2 |",
+		"| да (12) |",
 		"| zswap-zstd | 0/1 (skipped ×1) | — |",
 		"| no-swap | 0/1 (failed ×1) | — |",
+		"## Наблюдения",
+		"Сработал лимит пула zswap (debugfs): zswap-lz4 — cold / random (pool_limit_hit +12)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary lacks %q:\n%s", want, out)
@@ -176,8 +193,157 @@ func TestReport(t *testing.T) {
 	}
 	env.Virt = "none"
 	md.Reset()
-	WriteMarkdown(&md, env, groups)
+	WriteMarkdown(&md, env, runs)
 	if strings.Contains(md.String(), "нерепрезентативны") {
 		t.Error("no VM warning on bare metal")
+	}
+}
+
+func TestAllocate(t *testing.T) {
+	enomem := func(int) ([]byte, error) { return nil, unix.ENOMEM }
+	_, err := allocate(5<<30, enomem)
+	var nm *NoMemoryError
+	if !errors.As(err, &nm) || !strings.Contains(err.Error(), "не удалось выделить 5120 MiB: недостаточно памяти") {
+		t.Fatalf("err = %v", err)
+	}
+	if exitCode(err) != ExitRefused || exitCode(nil) != 0 || exitCode(errors.New("x")) != 1 {
+		t.Error("exit codes")
+	}
+	other := func(int) ([]byte, error) { return nil, unix.EINVAL }
+	if _, err := allocate(1<<20, other); err == nil || errors.As(err, &nm) {
+		t.Errorf("EINVAL is a tool error, not refusal: %v", err)
+	}
+	// Настоящий mmap размером 1 PiB: больше адресного пространства — ядро
+	// отказывает при любом режиме overcommit.
+	if _, err := allocate(1<<50, mmapAnon); !errors.As(err, &nm) {
+		t.Errorf("1 PiB: want NoMemoryError, got %v", err)
+	}
+	b, err := allocate(1<<20, mmapAnon)
+	if err != nil || len(b) != 1<<20 {
+		t.Fatalf("1 MiB: %v", err)
+	}
+	unix.Munmap(b)
+}
+
+// Раньше здесь была фатальная ошибка рантайма Go (код 2, трейс): make()
+// на отказ ядра не возвращает ошибку. Теперь — штатный отказ.
+func TestWorkloadRefusedWithoutPanic(t *testing.T) {
+	err := runWorkload(context.Background(), []string{"--size", "1048576G", "--duration", "1s"})
+	var nm *NoMemoryError
+	if !errors.As(err, &nm) || exitCode(err) != ExitRefused {
+		t.Fatalf("err = %v", err)
+	}
+	if err := runLatency(context.Background(), []string{"--size", "1048576G", "--duration", "1s"}); exitCode(err) != ExitRefused {
+		t.Fatalf("latency: %v", err)
+	}
+}
+
+func TestClassify(t *testing.T) {
+	stressNoRes := "stress-ng: info:  [16892] setting to a 10 secs run per stressor\n" +
+		"stress-ng: info:  [16892] skipped: 1: vm (1)\n" +
+		"stress-ng: info:  [16892] successful run completed in 10.01 secs"
+	tests := []struct {
+		name   string
+		in     ClassifyInput
+		status string
+		note   string
+	}{
+		{"ok", ClassifyInput{Workload: "cold", ExitCode: 0}, StatusOK, ""},
+		{"probe refused", ClassifyInput{Workload: "cold", ExitCode: ExitRefused,
+			Log: "ramplus-probe: не удалось выделить 5082 MiB: недостаточно памяти (cannot allocate memory)"}, StatusRefused, "5082 MiB"},
+		{"stress-ng no resource", ClassifyInput{Workload: "hot", ExitCode: 3, Log: stressNoRes}, StatusRefused, "skipped"},
+		{"stress-ng no resource, old log", ClassifyInput{Workload: "hot", ExitCode: 3,
+			Log: "stress-ng: info:  [16892] successful run completed in 10.01 secs"}, StatusRefused, "код 3"},
+		{"stress-ng no available memory", ClassifyInput{Workload: "hot", ExitCode: 2,
+			Log: "stress-ng: error: [1] vm: no available memory"}, StatusRefused, "no available memory"},
+		{"go fatal error", ClassifyInput{Workload: "cold", ExitCode: 2,
+			Log: "runtime: out of memory\nfatal error: out of memory\n\ngoroutine 1 [running]:\n\t/x/signal.go:303 +0x165"}, StatusFailed, "fatal error: out of memory"},
+		{"oom killer", ClassifyInput{Workload: "cold", ExitCode: 137, DurationS: 40, LimitS: 210}, StatusOOM, "SIGKILL"},
+		{"timeout", ClassifyInput{Workload: "hot", ExitCode: 137, DurationS: 210, LimitS: 210}, StatusTimeout, "210"},
+		{"tool error", ClassifyInput{Workload: "cold", ExitCode: 1, Log: "ramplus-probe: --size обязателен"}, StatusFailed, "--size обязателен"},
+	}
+	for _, tt := range tests {
+		status, note := Classify(tt.in)
+		if status != tt.status || !strings.Contains(note, tt.note) {
+			t.Errorf("%s: got %s %q, want %s ~%q", tt.name, status, note, tt.status, tt.note)
+		}
+	}
+}
+
+func TestZswapCounters(t *testing.T) {
+	z := ReadZswapCounters(filepath.Join("testdata", "zswap-debugfs"))
+	if !z.Available || z.Counters["pool_limit_hit"] != 12 || len(z.Counters) != 5 {
+		t.Errorf("counters = %+v", z)
+	}
+	if z := ReadZswapCounters(filepath.Join(t.TempDir(), "absent")); z.Available || z.Error == "" {
+		t.Errorf("absent dir: %+v", z)
+	}
+	before := ZswapCounters{Available: true, Counters: map[string]uint64{"pool_limit_hit": 5, "written_back_pages": 100}}
+	after := ZswapCounters{Available: true, Counters: map[string]uint64{"pool_limit_hit": 9, "written_back_pages": 100, "reject_reclaim_fail": 3}}
+	d := ZswapDelta(before, after)
+	if d["pool_limit_hit"] != 4 || d["written_back_pages"] != 0 || len(d) != 2 {
+		t.Errorf("delta = %v", d)
+	}
+	if ZswapDelta(ZswapCounters{}, after) != nil {
+		t.Error("no debugfs → nil")
+	}
+}
+
+func TestPoolPercent(t *testing.T) {
+	for cfg, want := range map[string]int{"swap": 0, "no-swap": 0, "zswap-lz4": 20, "zswap-lz4-p35": 35, "zswap-lz4-p50": 50, "zswap-lzo-zbud": 20} {
+		if got := PoolPercent(Run{Meta: Meta{Config: cfg}}); got != want {
+			t.Errorf("PoolPercent(%s) = %d, want %d", cfg, got, want)
+		}
+	}
+	if PoolPercent(Run{Meta: Meta{Config: "zswap-lz4", MaxPoolPercent: 33}}) != 33 {
+		t.Error("meta wins over name")
+	}
+}
+
+// Наблюдения на результатах --quick из VM (results.csv прогона).
+func TestObservationsVMQuick(t *testing.T) {
+	dir := filepath.Join("testdata", "vm-quick")
+	f, err := os.Open(filepath.Join(dir, "results.csv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	runs, err := LoadRunsCSV(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env Env
+	if _, err := readJSON(filepath.Join(dir, "env.json"), &env); err != nil {
+		t.Fatal(err)
+	}
+	statuses := map[string]string{}
+	for _, r := range runs {
+		statuses[r.Config+"/"+r.Workload+"/"+r.Data] = r.Status
+	}
+	// stress-ng с кодом 3 — отказ системы; паника старого probe — ошибка инструмента.
+	if statuses["no-swap/hot/stress-ng"] != StatusRefused || statuses["no-swap/cold/random"] != StatusFailed {
+		t.Errorf("reclassification: %v", statuses)
+	}
+	obs := strings.Join(Observations(env, runs, GroupRuns(runs, env)), "\n")
+	for _, want := range []string{
+		"одиночные прогоны, выводы ненадёжны",
+		"hot / stress-ng — swap, max 66942 мс",
+		"hot / stress-ng: p99 66942.2 мс (swap), max 66942.2 мс (swap) — **фриз**",
+		"cold / compressible: p99 5.6 мс (zswap-lzo-zbud), max 194.4 мс (zswap-zstd)",
+		"лимит 20% RAM = 782 MiB",
+		"zswap-zstd — hot-probe / compressible (пик 782 MiB)",
+		"zswap-lzo-zbud — cold / compressible (пик 765 MiB)",
+		"Аномально долго: hot-probe / compressible — zswap-zstd 106.1 с при медиане 24.6 с по конфигурациям (пул zswap упирался в лимит)",
+		"Аномально долго: hot / stress-ng — zswap-lzo-zbud 128.7 с при медиане 43.0 с по конфигурациям (пул zswap упирался в лимит)",
+		"refused — ожидаемо без swap",
+		"no-swap: hot / stress-ng",
+		"**Ошибки инструмента (failed)**",
+	} {
+		if !strings.Contains(obs, want) {
+			t.Errorf("observations lack %q:\n%s", want, obs)
+		}
+	}
+	if strings.Contains(obs, "zswap-lz4 — cold / random") {
+		t.Error("cold/random zswap peak 65 MiB is far from the limit")
 	}
 }

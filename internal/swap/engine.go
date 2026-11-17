@@ -13,6 +13,10 @@ import (
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
+// legacyConfigMax — remove_file из журнала v1: файлы до этого размера
+// считаются конфигами (юнит), больше — swapfile.
+const legacyConfigMax = 1 << 20
+
 // ErrFallocateUnsupported — ФС не поддерживает fallocate.
 var ErrFallocateUnsupported = errors.New("fallocate not supported")
 
@@ -254,6 +258,30 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 		a.Undo = []Step{{Kind: KindBtrfsSubvolDelete, Path: s.Path}}
 	case KindBtrfsSubvolDelete:
 		a.Undo = []Step{{Kind: KindBtrfsSubvolCreate, Path: s.Path}, {Kind: KindChattrNoCOW, Path: s.Path}}
+	case KindRemoveFile: // журнал v1
+		st, err := fsys.Stat(s.Path)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			// уже удалён — шаг ничего не сделает
+		case err != nil:
+			return a, err
+		case st.Size() > legacyConfigMax:
+			size := uint64(st.Size())
+			a.Undo = []Step{
+				{Kind: KindAllocate, Path: s.Path, Size: size},
+				{Kind: KindChmod, Path: s.Path, Mode: 0o600},
+				{Kind: KindMkswap, Path: s.Path},
+			}
+		default:
+			prev, err := fsys.ReadFile(s.Path)
+			if err != nil {
+				return a, err
+			}
+			if a.Backup, err = r.backup(s.Path, prev); err != nil {
+				return a, err
+			}
+			a.Undo = []Step{{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(st.Mode().Perm())}}
+		}
 	case KindChmod, KindMkswap, KindChattrNoCOW:
 		// отменять нечего
 	default:
@@ -318,6 +346,10 @@ func (r *Runner) do(ctx context.Context, s Step) error {
 		}
 	case KindDeleteSwapfile, KindDeleteConfig:
 		return fsys.Remove(s.Path)
+	case KindRemoveFile:
+		if err := fsys.Remove(s.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	case KindWriteFile:
 		mode := fs.FileMode(s.Mode)
 		if mode == 0 {
@@ -491,7 +523,7 @@ func VerifyPending(sys System, a Applied) (Verdict, string) {
 			return VerdictPresent, s.Path + " существует"
 		}
 		return VerdictAbsent, s.Path + " не создан"
-	case KindRmdir, KindBtrfsSubvolDelete:
+	case KindRmdir, KindBtrfsSubvolDelete, KindRemoveFile:
 		if _, ok := stat(); ok {
 			return VerdictAbsent, s.Path + " на месте"
 		}

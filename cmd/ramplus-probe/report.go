@@ -10,6 +10,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,28 +18,33 @@ import (
 
 // Meta — описание прогона, пишет bench.sh (runs/<имя>/meta.json).
 type Meta struct {
-	Config    string  `json:"config"`
-	Workload  string  `json:"workload"`
-	Data      string  `json:"data"`
-	Run       int     `json:"run"`
-	Status    string  `json:"status"` // ok | failed | oom | timeout | skipped
-	ExitCode  int     `json:"exit_code"`
-	DurationS float64 `json:"duration_s"`
-	Note      string  `json:"note"`
+	Config         string  `json:"config"`
+	Workload       string  `json:"workload"`
+	Data           string  `json:"data"`
+	Run            int     `json:"run"`
+	Status         string  `json:"status"` // ok | refused | oom | timeout | failed | skipped
+	ExitCode       int     `json:"exit_code"`
+	DurationS      float64 `json:"duration_s"`
+	Note           string  `json:"note"`
+	MaxPoolPercent int     `json:"max_pool_percent,omitempty"` // zswap: max_pool_percent этого прогона
 }
 
 // Env — окружение бенчмарка (env.json).
 type Env struct {
-	Date        string `json:"date"`
-	Kernel      string `json:"kernel"`
-	Virt        string `json:"virt"`
-	MemTotalMiB int    `json:"mem_total_mib"`
-	SwapSize    string `json:"swap_size"`
-	WorkSize    string `json:"work_size"`
-	DurationS   int    `json:"duration_s"`
-	Runs        int    `json:"runs"`
-	RootDisk    string `json:"root_disk"`
+	Date         string `json:"date"`
+	Kernel       string `json:"kernel"`
+	Virt         string `json:"virt"`
+	MemTotalMiB  int    `json:"mem_total_mib"`
+	SwapSize     string `json:"swap_size"`
+	WorkSize     string `json:"work_size"`
+	DurationS    int    `json:"duration_s"`
+	Runs         int    `json:"runs"`
+	RootDisk     string `json:"root_disk"`
+	ZswapDebugfs bool   `json:"zswap_debugfs"`
 }
+
+// zswapDeltaKeys — счётчики debugfs, дельта которых пишется в отчёт.
+var zswapDeltaKeys = []string{"pool_limit_hit", "written_back_pages", "reject_compress_poor", "reject_reclaim_fail"}
 
 // Run — прогон со всеми результатами.
 type Run struct {
@@ -46,10 +52,30 @@ type Run struct {
 	Sample  *SampleSummary
 	Latency *LatencySummary
 	Result  *WorkloadResult // workload.json (нагрузка ramplus-probe)
+	// ZswapDelta — прирост счётчиков debugfs за прогон; nil — нет данных.
+	ZswapDelta map[string]uint64
 }
 
 // configOrder — порядок конфигураций в отчёте.
-var configOrder = map[string]int{"no-swap": 0, "swap": 1, "zswap-lz4": 2, "zswap-zstd": 3, "zswap-lzo-zbud": 4}
+var configOrder = map[string]int{"no-swap": 0, "swap": 1, "zswap-lz4": 2, "zswap-lz4-p35": 3, "zswap-lz4-p50": 4, "zswap-zstd": 5, "zswap-lzo-zbud": 6}
+
+var poolSuffix = regexp.MustCompile(`-p(\d+)$`)
+
+// PoolPercent — max_pool_percent прогона: из meta, иначе по имени
+// конфигурации (суффикс -pNN, по умолчанию 20). 0 — zswap не включён.
+func PoolPercent(r Run) int {
+	if !strings.HasPrefix(r.Config, "zswap") {
+		return 0
+	}
+	if r.MaxPoolPercent > 0 {
+		return r.MaxPoolPercent
+	}
+	if m := poolSuffix.FindStringSubmatch(r.Config); m != nil {
+		v, _ := strconv.Atoi(m[1])
+		return v
+	}
+	return 20
+}
 
 func readJSON(path string, v any) (bool, error) {
 	b, err := os.ReadFile(path)
@@ -63,6 +89,22 @@ func readJSON(path string, v any) (bool, error) {
 		return false, nil // процесс убит до записи
 	}
 	return true, json.Unmarshal(b, v)
+}
+
+// ZswapDelta — прирост счётчиков между двумя снимками; nil, если данных нет.
+func ZswapDelta(before, after ZswapCounters) map[string]uint64 {
+	if !before.Available || !after.Available {
+		return nil
+	}
+	d := map[string]uint64{}
+	for _, k := range zswapDeltaKeys {
+		b, ok1 := before.Counters[k]
+		a, ok2 := after.Counters[k]
+		if ok1 && ok2 && a >= b {
+			d[k] = a - b
+		}
+	}
+	return d
 }
 
 // LoadRuns читает dir/runs/*/.
@@ -90,8 +132,19 @@ func LoadRuns(dir string) ([]Run, error) {
 		if ok, err := readJSON(filepath.Join(d, "workload.json"), &w); err == nil && ok {
 			r.Result = &w
 		}
+		var zb, za ZswapCounters
+		okB, _ := readJSON(filepath.Join(d, "zswap-before.json"), &zb)
+		okA, _ := readJSON(filepath.Join(d, "zswap-after.json"), &za)
+		if okB && okA {
+			r.ZswapDelta = ZswapDelta(zb, za)
+		}
 		runs = append(runs, r)
 	}
+	sortRuns(runs)
+	return runs, nil
+}
+
+func sortRuns(runs []Run) {
 	sort.SliceStable(runs, func(i, j int) bool {
 		a, b := runs[i], runs[j]
 		if a.Workload != b.Workload {
@@ -100,11 +153,87 @@ func LoadRuns(dir string) ([]Run, error) {
 		if a.Data != b.Data {
 			return a.Data < b.Data
 		}
-		if configOrder[a.Config] != configOrder[b.Config] {
-			return configOrder[a.Config] < configOrder[b.Config]
+		if oa, ob := order(a.Config), order(b.Config); oa != ob {
+			return oa < ob
 		}
 		return a.Run < b.Run
 	})
+}
+
+func order(config string) int {
+	if v, ok := configOrder[config]; ok {
+		return v
+	}
+	return len(configOrder)
+}
+
+// LoadRunsCSV читает готовый results.csv (в том числе старого формата:
+// колонки берутся по заголовку). Статусы "failed" пересчитываются текущими
+// правилами Classify по коду выхода и пояснению.
+func LoadRunsCSV(r io.Reader) ([]Run, error) {
+	rows, err := csv.NewReader(r).ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) < 2 {
+		return nil, errors.New("results.csv пуст")
+	}
+	col := map[string]int{}
+	for i, h := range rows[0] {
+		col[h] = i
+	}
+	get := func(row []string, name string) string {
+		if i, ok := col[name]; ok && i < len(row) {
+			return row[i]
+		}
+		return ""
+	}
+	f := func(row []string, name string) (float64, bool) {
+		v, err := strconv.ParseFloat(get(row, name), 64)
+		return v, err == nil
+	}
+	var runs []Run
+	for _, row := range rows[1:] {
+		var run Run
+		run.Config, run.Workload, run.Data = get(row, "config"), get(row, "workload"), get(row, "data")
+		run.Run, _ = strconv.Atoi(get(row, "run"))
+		run.Status, run.Note = get(row, "status"), get(row, "note")
+		run.ExitCode, _ = strconv.Atoi(get(row, "exit_code"))
+		run.DurationS, _ = f(row, "duration_s")
+		run.MaxPoolPercent, _ = strconv.Atoi(get(row, "max_pool_percent"))
+		if run.Status == StatusFailed {
+			run.Status, _ = Classify(ClassifyInput{Workload: run.Workload, ExitCode: run.ExitCode, Log: run.Note})
+		}
+		if v, ok := f(row, "peak_swap_used_mib"); ok {
+			s := &SampleSummary{PeakSwapUsedMiB: v}
+			s.PeakZswapPoolMiB, _ = f(row, "peak_zswap_pool_mib")
+			s.MinMemAvailMiB, _ = f(row, "min_mem_available_mib")
+			s.PSISomePeak, _ = f(row, "psi_some_peak")
+			s.PSISomeAvg, _ = f(row, "psi_some_avg")
+			s.PSIFullPeak, _ = f(row, "psi_full_peak")
+			s.PSIFullAvg, _ = f(row, "psi_full_avg")
+			run.Sample = s
+		}
+		if v, ok := f(row, "lat_p50_ms"); ok {
+			l := &LatencySummary{Samples: 1, P50Ms: v}
+			l.P99Ms, _ = f(row, "lat_p99_ms")
+			l.MaxMs, _ = f(row, "lat_max_ms")
+			run.Latency = l
+		}
+		if v, ok := f(row, "hot_touch_gib_per_s"); ok {
+			run.Result = &WorkloadResult{OK: true, GiBps: v}
+		}
+		for _, k := range zswapDeltaKeys {
+			if v, err := strconv.ParseUint(get(row, "zswap_"+k), 10, 64); err == nil {
+				if run.ZswapDelta == nil {
+					run.ZswapDelta = map[string]uint64{}
+				}
+				run.ZswapDelta[k] = v
+			}
+		}
+		runs = append(runs, run)
+	}
+	sortRuns(runs)
 	return runs, nil
 }
 
@@ -118,10 +247,14 @@ func num(v float64) string {
 // WriteCSV пишет results.csv: одна строка на прогон.
 func WriteCSV(w io.Writer, runs []Run) error {
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"config", "workload", "data", "run", "status", "exit_code", "duration_s",
+	header := []string{"config", "workload", "data", "run", "status", "exit_code", "duration_s",
 		"peak_swap_used_mib", "peak_zswap_pool_mib", "min_mem_available_mib",
 		"psi_some_peak", "psi_some_avg", "psi_full_peak", "psi_full_avg",
-		"lat_p50_ms", "lat_p99_ms", "lat_max_ms", "hot_touch_gib_per_s", "note"})
+		"lat_p50_ms", "lat_p99_ms", "lat_max_ms", "hot_touch_gib_per_s", "max_pool_percent"}
+	for _, k := range zswapDeltaKeys {
+		header = append(header, "zswap_"+k)
+	}
+	_ = cw.Write(append(header, "note"))
 	for _, r := range runs {
 		nan := math.NaN()
 		s := SampleSummary{PeakSwapUsedMiB: nan, PeakZswapPoolMiB: nan, MinMemAvailMiB: nan, PSISomePeak: nan, PSISomeAvg: nan, PSIFullPeak: nan, PSIFullAvg: nan}
@@ -136,144 +269,25 @@ func WriteCSV(w io.Writer, runs []Run) error {
 		if r.Result != nil {
 			gibps = r.Result.GiBps
 		}
-		_ = cw.Write([]string{r.Config, r.Workload, r.Data, strconv.Itoa(r.Run), r.Status, strconv.Itoa(r.ExitCode), num(r.DurationS),
+		pool := ""
+		if p := PoolPercent(r); p > 0 {
+			pool = strconv.Itoa(p)
+		}
+		row := []string{r.Config, r.Workload, r.Data, strconv.Itoa(r.Run), r.Status, strconv.Itoa(r.ExitCode), num(r.DurationS),
 			num(s.PeakSwapUsedMiB), num(s.PeakZswapPoolMiB), num(s.MinMemAvailMiB),
 			num(s.PSISomePeak), num(s.PSISomeAvg), num(s.PSIFullPeak), num(s.PSIFullAvg),
-			num(l.P50Ms), num(l.P99Ms), num(l.MaxMs), num(gibps), r.Note})
+			num(l.P50Ms), num(l.P99Ms), num(l.MaxMs), num(gibps), pool}
+		for _, k := range zswapDeltaKeys {
+			v := ""
+			if d, ok := r.ZswapDelta[k]; ok {
+				v = strconv.FormatUint(d, 10)
+			}
+			row = append(row, v)
+		}
+		_ = cw.Write(append(row, r.Note))
 	}
 	cw.Flush()
 	return cw.Error()
-}
-
-// Group — медианы по конфигурации для одной нагрузки.
-type Group struct {
-	Workload, Data, Config string
-	Total, OK              int
-	Statuses               map[string]int
-	Duration, PeakSwap     float64
-	PeakZswap              float64
-	SomePeak, SomeAvg      float64
-	FullPeak, FullAvg      float64
-	LatP50, LatP99         float64
-	GiBps                  float64
-}
-
-// GroupRuns считает медианы по успешным прогонам.
-func GroupRuns(runs []Run) []Group {
-	type key struct{ w, d, c string }
-	idx := map[key]int{}
-	var groups []Group
-	vals := map[key]map[string][]float64{}
-	for _, r := range runs {
-		k := key{r.Workload, r.Data, r.Config}
-		i, ok := idx[k]
-		if !ok {
-			i = len(groups)
-			idx[k] = i
-			groups = append(groups, Group{Workload: r.Workload, Data: r.Data, Config: r.Config, Statuses: map[string]int{}})
-			vals[k] = map[string][]float64{}
-		}
-		g := &groups[i]
-		g.Total++
-		g.Statuses[r.Status]++
-		if r.Status != "ok" {
-			continue
-		}
-		g.OK++
-		v := vals[k]
-		v["dur"] = append(v["dur"], r.DurationS)
-		if s := r.Sample; s != nil {
-			v["swap"] = append(v["swap"], s.PeakSwapUsedMiB)
-			v["zswap"] = append(v["zswap"], s.PeakZswapPoolMiB)
-			v["sp"] = append(v["sp"], s.PSISomePeak)
-			v["sa"] = append(v["sa"], s.PSISomeAvg)
-			v["fp"] = append(v["fp"], s.PSIFullPeak)
-			v["fa"] = append(v["fa"], s.PSIFullAvg)
-		}
-		if l := r.Latency; l != nil && l.Samples > 0 {
-			v["p50"] = append(v["p50"], l.P50Ms)
-			v["p99"] = append(v["p99"], l.P99Ms)
-		}
-		if w := r.Result; w != nil {
-			v["gibps"] = append(v["gibps"], w.GiBps)
-		}
-	}
-	for k, i := range idx {
-		v, g := vals[k], &groups[i]
-		g.Duration, g.PeakSwap, g.PeakZswap = Median(v["dur"]), Median(v["swap"]), Median(v["zswap"])
-		g.SomePeak, g.SomeAvg, g.FullPeak, g.FullAvg = Median(v["sp"]), Median(v["sa"]), Median(v["fp"]), Median(v["fa"])
-		g.LatP50, g.LatP99, g.GiBps = Median(v["p50"]), Median(v["p99"]), Median(v["gibps"])
-	}
-	return groups
-}
-
-func cell(v float64, prec int) string {
-	if math.IsNaN(v) {
-		return "—"
-	}
-	return strconv.FormatFloat(v, 'f', prec, 64)
-}
-
-func pair(a, b float64, prec int) string {
-	if math.IsNaN(a) && math.IsNaN(b) {
-		return "—"
-	}
-	return cell(a, prec) + " / " + cell(b, prec)
-}
-
-// IsVM — окружение виртуальное (цифры производительности нерепрезентативны).
-func (e Env) IsVM() bool { return e.Virt != "" && e.Virt != "none" }
-
-// WriteMarkdown пишет summary.md.
-func WriteMarkdown(w io.Writer, env Env, groups []Group) error {
-	var b strings.Builder
-	b.WriteString("# RamPlus bench — сводка\n\n")
-	fmt.Fprintf(&b, "- дата: %s\n- ядро: %s\n- виртуализация: %s\n- RAM: %d MiB, swapfile: %s, нагрузка: %s, %d с, прогонов: %d\n- корневой диск: %s\n\n",
-		env.Date, env.Kernel, orDash(env.Virt), env.MemTotalMiB, env.SwapSize, env.WorkSize, env.DurationS, env.Runs, orDash(env.RootDisk))
-	if env.IsVM() {
-		b.WriteString("> **Запуск в VM: цифры производительности нерепрезентативны.** Диск VM кэшируется в RAM хоста, " +
-			"поэтому swap выглядит быстрее реального. Для выбора значений по умолчанию нужен запуск на реальном SSD.\n\n")
-	}
-	b.WriteString("Медианы по успешным прогонам. PSI — % времени, когда задачи ждали память (пик avg10 / среднее за прогон). " +
-		"Latency — задержка обхода 50 MiB памяти маленьким процессом раз в 100 мс.\n")
-
-	cur := ""
-	for _, g := range groups {
-		title := g.Workload + " / " + g.Data
-		if title != cur {
-			cur = title
-			fmt.Fprintf(&b, "\n## %s\n\n", title)
-			b.WriteString("| конфигурация | успех | длительность, с | пик swap, MiB | пик zswap, MiB | PSI some пик/ср, % | PSI full пик/ср, % | latency p50/p99, мс | обход горячих страниц, GiB/с |\n")
-			b.WriteString("|---|---|---|---|---|---|---|---|---|\n")
-		}
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			g.Config, successCell(g), cell(g.Duration, 1), cell(g.PeakSwap, 0), cell(g.PeakZswap, 0),
-			pair(g.SomePeak, g.SomeAvg, 1), pair(g.FullPeak, g.FullAvg, 1), pair(g.LatP50, g.LatP99, 1), cell(g.GiBps, 2))
-	}
-	_, err := io.WriteString(w, b.String())
-	return err
-}
-
-func successCell(g Group) string {
-	s := fmt.Sprintf("%d/%d", g.OK, g.Total)
-	var other []string
-	for st, n := range g.Statuses {
-		if st != "ok" {
-			other = append(other, fmt.Sprintf("%s ×%d", st, n))
-		}
-	}
-	sort.Strings(other)
-	if len(other) > 0 {
-		s += " (" + strings.Join(other, ", ") + ")"
-	}
-	return s
-}
-
-func orDash(s string) string {
-	if s == "" {
-		return "—"
-	}
-	return s
 }
 
 func runReport(args []string) error {
@@ -285,28 +299,41 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
+	fromCSV := false
 	if len(runs) == 0 {
-		return fmt.Errorf("в %s/runs нет прогонов", dir)
+		// Каталог без runs/ — пересобрать сводку по готовому results.csv.
+		f, err := os.Open(filepath.Join(dir, "results.csv"))
+		if err != nil {
+			return fmt.Errorf("в %s нет ни runs/, ни results.csv", dir)
+		}
+		runs, err = LoadRunsCSV(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		fromCSV = true
 	}
 	var env Env
 	if _, err := readJSON(filepath.Join(dir, "env.json"), &env); err != nil {
 		return fmt.Errorf("env.json: %w", err)
 	}
-	f, err := os.Create(filepath.Join(dir, "results.csv"))
-	if err != nil {
-		return err
-	}
-	if err := WriteCSV(f, runs); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
+	if !fromCSV {
+		f, err := os.Create(filepath.Join(dir, "results.csv"))
+		if err != nil {
+			return err
+		}
+		if err := WriteCSV(f, runs); err != nil {
+			f.Close()
+			return err
+		}
+		if err := f.Close(); err != nil {
+			return err
+		}
 	}
 	md, err := os.Create(filepath.Join(dir, "summary.md"))
 	if err != nil {
 		return err
 	}
 	defer md.Close()
-	return WriteMarkdown(md, env, GroupRuns(runs))
+	return WriteMarkdown(md, env, runs)
 }

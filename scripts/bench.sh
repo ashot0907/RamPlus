@@ -6,6 +6,10 @@
 #   make build-probe
 #   sudo RAMPLUS_VM_TEST=1 scripts/bench.sh            # в VM
 #   sudo scripts/bench.sh --i-know-this-changes-swap   # на реальном железе
+#
+# Время (≈ пауза + 2 × длительность + 30 с на прогон; в начале скрипт
+# печатает оценку для выбранного набора): --quick ≈ 25–30 мин, полный
+# прогон ≈ 2 ч, с --pool-sweep ≈ 3 ч.
 set -euo pipefail
 
 usage() {
@@ -22,7 +26,9 @@ usage() {
   --configs LIST      через запятую: no-swap,swap,zswap-lz4,zswap-zstd,zswap-lzo-zbud
   --workloads LIST    через запятую: hot,hot-probe,cold
   --data LIST         через запятую: compressible,random (для hot-probe и cold)
+  --pool-sweep        добавить zswap-lz4 с max_pool_percent 35 и 50 (zswap-lz4 = 20%)
   --quick             1 прогон, 15 с, пауза 3 с — проверить, что всё работает
+                      (≈ 25–30 мин; --pool-sweep в него не входит)
 EOF
 }
 
@@ -43,6 +49,7 @@ PAUSE=10
 CONFIGS=(no-swap swap zswap-lz4 zswap-zstd zswap-lzo-zbud)
 WORKLOADS=(hot hot-probe cold)
 DATAS=(compressible random)
+POOL_SWEEP=0
 
 while (($# > 0)); do
 	case $1 in
@@ -58,6 +65,7 @@ while (($# > 0)); do
 	--workloads) IFS=, read -r -a WORKLOADS <<<"${2:?--workloads: нужен список}"; shift ;;
 	--data) IFS=, read -r -a DATAS <<<"${2:?--data: нужен список}"; shift ;;
 	--quick) RUNS=1; DURATION=15; PAUSE=3 ;;
+	--pool-sweep) POOL_SWEEP=1 ;;
 	-h | --help) usage; exit 0 ;;
 	*) usage >&2; die "неизвестный аргумент: $1" ;;
 	esac
@@ -76,7 +84,12 @@ for w in "${WORKLOADS[@]}"; do
 	fi
 done
 
+if ((POOL_SWEEP)); then
+	CONFIGS+=(zswap-lz4-p35 zswap-lz4-p50)
+fi
+
 ZSWAP=/sys/module/zswap/parameters
+ZSWAP_DEBUG=/sys/kernel/debug/zswap
 BENCH_SWAP=/ramplus-bench.swapfile
 MEM_TOTAL_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
 [[ -n $WORK_SIZE ]] || WORK_SIZE="$((MEM_TOTAL_KB * 13 / 10 / 1024))M"
@@ -169,9 +182,15 @@ reset_state() {
 # configure CONFIG — включить swap/zswap; ненулевой код и причина в
 # SKIP_REASON, если конфигурация недоступна на этом ядре.
 SKIP_REASON=""
+POOL_PCT=0
 configure() {
-	local config=${1:-} comp="" pool=""
+	local config=${1:-} comp="" pool="" pct=20
 	SKIP_REASON=""
+	POOL_PCT=0
+	if [[ $config =~ ^(zswap-.+)-p([0-9]+)$ ]]; then
+		config=${BASH_REMATCH[1]}
+		pct=${BASH_REMATCH[2]}
+	fi
 	case $config in
 	no-swap) return 0 ;;
 	swap) ;;
@@ -202,7 +221,11 @@ configure() {
 		SKIP_REASON="в ядре нет выбора zpool (только zsmalloc), $pool недоступен"
 		return 1
 	fi
-	zswap_set max_pool_percent 20 || true
+	if ! zswap_set max_pool_percent "$pct"; then
+		SKIP_REASON="не удалось задать max_pool_percent=$pct"
+		return 1
+	fi
+	POOL_PCT=$pct
 	if ! zswap_set enabled Y; then
 		SKIP_REASON="не удалось включить zswap"
 		return 1
@@ -210,19 +233,19 @@ configure() {
 }
 
 write_meta() {
-	local dir=${1:-} config=${2:-} workload=${3:-} data=${4:-} run=${5:-0} status=${6:-} rc=${7:-0} dur=${8:-0} note=${9:-}
+	local dir=${1:-} config=${2:-} workload=${3:-} data=${4:-} run=${5:-0} status=${6:-} rc=${7:-0} dur=${8:-0} note=${9:-} pct=${10:-0}
 	# JSON: удаляются кавычки (\042 = ") и обратные слэши (\134 = \),
 	# переводы строк и табы заменяются пробелами.
 	note=$(printf '%s' "$note" | tr -d '\042\134' | tr '\n\t' '  ')
-	printf '{"config":"%s","workload":"%s","data":"%s","run":%d,"status":"%s","exit_code":%d,"duration_s":%s,"note":"%s"}\n' \
-		"$config" "$workload" "$data" "$run" "$status" "$rc" "$dur" "$note" >"$dir/meta.json"
+	printf '{"config":"%s","workload":"%s","data":"%s","run":%d,"status":"%s","exit_code":%d,"duration_s":%s,"note":"%s","max_pool_percent":%d}\n' \
+		"$config" "$workload" "$data" "$run" "$status" "$rc" "$dur" "$note" "$pct" >"$dir/meta.json"
 }
 
 # run_one CONFIG WORKLOAD DATA N
 run_one() {
 	local config=${1:-} workload=${2:-} data=${3:-} n=${4:-1}
 	local dir="$OUT/runs/${config}__${workload}__${data}__${n}"
-	local sp="" lp="" rc=0 start end dur status note="" limit
+	local sp="" lp="" rc=0 start end dur status="" note="" limit
 	mkdir -p "$dir"
 	log "$config / $workload / $data / прогон $n"
 
@@ -232,6 +255,9 @@ run_one() {
 		write_meta "$dir" "$config" "$workload" "$data" "$n" skipped 0 0 "$SKIP_REASON"
 		return 0
 	fi
+
+	# Счётчики zswap до прогона (debugfs, root); без debugfs — available: false.
+	"$PROBE" zswapstat --dir "$ZSWAP_DEBUG" --out "$dir/zswap-before.json"
 
 	"$PROBE" sample --interval 200ms --out "$dir/samples.csv" --summary "$dir/sample.json" &
 	sp=$!
@@ -262,20 +288,14 @@ run_one() {
 	kill -TERM "$lp" "$sp" 2>/dev/null || true
 	wait "$lp" 2>/dev/null || true
 	wait "$sp" 2>/dev/null || true
+	"$PROBE" zswapstat --dir "$ZSWAP_DEBUG" --out "$dir/zswap-after.json"
 
-	case $rc in
-	0) status=ok ;;
-	137)
-		if awk -v d="$dur" -v l="$limit" 'BEGIN {exit !(d >= l - 1)}'; then
-			status=timeout note="убит по таймауту ${limit}s"
-		else
-			status=oom note="SIGKILL (вероятно OOM killer)"
-		fi
-		;;
-	*) status=failed note="код выхода $rc: $(tail -n 1 "$dir/workload.log" | tr -d '\r' | cut -c1-120)" ;;
-	esac
+	# ok | refused (система отказала в памяти) | oom | timeout | failed (ошибка инструмента)
+	local cls
+	cls=$("$PROBE" classify --workload "$workload" --rc "$rc" --log "$dir/workload.log" --duration "$dur" --limit "$limit")
+	IFS=$'\t' read -r status note <<<"$cls"
 	log "  $status за ${dur}s${note:+ — $note}"
-	write_meta "$dir" "$config" "$workload" "$data" "$n" "$status" "$rc" "$dur" "$note"
+	write_meta "$dir" "$config" "$workload" "$data" "$n" "$status" "$rc" "$dur" "$note" "$POOL_PCT"
 }
 
 ########################################################################
@@ -287,14 +307,32 @@ fi
 ROOT_DEV=$(findmnt -n -o SOURCE /)
 ROOT_DISK=$(lsblk -no PKNAME "$ROOT_DEV" 2>/dev/null | head -n 1 || true)
 ROOT_INFO=$(lsblk -dno NAME,ROTA,TRAN,MODEL "/dev/${ROOT_DISK:-x}" 2>/dev/null | tr -s ' ' || true)
-printf '{"date":"%s","kernel":"%s","virt":"%s","mem_total_mib":%d,"swap_size":"%s","work_size":"%s","duration_s":%d,"runs":%d,"root_disk":"%s"}\n' \
+DEBUGFS=false
+if [[ -r $ZSWAP_DEBUG/pool_limit_hit ]]; then
+	DEBUGFS=true
+fi
+printf '{"date":"%s","kernel":"%s","virt":"%s","mem_total_mib":%d,"swap_size":"%s","work_size":"%s","duration_s":%d,"runs":%d,"root_disk":"%s","zswap_debugfs":%s}\n' \
 	"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(uname -r)" "$VIRT" "$((MEM_TOTAL_KB / 1024))" "$SWAP_SIZE" "$WORK_SIZE" \
-	"$DURATION" "$RUNS" "${ROOT_INFO//\"/}" >"$OUT/env.json"
+	"$DURATION" "$RUNS" "${ROOT_INFO//\"/}" "$DEBUGFS" >"$OUT/env.json"
+if [[ $DEBUGFS != true ]]; then
+	log "debugfs zswap недоступен ($ZSWAP_DEBUG): лимит пула оценивается по пику пула"
+fi
 
 if [[ $VIRT != none && -n $VIRT ]]; then
 	log "ВНИМАНИЕ: запуск в VM ($VIRT) — цифры производительности нерепрезентативны (см. scripts/BENCH.md)"
 fi
+variants=0
+for w in "${WORKLOADS[@]}"; do
+	if [[ $w == hot ]]; then
+		variants=$((variants + 1))
+	else
+		variants=$((variants + ${#DATAS[@]}))
+	fi
+done
+TOTAL_RUNS=$((${#CONFIGS[@]} * variants * RUNS))
+PER_RUN=$((PAUSE + 2 * DURATION + 30)) # пауза + заполнение памяти + нагрузка + сброс swap
 log "результаты: $OUT; нагрузка $WORK_SIZE, swapfile $SWAP_SIZE, $DURATION с × $RUNS прогона"
+log "прогонов: $TOTAL_RUNS (${#CONFIGS[@]} конфигураций × $variants вариантов нагрузки × $RUNS), примерно $((TOTAL_RUNS * PER_RUN / 60)) мин"
 
 create_bench_swap
 

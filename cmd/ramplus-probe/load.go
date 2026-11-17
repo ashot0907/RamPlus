@@ -2,10 +2,55 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
+
+// ExitRefused — код выхода, когда система отказала в памяти (штатный
+// результат, например для конфигурации no-swap).
+const ExitRefused = 10
+
+// NoMemoryError — ядро отказало в выделении памяти.
+type NoMemoryError struct {
+	Size uint64
+	Err  error
+}
+
+func (e *NoMemoryError) Error() string {
+	return fmt.Sprintf("не удалось выделить %d MiB: недостаточно памяти (%v)", e.Size>>20, e.Err)
+}
+
+func (e *NoMemoryError) Unwrap() error { return e.Err }
+
+// mmapAnon выделяет анонимную память. make([]byte, N) здесь не подходит:
+// при отказе ядра рантайм Go завершается фатальной ошибкой "out of memory"
+// (код 2, трейс всех горутин), которую нельзя перехватить.
+var mmapAnon = func(size int) ([]byte, error) {
+	return unix.Mmap(-1, 0, size, unix.PROT_READ|unix.PROT_WRITE, unix.MAP_PRIVATE|unix.MAP_ANONYMOUS)
+}
+
+// allocate выделяет size байт; отказ ядра — *NoMemoryError.
+func allocate(size uint64, mmap func(int) ([]byte, error)) ([]byte, error) {
+	if size == 0 {
+		return nil, errors.New("нулевой размер")
+	}
+	if size > math.MaxInt {
+		return nil, &NoMemoryError{Size: size, Err: unix.ENOMEM}
+	}
+	b, err := mmap(int(size))
+	if err != nil {
+		if errors.Is(err, unix.ENOMEM) || errors.Is(err, unix.EAGAIN) {
+			return nil, &NoMemoryError{Size: size, Err: err}
+		}
+		return nil, fmt.Errorf("mmap %d байт: %w", size, err)
+	}
+	return b, nil
+}
 
 // touch пишет по байту в каждую страницу buf (страница становится
 // активной; если она была в swap — её приходится вернуть в RAM).
@@ -29,7 +74,10 @@ func runLatency(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	buf := make([]byte, size)
+	buf, err := allocate(size, mmapAnon)
+	if err != nil {
+		return err
+	}
 	if err := FillPages(buf, DataCompressible, 1); err != nil {
 		return err
 	}
@@ -94,7 +142,10 @@ func runWorkload(ctx context.Context, args []string) error {
 	res := WorkloadResult{Bytes: size, Data: *data}
 
 	t0 := time.Now()
-	buf := make([]byte, size)
+	buf, err := allocate(size, mmapAnon)
+	if err != nil {
+		return err
+	}
 	if err := FillPages(buf, *data, 42); err != nil {
 		return err
 	}

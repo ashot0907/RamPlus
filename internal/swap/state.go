@@ -9,7 +9,11 @@ import (
 )
 
 // StateVersion — версия формата state.json.
-const StateVersion = 1
+//
+//	1 — до write-ahead журнала: у записей applied нет поля status (все
+//	    записи — выполненные шаги), пути /ramplus.swap, шаг remove_file.
+//	2 — write-ahead журнал (status: pending|done).
+const StateVersion = 2
 
 // Статусы операций.
 const (
@@ -59,7 +63,18 @@ func ParseState(b []byte) (State, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return State{}, fmt.Errorf("%w: state.json: %v", detect.ErrParse, err)
 	}
-	if s.Version != StateVersion {
+	switch s.Version {
+	case 1:
+		// В v1 журнал писался после шага: каждая запись — выполненный шаг.
+		for i := range s.Operations {
+			for j := range s.Operations[i].Applied {
+				if s.Operations[i].Applied[j].Status == "" {
+					s.Operations[i].Applied[j].Status = StepDone
+				}
+			}
+		}
+	case StateVersion:
+	default:
 		return State{}, fmt.Errorf("%w: state.json: неизвестная версия %d", detect.ErrParse, s.Version)
 	}
 	return s, nil

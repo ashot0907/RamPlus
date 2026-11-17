@@ -26,6 +26,10 @@ const (
 	KindChattrNoCOW       StepKind = "chattr_nocow"        // chattr +C Path
 	KindBtrfsSubvolCreate StepKind = "btrfs_subvol_create" //
 	KindBtrfsSubvolDelete StepKind = "btrfs_subvol_delete" //
+	// KindRemoveFile — только из журналов v1 (отмена создания файла).
+	// Выполняется обратимо: маленький файл восстанавливается по содержимому,
+	// большой (swapfile) — пересозданием.
+	KindRemoveFile StepKind = "remove_file"
 )
 
 // Step — одно системное действие. Сериализуется в state.json.
@@ -74,7 +78,7 @@ func (s Step) Describe() string {
 		return fmt.Sprintf("удалить файл %s (%s)", s.Path, FormatSize(s.Size))
 	case KindWriteFile:
 		return "записать " + s.Path
-	case KindDeleteConfig:
+	case KindDeleteConfig, KindRemoveFile:
 		return "удалить " + s.Path
 	case KindFstabDisable:
 		return fmt.Sprintf("закомментировать в %s строку %q (бэкап — в %s)", s.Path, strings.TrimSpace(s.Line), BackupDir)

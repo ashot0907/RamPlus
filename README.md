@@ -70,6 +70,7 @@ sudo ramplus swap apply --size 12G --existing=replace [--delete-old]
 sudo ramplus swap resize --size 16G
 sudo ramplus swap remove
 sudo ramplus rollback                              # отменить последнюю операцию; повторный вызов идёт дальше назад
+ramplus swap check-clean                           # нет ли следов RamPlus (код 1 — есть)
 ```
 
 У `apply`, `resize`, `remove` и `rollback` есть `--dry-run` (только план) и
@@ -113,7 +114,8 @@ sudo ramplus rollback                              # отменить после
 
 `scripts/bench.sh` сравнивает no-swap, swap и три конфигурации zswap на
 горячей и холодной нагрузке, со сжимаемыми и случайными данными: PSI,
-пик swap, latency отзывчивости, медиана из 3 прогонов. Подробности и
+пик swap, срабатывания лимита пула zswap, latency отзывчивости, медиана
+из 3 прогонов, автоматический раздел «Наблюдения». Подробности и
 предупреждения — в [scripts/BENCH.md](scripts/BENCH.md). Цифры из VM для
 выбора значений по умолчанию не используются.
 

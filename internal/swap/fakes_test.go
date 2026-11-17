@@ -297,6 +297,19 @@ func (f *fakeFS) Stat(name string) (fs.FileInfo, error) {
 	return fakeInfo{filepath.Base(name), *file}, nil
 }
 
+func (f *fakeFS) Glob(pattern string) ([]string, error) {
+	var out []string
+	for p := range f.w.files {
+		if ok, err := filepath.Match(pattern, p); err != nil {
+			return nil, err
+		} else if ok {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (f *fakeFS) EvalSymlinks(path string) (string, error) {
 	if t, ok := f.w.links[path]; ok {
 		return t, nil

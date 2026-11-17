@@ -60,6 +60,8 @@ type Facts struct {
 
 	// Exists — какие из интересующих путей уже существуют.
 	Exists map[string]bool
+	// Units — юниты RamPlus в UnitDir (*ramplus*.swap).
+	Units []string
 }
 
 // DefaultPathFor — путь swapfile по умолчанию для ФС корня.
@@ -133,10 +135,8 @@ func Gather(ctx context.Context, sys System, requested string) Facts {
 		f.HasChattr = err == nil
 	}
 
-	check := []string{f.Target.Path, filepath.Join(UnitDir, UnitName(f.Target.Path))}
-	if f.Target.Path == BtrfsPath {
-		check = append(check, BtrfsDir)
-	}
+	check := []string{f.Target.Path, filepath.Join(UnitDir, UnitName(f.Target.Path)),
+		ManagedPath, BtrfsPath, BtrfsDir, LegacyPath}
 	if m := f.State.Managed; m != nil {
 		check = append(check, m.Path, filepath.Join(UnitDir, m.Unit))
 	}
@@ -145,6 +145,8 @@ func Gather(ctx context.Context, sys System, requested string) Facts {
 			f.Exists[p] = true
 		}
 	}
+
+	f.Units, _ = sys.FS.Glob(filepath.Join(UnitDir, "*ramplus*.swap"))
 
 	if op := f.State.Pending(); op != nil {
 		rec := &Recovery{OpID: op.ID}
@@ -205,7 +207,7 @@ func (f Facts) isOurPath(path string) bool {
 	if m := f.State.Managed; m != nil && m.Path == path {
 		return true
 	}
-	return path == ManagedPath || path == BtrfsPath
+	return path == ManagedPath || path == BtrfsPath || path == LegacyPath || strings.HasPrefix(path, BtrfsDir+"/")
 }
 
 // fstabEntriesFor — строки fstab, описывающие активный swap path.
