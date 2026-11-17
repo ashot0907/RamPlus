@@ -62,6 +62,18 @@ type Facts struct {
 	Exists map[string]bool
 	// Units — юниты RamPlus в UnitDir (*ramplus*.swap).
 	Units []string
+	// Observed — что сейчас лежит по путям из журнала отменяемой операции и
+	// по путям активных swap-файлов.
+	Observed map[string]ObservedFile
+}
+
+// ObservedFile — фактическое состояние пути.
+type ObservedFile struct {
+	Exists     bool
+	IsDir      bool
+	Size       uint64
+	Content    string // для небольших конфигов (юнит)
+	HasContent bool
 }
 
 // DefaultPathFor — путь swapfile по умолчанию для ФС корня.
@@ -147,6 +159,36 @@ func Gather(ctx context.Context, sys System, requested string) Facts {
 	}
 
 	f.Units, _ = sys.FS.Glob(filepath.Join(UnitDir, "*ramplus*.swap"))
+
+	f.Observed = map[string]ObservedFile{}
+	observe := func(path string, content bool) {
+		if path == "" || path == FstabPath {
+			return
+		}
+		st, err := sys.FS.Stat(path)
+		if err != nil {
+			f.Observed[path] = ObservedFile{}
+			return
+		}
+		o := ObservedFile{Exists: true, IsDir: st.IsDir(), Size: uint64(st.Size())}
+		if content && st.Mode().IsRegular() && st.Size() <= legacyConfigMax {
+			if b, err := sys.FS.ReadFile(path); err == nil {
+				o.Content, o.HasContent = string(b), true
+			}
+		}
+		f.Observed[path] = o
+	}
+	for _, sw := range f.Swaps {
+		if sw.Type == "file" {
+			observe(sw.Path, false)
+		}
+	}
+	if idx, ok := f.State.LastUndoable(); ok {
+		for _, a := range f.State.Operations[idx].Applied {
+			k := a.Step.Kind
+			observe(a.Step.Path, k == KindWriteFile || k == KindDeleteConfig || k == KindRemoveFile)
+		}
+	}
 
 	if op := f.State.Pending(); op != nil {
 		rec := &Recovery{OpID: op.ID}

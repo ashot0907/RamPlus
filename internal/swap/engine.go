@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -191,7 +192,7 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 	case KindSwapoff:
 		a.Undo = []Step{{Kind: KindSwapon, Path: s.Path, Priority: s.Priority, Size: s.Size}}
 	case KindDeleteSwapfile:
-		st, err := fsys.Stat(s.Path)
+		st, err := r.checkSwapfile(s)
 		if err != nil {
 			return a, err
 		}
@@ -212,13 +213,17 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 			}
 			a.Undo = withReload(Step{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(r.perm(s.Path, 0o644)), Reload: s.Reload})
 		case errors.Is(err, fs.ErrNotExist):
-			a.Undo = withReload(Step{Kind: KindDeleteConfig, Path: s.Path, Reload: s.Reload})
+			// Content — что именно мы записали: удалим, только если файл не изменился.
+			a.Undo = withReload(Step{Kind: KindDeleteConfig, Path: s.Path, Content: s.Content, Reload: s.Reload})
 		default:
 			return a, err
 		}
 	case KindDeleteConfig:
 		prev, err := fsys.ReadFile(s.Path)
 		if err != nil {
+			return a, err
+		}
+		if err := checkConfig(s, string(prev)); err != nil {
 			return a, err
 		}
 		if a.Backup, err = r.backup(s.Path, prev); err != nil {
@@ -257,6 +262,12 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 	case KindBtrfsSubvolCreate:
 		a.Undo = []Step{{Kind: KindBtrfsSubvolDelete, Path: s.Path}}
 	case KindBtrfsSubvolDelete:
+		// btrfs subvolume delete удаляет вместе с содержимым — только пустой.
+		if rest, err := fsys.Glob(filepath.Join(s.Path, "*")); err != nil {
+			return a, err
+		} else if len(rest) > 0 {
+			return a, fmt.Errorf("%s не пуст (%s) — подтом не удаляется", s.Path, strings.Join(rest, ", "))
+		}
 		a.Undo = []Step{{Kind: KindBtrfsSubvolCreate, Path: s.Path}, {Kind: KindChattrNoCOW, Path: s.Path}}
 	case KindRemoveFile: // журнал v1
 		st, err := fsys.Stat(s.Path)
@@ -266,6 +277,9 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 		case err != nil:
 			return a, err
 		case st.Size() > legacyConfigMax:
+			if _, err := r.checkSwapfile(s); err != nil {
+				return a, err
+			}
 			size := uint64(st.Size())
 			a.Undo = []Step{
 				{Kind: KindAllocate, Path: s.Path, Size: size},
@@ -275,6 +289,9 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 		default:
 			prev, err := fsys.ReadFile(s.Path)
 			if err != nil {
+				return a, err
+			}
+			if err := checkConfig(s, string(prev)); err != nil {
 				return a, err
 			}
 			if a.Backup, err = r.backup(s.Path, prev); err != nil {
@@ -288,6 +305,69 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 		return a, fmt.Errorf("неизвестный шаг %q", s.Kind)
 	}
 	return a, nil
+}
+
+// ErrNotOurs — файл не совпадает с записью журнала: удалять его нельзя.
+var ErrNotOurs = errors.New("файл не совпадает с журналом RamPlus — удаление отменено")
+
+// checkSwapfile — перед удалением swapfile: обычный файл, размер как в
+// журнале, в заголовке сигнатура swap или нули (файл ещё до mkswap).
+func (r *Runner) checkSwapfile(s Step) (fs.FileInfo, error) {
+	st, err := r.Sys.FS.Stat(s.Path)
+	if err != nil {
+		return nil, err
+	}
+	if !st.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s: не обычный файл: %w", s.Path, ErrNotOurs)
+	}
+	size := uint64(st.Size())
+	switch {
+	case s.Size == 0: // размер не записан (журнал v1, старый swap без наблюдения)
+	case s.SizeAtMost && size <= s.Size:
+	case size != s.Size:
+		return nil, fmt.Errorf("%s: размер %s, по журналу %s: %w", s.Path, FormatSize(size), FormatSize(s.Size), ErrNotOurs)
+	}
+	head, err := r.Sys.FS.ReadPrefix(s.Path, os.Getpagesize())
+	if err != nil {
+		return nil, err
+	}
+	if !IsSwapHeader(head) && !allZero(head) {
+		return nil, fmt.Errorf("%s: нет сигнатуры swap (SWAPSPACE2) — это не swapfile: %w", s.Path, ErrNotOurs)
+	}
+	return st, nil
+}
+
+// IsSwapHeader — первая страница файла содержит сигнатуру mkswap.
+func IsSwapHeader(page []byte) bool {
+	if len(page) < 10 {
+		return false
+	}
+	sig := string(page[len(page)-10:])
+	return sig == "SWAPSPACE2" || sig == "SWAP-SPACE"
+}
+
+func allZero(b []byte) bool {
+	for _, c := range b {
+		if c != 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// checkConfig — перед удалением конфига: содержимое как записано RamPlus
+// (если известно), иначе в файле должен быть маркер RamPlus.
+func checkConfig(s Step, current string) error {
+	switch {
+	case s.Content != "" && current == s.Content:
+		return nil
+	case s.Content != "":
+		return fmt.Errorf("%s: изменён после записи RamPlus: %w", s.Path, ErrNotOurs)
+	case strings.Contains(current, strings.TrimSpace(unitHeader)):
+		return nil
+	default:
+		return fmt.Errorf("%s: нет маркера RamPlus: %w", s.Path, ErrNotOurs)
+	}
 }
 
 func fstabEdit(s Step) func(content, line string) (string, error) {

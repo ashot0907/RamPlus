@@ -1,6 +1,8 @@
 package swap
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -12,8 +14,11 @@ import (
 //
 //	1 — до write-ahead журнала: у записей applied нет поля status (все
 //	    записи — выполненные шаги), пути /ramplus.swap, шаг remove_file.
-//	2 — write-ahead журнал (status: pending|done).
-const StateVersion = 2
+//	2 — write-ahead журнал (status: pending|done). ID операций — с
+//	    точностью до секунды: могли совпадать.
+//	3 — уникальные ID (наносекунды + случайный суффикс), проверяются при
+//	    загрузке.
+const StateVersion = 3
 
 // Статусы операций.
 const (
@@ -73,11 +78,100 @@ func ParseState(b []byte) (State, error) {
 				}
 			}
 		}
+		fallthrough
+	case 2:
+		if hasDuplicateIDs(s.Operations) {
+			migrateDuplicateIDs(&s)
+		}
 	case StateVersion:
+		if hasDuplicateIDs(s.Operations) {
+			return State{}, fmt.Errorf("%w: state.json: повторяющиеся ID операций в журнале v%d", detect.ErrParse, s.Version)
+		}
 	default:
 		return State{}, fmt.Errorf("%w: state.json: неизвестная версия %d", detect.ErrParse, s.Version)
 	}
 	return s, nil
+}
+
+func hasDuplicateIDs(ops []Operation) bool {
+	seen := map[string]bool{}
+	for _, op := range ops {
+		if seen[op.ID] {
+			return true
+		}
+		seen[op.ID] = true
+	}
+	return false
+}
+
+// migrateDuplicateIDs чинит журнал v1/v2 с совпадающими ID (точность до
+// секунды). Старая версия при коммите rollback помечала rolled_back ВСЕ
+// операции с ID цели — статусы тоже могли испортиться. Поэтому:
+//  1. ID делаются уникальными по позиции;
+//  2. статусы rolled_back пересчитываются повтором стека: каждый выполненный
+//     rollback отменяет последнюю неотменённую операцию перед ним (так же,
+//     как LastUndoable), и его Target указывает на неё по новому ID.
+func migrateDuplicateIDs(s *State) {
+	counts := map[string]int{}
+	for _, op := range s.Operations {
+		counts[op.ID]++
+	}
+	for i := range s.Operations {
+		if id := s.Operations[i].ID; counts[id] > 1 {
+			s.Operations[i].ID = fmt.Sprintf("%s#%d", id, i+1)
+		}
+	}
+	for i := range s.Operations {
+		if s.Operations[i].Status == OpRolledBack {
+			s.Operations[i].Status = OpCommitted
+		}
+	}
+	for i := range s.Operations {
+		op := &s.Operations[i]
+		if op.Action != ActionRollback {
+			continue
+		}
+		prefix := State{Operations: s.Operations[:i]}
+		j, ok := prefix.LastUndoable()
+		if !ok {
+			op.Target = ""
+			continue
+		}
+		op.Target = s.Operations[j].ID
+		if op.Status == OpCommitted {
+			s.Operations[j].Status = OpRolledBack
+		}
+	}
+}
+
+func countID(ops []Operation, id string) int {
+	n := 0
+	for _, op := range ops {
+		if op.ID == id {
+			n++
+		}
+	}
+	return n
+}
+
+// NewOpID — уникальный ID операции: время UTC с наносекундами и случайный
+// суффикс; при совпадении с уже существующим (часы стоят, тот же суффикс)
+// добавляется счётчик.
+func NewOpID(now time.Time, existing []Operation) string {
+	base := now.UTC().Format("20060102T150405.000000000Z") + "-" + randSuffix()
+	id := base
+	for n := 2; countID(existing, id) > 0; n++ {
+		id = fmt.Sprintf("%s.%d", base, n)
+	}
+	return id
+}
+
+func randSuffix() string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "000000"
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // Marshal сериализует состояние.

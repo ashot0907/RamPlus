@@ -48,6 +48,9 @@ type Step struct {
 	// Reload — после отмены шага нужен systemctl daemon-reload (шаг меняет
 	// конфигурацию systemd: юнит или fstab).
 	Reload bool `json:"reload,omitempty"`
+	// SizeAtMost — delete_swapfile: файл может быть меньше Size (удаление
+	// недописанного файла после падения посреди allocate).
+	SizeAtMost bool `json:"size_at_most,omitempty"`
 }
 
 func daemonReload() Step { return Step{Kind: KindSystemctl, Args: []string{"daemon-reload"}} }

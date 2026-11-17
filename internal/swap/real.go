@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -26,8 +27,22 @@ func DefaultSystem() System {
 // OSFS — FS поверх os и unix.
 type OSFS struct{}
 
-func (OSFS) ReadFile(name string) ([]byte, error)         { return os.ReadFile(name) }
-func (OSFS) Stat(name string) (fs.FileInfo, error)        { return os.Stat(name) }
+func (OSFS) ReadFile(name string) ([]byte, error)  { return os.ReadFile(name) }
+func (OSFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
+func (OSFS) ReadPrefix(name string, n int) ([]byte, error) {
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	buf := make([]byte, n)
+	m, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	return buf[:m], nil
+}
+
 func (OSFS) Glob(pattern string) ([]string, error)        { return filepath.Glob(pattern) }
 func (OSFS) EvalSymlinks(path string) (string, error)     { return filepath.EvalSymlinks(path) }
 func (OSFS) Remove(name string) error                     { return os.Remove(name) }

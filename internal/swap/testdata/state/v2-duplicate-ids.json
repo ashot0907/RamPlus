@@ -1,0 +1,485 @@
+{
+  "version": 2,
+  "managed": {
+    "path": "/ramplus.swapfile",
+    "size_bytes": 6442450944,
+    "priority": 10,
+    "unit": "ramplus.swapfile.swap",
+    "fs_type": "ext4",
+    "created_at": "2026-11-16T12:00:01Z"
+  },
+  "operations": [
+    {
+      "id": "20261117T113307Z",
+      "action": "apply",
+      "command": "ramplus swap apply --size 4G",
+      "status": "committed",
+      "started_at": "2026-11-16T12:00:01Z",
+      "finished_at": "2026-11-16T12:00:24Z",
+      "applied": [
+        {
+          "step": {
+            "kind": "allocate",
+            "path": "/ramplus.swapfile",
+            "size": 4294967296
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "delete_swapfile",
+              "path": "/ramplus.swapfile",
+              "size": 4294967296
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "chmod",
+            "path": "/ramplus.swapfile",
+            "mode": 384
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "mkswap",
+            "path": "/ramplus.swapfile"
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "swapon",
+            "path": "/ramplus.swapfile",
+            "size": 4294967296,
+            "priority": 10
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "swapoff",
+              "path": "/ramplus.swapfile",
+              "size": 4294967296,
+              "priority": 10
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "write_file",
+            "path": "/etc/systemd/system/ramplus.swapfile.swap",
+            "mode": 420,
+            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+            "reload": true
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "delete_config",
+              "path": "/etc/systemd/system/ramplus.swapfile.swap",
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "reload": true
+            },
+            {
+              "kind": "systemctl",
+              "args": [
+                "daemon-reload"
+              ]
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "daemon-reload"
+            ]
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "enable",
+              "ramplus.swapfile.swap"
+            ]
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "systemctl",
+              "args": [
+                "disable",
+                "ramplus.swapfile.swap"
+              ]
+            }
+          ]
+        }
+      ],
+      "managed_before": null,
+      "managed_after": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 4294967296,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap",
+        "fs_type": "ext4",
+        "created_at": "2026-11-16T12:00:01Z"
+      }
+    },
+    {
+      "id": "20261117T113308Z",
+      "action": "resize",
+      "command": "ramplus swap resize --size 6G",
+      "status": "rolled_back",
+      "started_at": "2026-11-16T12:00:26Z",
+      "finished_at": "2026-11-16T12:00:46Z",
+      "applied": [
+        {
+          "step": {
+            "kind": "swapoff",
+            "path": "/ramplus.swapfile",
+            "size": 4294967296,
+            "priority": 10
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "swapon",
+              "path": "/ramplus.swapfile",
+              "size": 4294967296,
+              "priority": 10
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "delete_swapfile",
+            "path": "/ramplus.swapfile",
+            "size": 4294967296
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "allocate",
+              "path": "/ramplus.swapfile",
+              "size": 4294967296
+            },
+            {
+              "kind": "chmod",
+              "path": "/ramplus.swapfile",
+              "mode": 384
+            },
+            {
+              "kind": "mkswap",
+              "path": "/ramplus.swapfile"
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "allocate",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "delete_swapfile",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "chmod",
+            "path": "/ramplus.swapfile",
+            "mode": 384
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "mkswap",
+            "path": "/ramplus.swapfile"
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "swapon",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944,
+            "priority": 10
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "swapoff",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944,
+              "priority": 10
+            }
+          ]
+        }
+      ],
+      "managed_before": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 4294967296,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap",
+        "fs_type": "ext4",
+        "created_at": "2026-11-16T12:00:01Z"
+      },
+      "managed_after": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 6442450944,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap",
+        "fs_type": "ext4",
+        "created_at": "2026-11-16T12:00:01Z"
+      }
+    },
+    {
+      "id": "20261117T113308Z",
+      "action": "remove",
+      "command": "ramplus swap remove",
+      "status": "rolled_back",
+      "started_at": "2026-11-16T12:00:48Z",
+      "finished_at": "2026-11-16T12:00:06Z",
+      "applied": [
+        {
+          "step": {
+            "kind": "swapoff",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944,
+            "priority": 10
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "swapon",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944,
+              "priority": 10
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "disable",
+              "ramplus.swapfile.swap"
+            ]
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "systemctl",
+              "args": [
+                "enable",
+                "ramplus.swapfile.swap"
+              ]
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "delete_config",
+            "path": "/etc/systemd/system/ramplus.swapfile.swap",
+            "reload": true
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "write_file",
+              "path": "/etc/systemd/system/ramplus.swapfile.swap",
+              "mode": 420,
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "reload": true
+            },
+            {
+              "kind": "systemctl",
+              "args": [
+                "daemon-reload"
+              ]
+            }
+          ],
+          "backup": "/var/lib/ramplus/backups/20261116T120048.000000000Z-4fd760-etc_systemd_system_ramplus.swapfile.swap"
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "daemon-reload"
+            ]
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "delete_swapfile",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "allocate",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944
+            },
+            {
+              "kind": "chmod",
+              "path": "/ramplus.swapfile",
+              "mode": 384
+            },
+            {
+              "kind": "mkswap",
+              "path": "/ramplus.swapfile"
+            }
+          ]
+        }
+      ],
+      "managed_before": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 6442450944,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap",
+        "fs_type": "ext4",
+        "created_at": "2026-11-16T12:00:01Z"
+      },
+      "managed_after": null
+    },
+    {
+      "id": "20261117T113308Z",
+      "action": "rollback",
+      "command": "ramplus rollback",
+      "status": "committed",
+      "target": "20261117T113308Z",
+      "started_at": "2026-11-16T12:00:08Z",
+      "finished_at": "2026-11-16T12:00:31Z",
+      "applied": [
+        {
+          "step": {
+            "kind": "allocate",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "delete_swapfile",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "chmod",
+            "path": "/ramplus.swapfile",
+            "mode": 384
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "mkswap",
+            "path": "/ramplus.swapfile"
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "write_file",
+            "path": "/etc/systemd/system/ramplus.swapfile.swap",
+            "mode": 420,
+            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+            "reload": true
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "delete_config",
+              "path": "/etc/systemd/system/ramplus.swapfile.swap",
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "reload": true
+            },
+            {
+              "kind": "systemctl",
+              "args": [
+                "daemon-reload"
+              ]
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "daemon-reload"
+            ]
+          },
+          "status": "done",
+          "undo": null
+        },
+        {
+          "step": {
+            "kind": "systemctl",
+            "args": [
+              "enable",
+              "ramplus.swapfile.swap"
+            ]
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "systemctl",
+              "args": [
+                "disable",
+                "ramplus.swapfile.swap"
+              ]
+            }
+          ]
+        },
+        {
+          "step": {
+            "kind": "swapon",
+            "path": "/ramplus.swapfile",
+            "size": 6442450944,
+            "priority": 10
+          },
+          "status": "done",
+          "undo": [
+            {
+              "kind": "swapoff",
+              "path": "/ramplus.swapfile",
+              "size": 6442450944,
+              "priority": 10
+            }
+          ]
+        }
+      ],
+      "managed_before": null,
+      "managed_after": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 6442450944,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap",
+        "fs_type": "ext4",
+        "created_at": "2026-11-16T12:00:01Z"
+      }
+    }
+  ]
+}

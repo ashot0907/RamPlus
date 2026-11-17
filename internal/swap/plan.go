@@ -116,6 +116,7 @@ type Plan struct {
 	ManagedBefore     *Managed   `json:"managed_before"`
 	ManagedAfter      *Managed   `json:"managed_after"`
 	Target            *Operation `json:"-"` // для rollback
+	TargetIndex       int        `json:"-"` // позиция цели rollback в журнале
 	facts             Facts
 }
 
@@ -548,7 +549,9 @@ func (p *Plan) planApply(f Facts) {
 			}
 			if o.DeleteOld {
 				if old.Type == "file" {
-					deletes = append(deletes, Step{Kind: KindDeleteSwapfile, Path: old.Path, Size: old.SizeBytes})
+					// Размер файла (а не из /proc/swaps — там без заголовка):
+					// delete_swapfile сверяет его перед удалением.
+					deletes = append(deletes, Step{Kind: KindDeleteSwapfile, Path: old.Path, Size: f.Observed[old.Path].Size})
 				} else {
 					p.add(LevelInfo, "--delete-old", "%s — раздел, а не файл: не удаляется", old.Path)
 				}
@@ -672,8 +675,21 @@ func (p *Plan) planRollback(f Facts) {
 		return
 	}
 	op := f.State.Operations[idx]
-	p.Target = &op
+	p.Target, p.TargetIndex = &op, idx
 	p.add(LevelInfo, "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
+
+	// Состояние системы должно совпадать с результатом операции по журналу.
+	ignore := map[string]bool{}
+	if r := f.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
+		ignore[r.Pending.Step.Path] = true
+	}
+	if diff := CheckExpected(f, op, ignore); len(diff) > 0 {
+		p.add(LevelFail, "состояние", "состояние системы не совпадает с журналом, нужна ручная проверка (ничего не изменено):\n      - %s",
+			strings.Join(diff, "\n      - "))
+		return
+	}
+	p.add(LevelOK, "состояние", "система в состоянии, записанном в журнале после операции %s", op.ID)
+
 	if op.Status == OpInProgress {
 		p.add(LevelWarn, "rollback", "операция была прервана посреди выполнения — откатываются записанные в журнал шаги")
 		if r := f.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
@@ -681,7 +697,12 @@ func (p *Plan) planRollback(f Facts) {
 			switch r.Verdict {
 			case VerdictPresent:
 				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — будет откачен", step, r.Detail)
-				p.Steps = append(p.Steps, r.Pending.Undo...)
+				for _, u := range r.Pending.Undo {
+					if u.Kind == KindDeleteSwapfile {
+						u.SizeAtMost = true // файл мог остаться недописанным
+					}
+					p.Steps = append(p.Steps, u)
+				}
 			case VerdictAbsent:
 				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — откатывать нечего", step, r.Detail)
 			default:

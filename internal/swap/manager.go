@@ -70,7 +70,7 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	now := m.Sys.Now()
 	state := f.State
 	op := Operation{
-		ID:            now.UTC().Format("20060102T150405Z"),
+		ID:            NewOpID(now, state.Operations),
 		Action:        p.Action,
 		Command:       p.Options.Command(),
 		Status:        OpInProgress,
@@ -141,11 +141,13 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 		state.Managed.CreatedAt = now
 	}
 	if p.Target != nil {
-		for i := range state.Operations {
-			if state.Operations[i].ID == p.Target.ID && i != cur {
-				state.Operations[i].Status = OpRolledBack
-			}
+		// Ровно одна операция — по позиции в стеке, с проверкой ID.
+		// Никаких массовых изменений статуса по ID.
+		t := p.TargetIndex
+		if t < 0 || t >= cur || state.Operations[t].ID != p.Target.ID {
+			return p, fmt.Errorf("шаги выполнены, но цель rollback #%d (%s) не найдена в журнале — проверьте %s вручную", t, p.Target.ID, StatePath)
 		}
+		state.Operations[t].Status = OpRolledBack
 	}
 	if err := save(); err != nil {
 		// Изменения выполнены, но журнал не обновился — это нужно знать.

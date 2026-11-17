@@ -52,6 +52,8 @@ type FS interface {
 	Fallocate(name string, size uint64) error
 	// WriteZeros заполняет существующий файл size нулями.
 	WriteZeros(name string, size uint64) error
+	// ReadPrefix читает до n первых байт файла (заголовок swap).
+	ReadPrefix(name string, n int) ([]byte, error)
 	// Glob — как filepath.Glob.
 	Glob(pattern string) ([]string, error)
 	// Lock берёт эксклюзивную блокировку (flock) без ожидания.

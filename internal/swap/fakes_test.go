@@ -44,9 +44,11 @@ type fakeWorld struct {
 	mkswapfile        bool
 	fallocUnsupported bool
 
-	failAt    int  // упасть на N-м изменяющем вызове (0 — никогда)
-	crash     bool // вместо ошибки — «падение процесса» (panic crashed{})
-	mutations int
+	failAt int  // упасть на N-м изменяющем вызове (0 — никогда)
+	crash  bool // вместо ошибки — «падение процесса» (panic crashed{})
+	// frozenClock — часы стоят: все операции получают одно и то же время.
+	frozenClock bool
+	mutations   int
 	// mounts — дополнительные ФС для --path (точка монтирования → описание).
 	mounts map[string]fakeMount
 	log    []string
@@ -105,7 +107,12 @@ func (w *fakeWorld) sys() System {
 			}
 			return out
 		},
-		Now: func() time.Time { return time.Date(2026, 11, 16, 12, 0, w.mutations%60, 0, time.UTC) },
+		Now: func() time.Time {
+			if w.frozenClock {
+				return time.Date(2026, 11, 17, 11, 33, 8, 0, time.UTC) // все операции — в одну секунду
+			}
+			return time.Date(2026, 11, 16, 12, 0, w.mutations%60, 0, time.UTC)
+		},
 	}
 }
 
@@ -295,6 +302,22 @@ func (f *fakeFS) Stat(name string) (fs.FileInfo, error) {
 		return nil, notExist("stat", name)
 	}
 	return fakeInfo{filepath.Base(name), *file}, nil
+}
+
+func (f *fakeFS) ReadPrefix(name string, n int) ([]byte, error) {
+	file, ok := f.w.files[name]
+	if !ok {
+		return nil, notExist("open", name)
+	}
+	size := int(min(uint64(n), file.size))
+	buf := make([]byte, size)
+	switch {
+	case file.data != "":
+		buf = []byte(file.data)[:min(len(file.data), n)]
+	case file.swap && size >= 10:
+		copy(buf[size-10:], "SWAPSPACE2") // как после mkswap
+	}
+	return buf, nil
 }
 
 func (f *fakeFS) Glob(pattern string) ([]string, error) {

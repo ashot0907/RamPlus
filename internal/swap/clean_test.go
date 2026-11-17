@@ -32,8 +32,8 @@ func TestParseStateV1(t *testing.T) {
 		t.Error("everything is rolled back — nothing to undo")
 	}
 	b, _ := s.Marshal()
-	if !strings.Contains(string(b), `"version": 2`) {
-		t.Error("state must be written as v2")
+	if !strings.Contains(string(b), `"version": 3`) {
+		t.Error("state must be written as v3")
 	}
 }
 
