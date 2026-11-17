@@ -11,6 +11,10 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
 
+	"github.com/ashot0907/ramplus/internal/core"
+	"github.com/ashot0907/ramplus/internal/journal"
+	"github.com/ashot0907/ramplus/internal/plan"
+	"github.com/ashot0907/ramplus/internal/render"
 	"github.com/ashot0907/ramplus/internal/swap"
 )
 
@@ -95,8 +99,7 @@ func newPlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m := &swap.Manager{Sys: newSystem(), Out: cmd.OutOrStdout()}
-			return m.Plan(cmd.Context(), o).RenderWith(cmd.OutOrStdout(), swap.RenderOptions{Verbose: f.verbose})
+			return render.Plan(cmd.OutOrStdout(), newCore().SwapPlan(cmd.Context(), o), render.Options{Verbose: f.verbose})
 		},
 	}
 	addPlanFlags(cmd, &f, true, true)
@@ -110,7 +113,7 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 		Use:   use,
 		Short: short,
 		Long: short + ".\n\nСначала печатается план и запрашивается подтверждение (--yes — без вопроса).\n" +
-			"Если шаг падает, выполненные шаги откатываются. Журнал: " + swap.StatePath,
+			"Если шаг падает, выполненные шаги откатываются. Журнал: " + journal.StatePath,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := f.options(action)
@@ -118,12 +121,11 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 				return err
 			}
 			out := cmd.OutOrStdout()
-			m := &swap.Manager{Sys: newSystem(), Out: out, Verbose: f.verbose}
 			if f.dryRun {
-				return m.Plan(cmd.Context(), o).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
+				return render.Plan(out, newCore().SwapPlan(cmd.Context(), o), render.Options{Verbose: f.verbose})
 			}
-			_, err = m.Execute(cmd.Context(), o, confirmer(f.yes, cmd.InOrStdin(), out))
-			if errors.Is(err, swap.ErrNeedRoot) {
+			err = execute(cmd, core.Request{Swap: &o}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
+			if errors.Is(err, journal.ErrNeedRoot) {
 				return fmt.Errorf("%w: sudo %s (посмотреть план без root: --dry-run)", err, o.Command())
 			}
 			return err
@@ -139,8 +141,18 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 	return cmd
 }
 
-func confirmer(yes bool, in io.Reader, out io.Writer) swap.Confirm {
-	return func(p swap.Plan) (bool, error) {
+// execute — построить план под блокировкой, показать, подтвердить, выполнить.
+func execute(cmd *cobra.Command, r core.Request, verbose bool, confirm func(*plan.Plan) (bool, error)) error {
+	out := cmd.OutOrStdout()
+	h := render.Exec(out)
+	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Verbose: verbose}) }
+	h.Confirm = confirm
+	_, err := newCore().Run(cmd.Context(), r, h)
+	return err
+}
+
+func confirmer(yes bool, in io.Reader, out io.Writer) func(*plan.Plan) (bool, error) {
+	return func(p *plan.Plan) (bool, error) {
 		if yes {
 			return true, nil
 		}
@@ -174,8 +186,7 @@ func newCheckCleanCmd() *cobra.Command {
 			"Журнал с историей откаченных операций следом не считается. Код выхода 1 — не чисто.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			f := swap.Gather(cmd.Context(), newSystem(), "")
-			problems := swap.CleanProblems(f)
+			problems := newCore().CleanProblems(cmd.Context())
 			out := cmd.OutOrStdout()
 			if len(problems) == 0 {
 				fmt.Fprintln(out, "чисто: следов RamPlus нет")

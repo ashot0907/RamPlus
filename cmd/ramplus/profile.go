@@ -12,8 +12,11 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ashot0907/ramplus/internal/core"
+	"github.com/ashot0907/ramplus/internal/journal"
+	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/profile"
-	"github.com/ashot0907/ramplus/internal/swap"
+	"github.com/ashot0907/ramplus/internal/render"
 )
 
 // ErrExperimentalNotConfirmed — экспериментальный профиль без подтверждения.
@@ -28,12 +31,12 @@ type profileFlags struct {
 	verbose      bool
 }
 
-func (f *profileFlags) request(name string) (swap.ProfileRequest, error) {
+func (f *profileFlags) request(name string) (profile.ProfileRequest, error) {
 	set, err := profile.ParseSet(f.set)
 	if err != nil {
-		return swap.ProfileRequest{}, err
+		return profile.ProfileRequest{}, err
 	}
-	return swap.ProfileRequest{Name: name, Set: set, Force: f.force, Experimental: f.experimental}, nil
+	return profile.ProfileRequest{Name: name, Set: set, Force: f.force, Experimental: f.experimental}, nil
 }
 
 func newProfileCmd() *cobra.Command {
@@ -46,9 +49,8 @@ func newProfileCmd() *cobra.Command {
 	return cmd
 }
 
-func activeProfile() *swap.AppliedProfile {
-	f := swap.Gather(contextBackground(), newSystem(), "")
-	return f.State.Profile
+func activeProfile() *profile.AppliedProfile {
+	return newCore().ProfileFacts(context.Background()).Profile
 }
 
 func newProfileListCmd() *cobra.Command {
@@ -136,8 +138,7 @@ func newProfilePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p := swap.PlanProfile(cmd.Context(), newSystem(), r)
-			return p.RenderWith(cmd.OutOrStdout(), swap.RenderOptions{Verbose: f.verbose})
+			return render.Plan(cmd.OutOrStdout(), newCore().ProfilePlan(cmd.Context(), r), render.Options{Verbose: f.verbose})
 		},
 	}
 	addProfileFlags(cmd, &f, false)
@@ -159,14 +160,11 @@ func newProfileApplyCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			sys := newSystem()
 			if f.dryRun {
-				return swap.PlanProfile(cmd.Context(), sys, r).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
+				return render.Plan(out, newCore().ProfilePlan(cmd.Context(), r), render.Options{Verbose: f.verbose})
 			}
-			m := &swap.Manager{Sys: sys, Out: out, Verbose: f.verbose}
-			_, err = m.ExecuteFunc(cmd.Context(), func(ctx contextT) swap.Plan { return swap.PlanProfile(ctx, sys, r) },
-				profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), out))
-			if errors.Is(err, swap.ErrNeedRoot) {
+			err = execute(cmd, core.Request{Profile: &r}, f.verbose, profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), out))
+			if errors.Is(err, journal.ErrNeedRoot) {
 				return fmt.Errorf("%w: sudo ramplus profile apply %s (посмотреть план без root: ramplus profile plan %s)", err, args[0], args[0])
 			}
 			return err
@@ -184,14 +182,11 @@ func newProfileResetCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			sys := newSystem()
 			if f.dryRun {
-				return swap.PlanProfileReset(cmd.Context(), sys).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
+				return render.Plan(out, newCore().ProfileResetPlan(cmd.Context()), render.Options{Verbose: f.verbose})
 			}
-			m := &swap.Manager{Sys: sys, Out: out, Verbose: f.verbose}
-			_, err := m.ExecuteFunc(cmd.Context(), func(ctx contextT) swap.Plan { return swap.PlanProfileReset(ctx, sys) },
-				confirmer(f.yes, cmd.InOrStdin(), out))
-			if errors.Is(err, swap.ErrNeedRoot) {
+			err := execute(cmd, core.Request{ProfileReset: true}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
+			if errors.Is(err, journal.ErrNeedRoot) {
 				return fmt.Errorf("%w: sudo ramplus profile reset (план без root: ramplus profile reset --dry-run)", err)
 			}
 			return err
@@ -205,9 +200,9 @@ func newProfileResetCmd() *cobra.Command {
 
 // profileConfirmer — обычное подтверждение плюс отдельное для
 // экспериментального профиля.
-func profileConfirmer(yes, experimental bool, in io.Reader, out io.Writer) swap.Confirm {
+func profileConfirmer(yes, experimental bool, in io.Reader, out io.Writer) func(*plan.Plan) (bool, error) {
 	base := confirmer(yes, in, out)
-	return func(p swap.Plan) (bool, error) {
+	return func(p *plan.Plan) (bool, error) {
 		if p.Profile != nil && p.Profile.Experimental && !experimental {
 			if yes {
 				return false, ErrExperimentalNotConfirmed
@@ -233,63 +228,8 @@ func newProfileCurrentCmd() *cobra.Command {
 		Short: "Что применено сейчас и отличия от исходных значений системы",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sys := newSystem()
-			f := swap.Gather(cmd.Context(), sys, "")
-			pf := swap.GatherProfile(cmd.Context(), sys, f, nil)
-			return renderCurrent(cmd.OutOrStdout(), pf)
+			pf := newCore().ProfileFacts(cmd.Context())
+			return render.ProfileCurrent(cmd.OutOrStdout(), pf)
 		},
 	}
 }
-
-func renderCurrent(w io.Writer, pf swap.ProfileFacts) error {
-	ap, base := pf.State.Profile, pf.State.Baseline
-	if ap == nil {
-		fmt.Fprintln(w, "Профиль RamPlus не применён.")
-	} else {
-		fmt.Fprintf(w, "Профиль: %s — %s, применён %s\n", ap.Name, profile.StatusText(ap.Status), ap.AppliedAt.Local().Format("2006-01-02 15:04:05"))
-		for k, v := range ap.Overrides {
-			fmt.Fprintf(w, "  изменено пользователем: %s=%s\n", k, v)
-		}
-	}
-	fmt.Fprintln(w)
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ПАРАМЕТР\tСЕЙЧАС\tПРОФИЛЬ\tИСХОДНОЕ\tОТКУДА")
-	var fromBase []string
-	for _, pr := range profile.Params {
-		cur, present := pf.Values[pr.Key]
-		if !present {
-			cur = "нет в ядре"
-		}
-		want, orig := "—", "—"
-		if ap != nil && ap.Values[pr.Key] != "" {
-			want = ap.Values[pr.Key]
-		}
-		if base != nil && base.Values[pr.Key] != "" {
-			orig = base.Values[pr.Key]
-			if present && cur != orig {
-				fromBase = append(fromBase, fmt.Sprintf("%s: %s → %s", pr.Key, orig, cur))
-			}
-		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", pr.Key, cur, want, orig, pf.SourceOf(pr.Key))
-	}
-	tw.Flush()
-	if base == nil {
-		fmt.Fprintln(w, "\nИсходные значения не сохранены (снимаются при первом ramplus profile apply).")
-	} else if len(fromBase) == 0 {
-		fmt.Fprintln(w, "\nОтличий от исходных значений нет.")
-	} else {
-		fmt.Fprintf(w, "\nОтличия от исходных значений (сняты %s): %s\n", base.CapturedAt.Local().Format("2006-01-02 15:04:05"), strings.Join(fromBase, "; "))
-	}
-	if d := swap.ProfileDrift(ap, pf.Values); len(d) > 0 {
-		var parts []string
-		for _, r := range d {
-			parts = append(parts, fmt.Sprintf("%s = %s (профиль: %s)", r.Key, dashStr(r.Current), r.New))
-		}
-		fmt.Fprintf(w, "ВНИМАНИЕ: значения изменены вручную после apply: %s\n", strings.Join(parts, "; "))
-	}
-	return nil
-}
-
-type contextT = context.Context
-
-func contextBackground() context.Context { return context.Background() }

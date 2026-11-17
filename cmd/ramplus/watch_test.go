@@ -72,14 +72,3 @@ func TestWatchStopsOnCancel(t *testing.T) {
 		t.Errorf("no summary after Ctrl+C:\n%s", out.String())
 	}
 }
-
-func TestPressureText(t *testing.T) {
-	for level, want := range map[string]string{
-		monitor.PressureNormal: "норма", monitor.PressureElevated: "повышенное давление",
-		monitor.PressureHigh: "система тормозит", monitor.PressureSevere: "сильные тормоза", "": "n/a",
-	} {
-		if got := pressureText(level); got != want {
-			t.Errorf("pressureText(%q) = %q", level, got)
-		}
-	}
-}

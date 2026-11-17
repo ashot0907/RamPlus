@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/detect"
-	"github.com/ashot0907/ramplus/internal/swap"
+	"github.com/ashot0907/ramplus/internal/sys"
 )
 
 const (
@@ -152,8 +152,8 @@ func (w *World) WithKernelParams(withZpool bool) *World {
 }
 
 // System — система поверх фейка.
-func (w *World) System() swap.System {
-	return swap.System{
+func (w *World) System() sys.System {
+	return sys.System{
 		FS: &FS{w}, Exec: &Exec{w}, Kernel: &Kernel{w},
 		DescribeFS: w.DescribeFS,
 		ListFS: func() []detect.FSInfo {
@@ -542,7 +542,7 @@ func (f *FS) Fallocate(name string, size uint64) error {
 		return notExist("fallocate", name)
 	}
 	if f.w.FallocUnsupported {
-		return fmt.Errorf("%s: %w", name, swap.ErrFallocateUnsupported)
+		return fmt.Errorf("%s: %w", name, sys.ErrFallocateUnsupported)
 	}
 	file.Size = size
 	return nil

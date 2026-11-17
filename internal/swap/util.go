@@ -2,15 +2,17 @@ package swap
 
 import (
 	"fmt"
+
+	"github.com/ashot0907/ramplus/internal/plan"
 	"strconv"
 	"strings"
 )
 
 const (
-	KiB = 1 << 10
-	MiB = 1 << 20
-	GiB = 1 << 30
-	TiB = 1 << 40
+	KiB = plan.KiB
+	MiB = plan.MiB
+	GiB = plan.GiB
+	TiB = plan.TiB
 )
 
 // MinSize — минимальный размер swapfile.
@@ -47,17 +49,7 @@ func ParseSize(s string) (uint64, error) {
 }
 
 // FormatSize — человекочитаемый размер в IEC-единицах.
-func FormatSize(b uint64) string {
-	if b < KiB {
-		return fmt.Sprintf("%d B", b)
-	}
-	div, exp := uint64(KiB), 0
-	for n := b / KiB; n >= KiB && exp < 4; n /= KiB {
-		div *= KiB
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(b)/float64(div), "KMGT"[exp])
-}
+func FormatSize(b uint64) string { return plan.FormatSize(b) }
 
 // sizeFlag — размер в виде, пригодном для --size (без потери точности).
 func sizeFlag(b uint64) string {

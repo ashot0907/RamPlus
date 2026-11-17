@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/render"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -45,14 +46,14 @@ func newStatusCmd() *cobra.Command {
 				}
 				return w.run(ctx)
 			}
-			st := collectStatus(newSystem())
+			st := newCore().Status()
 			out := cmd.OutOrStdout()
 			if asJSON {
 				enc := json.NewEncoder(out)
 				enc.SetIndent("", "  ")
 				return enc.Encode(st)
 			}
-			return renderStatus(out, st)
+			return render.Status(out, st)
 		},
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "вывод в JSON (та же схема, что у веб-API)")

@@ -19,11 +19,21 @@ Open-source инструмент для Linux (десктоп и серверы)
 - Python только в scripts/ для тестов и графиков
 
 ## Структура
-- cmd/ramplus, cmd/ramplusd, cmd/ramplus-web
+- cmd/ramplus, cmd/ramplusd, cmd/ramplus-web — тонкие оболочки над internal/core
+- internal/core — сервисный слой: Status, планы (swap, профили, rollback),
+  выполнение, история; единая точка входа для CLI, демона и веба
+- internal/plan — модель плана (данные, JSON): проверки, выбор, шаги, итог
+- internal/journal — движок изменений: state.json, операции, шаги и их
+  отмена, write-ahead, стек отката, сверка состояния, миграции, блокировка;
+  про swap и профили не знает (шаги регистрируются через journal.Register)
+- internal/swap — swap: факты, планировщик, шаги
+- internal/profile — профили: каталог, планировщик, шаги
+- internal/render — текстовый вывод для CLI (план, ход выполнения, статус)
+- internal/sys — интерфейсы FS/Executor/Kernel и реальные реализации
+- internal/fakesys — фейковая система для тестов
 - internal/detect — железо, диски, FS
 - internal/monitor — /proc/meminfo, /proc/swaps, PSI, zswap
-- internal/swap, internal/zswap, internal/profile — изменение системы
-- internal/api — API демона
+- internal/api — API демона (позже)
 - web/ — React-фронтенд
 - packaging/ — systemd, polkit
 - scripts/ — нагрузочные тесты
@@ -42,6 +52,8 @@ Open-source инструмент для Linux (десктоп и серверы)
   fixture-файлах в testdata/
 - Не падать, если файл недоступен (нет прав, старое ядро): "n/a"
 - Никаких изменений системы без явного указания в задаче
+- Логика только в internal/core и ниже; CLI, демон и веб — тонкие
+  оболочки над internal/core
 - Любое значение по умолчанию в профилях (zswap, swappiness и т.д.)
   должно быть подтверждено результатом scripts/bench.sh на реальном SSD;
   ссылка на результат — в комментарии к профилю

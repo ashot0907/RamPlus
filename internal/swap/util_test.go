@@ -134,7 +134,7 @@ func TestFstabDisableEnableRoundTrip(t *testing.T) {
 func TestStateRoundTripAndStack(t *testing.T) {
 	ts := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	s := State{
-		Managed: &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swap.swap", CreatedAt: ts},
+		Managed: EncodeManaged(&Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swap.swap", CreatedAt: ts}),
 		Operations: []Operation{
 			{ID: "1", Action: ActionApply, Status: OpCommitted, StartedAt: ts},
 			{ID: "2", Action: ActionResize, Status: OpFailed, StartedAt: ts},
@@ -147,7 +147,7 @@ func TestStateRoundTripAndStack(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := ParseState(b)
-	if err != nil || got.Managed.SizeBytes != 4*GiB || len(got.Operations) != 4 {
+	if err != nil || ManagedOf(got).SizeBytes != 4*GiB || len(got.Operations) != 4 {
 		t.Fatalf("round trip: %v %+v", err, got)
 	}
 	if i, ok := got.LastUndoable(); !ok || got.Operations[i].ID != "1" {

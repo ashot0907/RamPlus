@@ -7,21 +7,25 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/ashot0907/ramplus/internal/core"
 	"github.com/ashot0907/ramplus/internal/monitor"
-	"github.com/ashot0907/ramplus/internal/swap"
+	"github.com/ashot0907/ramplus/internal/sys"
 )
 
 // version подставляется при сборке: -ldflags "-X main.version=..."
 var version = "dev"
 
 // newSystem — система, с которой работают команды (в тестах — фейковая).
-var newSystem = swap.DefaultSystem
+var newSystem = sys.DefaultSystem
 
-// collectStatus — снимок для ramplus status (в тестах — из фикстур).
-var collectStatus = func(sys swap.System) monitor.Status {
-	st := monitor.Collect()
-	swap.AnnotateStatus(&st, sys.FS)
-	return st
+// collect — снимок памяти для ramplus status (в тестах — из фикстур).
+var collect = monitor.Collect
+
+// newCore — сервисный слой над системой: вся логика там, CLI — оболочка.
+func newCore() *core.Core {
+	c := core.New(newSystem())
+	c.Collect = collect
+	return c
 }
 
 func newRootCmd() *cobra.Command {

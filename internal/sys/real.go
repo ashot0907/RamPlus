@@ -1,4 +1,4 @@
-package swap
+package sys
 
 import (
 	"context"
@@ -127,7 +127,7 @@ func (OSFS) WriteZeros(name string, size uint64) error {
 		return err
 	}
 	defer f.Close()
-	buf := make([]byte, 4*MiB)
+	buf := make([]byte, 4<<20)
 	for left := size; left > 0; {
 		n := min(left, uint64(len(buf)))
 		if _, err := f.Write(buf[:n]); err != nil {

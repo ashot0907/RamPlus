@@ -1,14 +1,17 @@
-package swap
+package profile
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"path"
 	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/ashot0907/ramplus/internal/profile"
+	"github.com/ashot0907/ramplus/internal/journal"
+	"github.com/ashot0907/ramplus/internal/monitor"
+	system "github.com/ashot0907/ramplus/internal/sys"
 )
 
 // Пути, которые читает планировщик профилей.
@@ -28,10 +31,18 @@ var zramGenerators = []string{
 	"/usr/bin/init-zram-swapping",
 }
 
-// ProfileFacts — всё, что нужно планировщику профилей. Собирается
-// GatherProfile (только чтение); в тестах — фейковая система.
-type ProfileFacts struct {
-	Facts
+// ZswapUnitPath — юнит, который восстанавливает параметры zswap при загрузке.
+const ZswapUnitPath = system.UnitDir + "/" + ZswapUnitName
+
+// Facts — всё, что нужно планировщику профилей. Собирается Gather (только
+// чтение); в тестах — фейковая система.
+type Facts struct {
+	journal.Basics
+	Swaps   []monitor.SwapDevice
+	Cmdline string
+	// Profile/Baseline — разделы журнала.
+	Profile  *AppliedProfile
+	Baseline *Baseline
 
 	// Values — текущие runtime-значения (без пробелов); нет ключа —
 	// параметра нет в этом ядре.
@@ -40,7 +51,7 @@ type ProfileFacts struct {
 
 	// SysctlFiles — файлы sysctl в порядке применения при загрузке
 	// (включая наш 99-ramplus.conf, если он есть).
-	SysctlFiles []profile.ConfFile
+	SysctlFiles []ConfFile
 	OurSysctl   *string // содержимое 99-ramplus.conf
 	OurUnit     *string // содержимое ramplus-zswap.service
 	UnitEnabled bool
@@ -52,21 +63,30 @@ type ProfileFacts struct {
 	ZramGenerator string // путь, по которому найден генератор zram ("" — нет)
 }
 
-// GatherProfile дополняет факты сведениями для профилей. want — значения,
-// для которых проверить доступность компрессора и zpool (профиль + --set).
-func GatherProfile(ctx context.Context, sys System, f Facts, want map[string]string) ProfileFacts {
-	pf := ProfileFacts{Facts: f, Values: map[string]string{}, CompressorOK: map[string]bool{}, ZpoolOK: map[string]bool{}}
-	for _, p := range profile.Params {
+// Gather собирает факты для профилей. want — значения, для которых
+// проверить доступность компрессора и zpool (профиль + --set).
+func Gather(ctx context.Context, sys system.System, want map[string]string) Facts {
+	pf := Facts{Basics: journal.GatherBasics(sys), Values: map[string]string{}, CompressorOK: map[string]bool{}, ZpoolOK: map[string]bool{}}
+	pf.Profile, pf.Baseline = ProfileOf(pf.State), BaselineOf(pf.State)
+	if b, err := sys.FS.ReadFile(system.SwapsPath); err != nil {
+		pf.SwapsErr = err
+	} else {
+		pf.Swaps, pf.SwapsErr = monitor.ParseSwaps(bytes.NewReader(b))
+	}
+	if b, err := sys.FS.ReadFile(system.CmdlinePath); err == nil {
+		pf.Cmdline = strings.TrimSpace(string(b))
+	}
+	for _, p := range Params {
 		if b, err := sys.FS.ReadFile(p.Path); err == nil {
 			pf.Values[p.Key] = strings.TrimSpace(string(b))
 		}
 	}
-	if st, err := sys.FS.Stat(profile.ZswapParamDir); err == nil && st.IsDir() {
+	if st, err := sys.FS.Stat(ZswapParamDir); err == nil && st.IsDir() {
 		pf.ZswapPresent = true
 	}
 
 	pf.SysctlFiles = gatherSysctl(sys)
-	if b, err := sys.FS.ReadFile(profile.SysctlFilePath); err == nil {
+	if b, err := sys.FS.ReadFile(SysctlFilePath); err == nil {
 		s := string(b)
 		pf.OurSysctl = &s
 	}
@@ -74,7 +94,7 @@ func GatherProfile(ctx context.Context, sys System, f Facts, want map[string]str
 		s := string(b)
 		pf.OurUnit = &s
 	}
-	if out, err := sys.Exec.Run(ctx, "systemctl", "is-enabled", profile.ZswapUnitName); err == nil && strings.TrimSpace(string(out)) == "enabled" {
+	if out, err := sys.Exec.Run(ctx, "systemctl", "is-enabled", ZswapUnitName); err == nil && strings.TrimSpace(string(out)) == "enabled" {
 		pf.UnitEnabled = true
 	}
 
@@ -114,8 +134,8 @@ func GatherProfile(ctx context.Context, sys System, f Facts, want map[string]str
 	check("zswap.compressor", func(c string) bool { return crypto[c] || moduleOK("crypto", c) }, pf.CompressorOK)
 	check("zswap.zpool", func(z string) bool { return moduleOK("mm", z) }, pf.ZpoolOK)
 
-	for _, s := range f.Swaps {
-		if isZram(s.Path) {
+	for _, s := range pf.Swaps {
+		if strings.HasPrefix(s.Path, "/dev/zram") {
 			pf.ZramActive = true
 		}
 	}
@@ -129,7 +149,7 @@ func GatherProfile(ctx context.Context, sys System, f Facts, want map[string]str
 }
 
 // parseCrypto — имена алгоритмов из /proc/crypto.
-func parseCrypto(sys System) map[string]bool {
+func parseCrypto(sys system.System) map[string]bool {
 	out := map[string]bool{}
 	b, err := sys.FS.ReadFile(CryptoPath)
 	if err != nil {
@@ -146,10 +166,10 @@ func parseCrypto(sys System) map[string]bool {
 }
 
 // gatherSysctl читает sysctl.d во всех каталогах и /etc/sysctl.conf.
-func gatherSysctl(sys System) []profile.ConfFile {
-	var files []profile.ConfFile
+func gatherSysctl(sys system.System) []ConfFile {
+	var files []ConfFile
 	viaSymlink := false
-	for _, dir := range profile.SysctlDirs {
+	for _, dir := range SysctlDirs {
 		paths, _ := sys.FS.Glob(path.Join(dir, "*.conf"))
 		sort.Strings(paths)
 		for _, p := range paths {
@@ -157,22 +177,22 @@ func gatherSysctl(sys System) []profile.ConfFile {
 			if err != nil {
 				continue
 			}
-			if real, err := sys.FS.EvalSymlinks(p); err == nil && real == profile.SysctlConf {
+			if real, err := sys.FS.EvalSymlinks(p); err == nil && real == SysctlConf {
 				viaSymlink = true
 			}
-			files = append(files, profile.ConfFile{
-				Path: p, Name: path.Base(p), Values: profile.ParseSysctlConf(string(b)),
-				Ours: p == profile.SysctlFilePath,
+			files = append(files, ConfFile{
+				Path: p, Name: path.Base(p), Values: ParseSysctlConf(string(b)),
+				Ours: p == SysctlFilePath,
 			})
 		}
 	}
-	var extra []profile.ConfFile
+	var extra []ConfFile
 	if !viaSymlink {
-		if b, err := sys.FS.ReadFile(profile.SysctlConf); err == nil {
-			extra = append(extra, profile.ConfFile{Path: profile.SysctlConf, Values: profile.ParseSysctlConf(string(b))})
+		if b, err := sys.FS.ReadFile(SysctlConf); err == nil {
+			extra = append(extra, ConfFile{Path: SysctlConf, Values: ParseSysctlConf(string(b))})
 		}
 	}
-	return profile.OrderSysctl(files, extra...)
+	return OrderSysctl(files, extra...)
 }
 
 var unitEchoRe = regexp.MustCompile(`echo (\S+) > (\S+)'`)
@@ -201,19 +221,19 @@ func cmdlineParams(cmdline, prefix string) map[string]string {
 }
 
 // SourceOf — откуда текущее значение параметра.
-func (pf ProfileFacts) SourceOf(key string) string {
-	p, _ := profile.Lookup(key)
+func (pf Facts) SourceOf(key string) string {
+	p, _ := Lookup(key)
 	cur, present := pf.Values[key]
 	if !present {
 		return "нет в этом ядре"
 	}
-	if p.Group == profile.GroupSysctl {
-		setters := profile.Setters(pf.SysctlFiles, key)
+	if p.Group == GroupSysctl {
+		setters := Setters(pf.SysctlFiles, key)
 		if n := len(setters); n > 0 {
 			last := setters[n-1]
 			label := last.Path
 			if last.Ours {
-				label = "RamPlus (" + profile.SysctlFileName + ")"
+				label = "RamPlus (" + SysctlFileName + ")"
 			}
 			if v := last.Values[key]; v != cur {
 				return "изменено вручную (в " + label + ": " + v + ")"
@@ -232,7 +252,7 @@ func (pf ProfileFacts) SourceOf(key string) string {
 		if v != cur {
 			return "изменено вручную (RamPlus: " + v + ")"
 		}
-		return "RamPlus (" + profile.ZswapUnitName + ")"
+		return "RamPlus (" + ZswapUnitName + ")"
 	}
 	if v, ok := cmdlineParams(pf.Cmdline, "zswap.")[key]; ok {
 		return "cmdline (" + key + "=" + v + ")"

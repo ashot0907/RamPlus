@@ -5,10 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
-	"time"
 
-	"github.com/ashot0907/ramplus/internal/monitor"
-	"github.com/ashot0907/ramplus/internal/swap"
+	"github.com/ashot0907/ramplus/internal/plan"
 )
 
 // Тесты CLI профилей не вызывают apply/reset: даже под root ничего не меняется.
@@ -42,8 +40,8 @@ func TestProfileFlagsValidation(t *testing.T) {
 }
 
 func TestExperimentalConfirmation(t *testing.T) {
-	exp := swap.Plan{Profile: &swap.ProfilePlan{Experimental: true}}
-	std := swap.Plan{Profile: &swap.ProfilePlan{}}
+	exp := &plan.Plan{Profile: &plan.ProfileView{Experimental: true}}
+	std := &plan.Plan{Profile: &plan.ProfileView{}}
 	var out bytes.Buffer
 	if _, err := profileConfirmer(true, false, strings.NewReader(""), &out)(exp); !errors.Is(err, ErrExperimentalNotConfirmed) {
 		t.Errorf("--yes without --experimental: %v", err)
@@ -56,42 +54,5 @@ func TestExperimentalConfirmation(t *testing.T) {
 	}
 	if ok, err := profileConfirmer(true, false, strings.NewReader(""), &out)(std); !ok || err != nil {
 		t.Errorf("standard profile with --yes: %v %v", ok, err)
-	}
-}
-
-func TestStatusProfileSection(t *testing.T) {
-	var out bytes.Buffer
-	st := monitor.Status{
-		Profile: &monitor.ProfileInfo{Name: "zswap-lz4", Status: "experimental", AppliedAt: time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)},
-		Drift:   []monitor.DriftItem{{Key: "vm.swappiness", Expected: "60", Actual: "80"}},
-	}
-	if err := renderProfile(&out, st); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"zswap-lz4", "экспериментальный", "ВНИМАНИЕ: значения изменены вручную", "vm.swappiness = 80 (профиль: 60)"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("lacks %q:\n%s", want, out.String())
-		}
-	}
-	out.Reset()
-	renderProfile(&out, monitor.Status{})
-	if !strings.Contains(out.String(), "не применялся") {
-		t.Errorf("no profile:\n%s", out.String())
-	}
-}
-
-func TestRenderCurrent(t *testing.T) {
-	pf := swap.ProfileFacts{Values: map[string]string{"vm.swappiness": "80", "zswap.enabled": "Y"}}
-	pf.State.Profile = &swap.AppliedProfile{Name: "default", Status: "modified", Values: map[string]string{"vm.swappiness": "80", "zswap.enabled": "N"}}
-	pf.State.Baseline = &swap.Baseline{Values: map[string]string{"vm.swappiness": "60", "zswap.enabled": "N"}}
-	var out bytes.Buffer
-	if err := renderCurrent(&out, pf); err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"изменённый пользователем", "Отличия от исходных значений", "vm.swappiness: 60 → 80", "zswap.enabled: N → Y",
-		"ВНИМАНИЕ: значения изменены вручную после apply: zswap.enabled = Y (профиль: N)"} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("lacks %q:\n%s", want, out.String())
-		}
 	}
 }

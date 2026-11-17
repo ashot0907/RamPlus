@@ -13,8 +13,8 @@ import (
 
 	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/fakesys"
+	"github.com/ashot0907/ramplus/internal/journal"
 	"github.com/ashot0907/ramplus/internal/monitor"
-	"github.com/ashot0907/ramplus/internal/swap"
 )
 
 // Golden-тесты фиксируют текстовый вывод CLI (plan/apply/rollback/status
@@ -32,17 +32,17 @@ type session struct {
 
 func newSession(t *testing.T, w *fakesys.World) *session {
 	t.Helper()
-	oldSys, oldStatus, oldLocal := newSystem, collectStatus, time.Local
-	t.Cleanup(func() { newSystem, collectStatus, time.Local = oldSys, oldStatus, oldLocal })
+	oldSys, oldCollect, oldLocal := newSystem, collect, time.Local
+	t.Cleanup(func() { newSystem, collect, time.Local = oldSys, oldCollect, oldLocal })
 	time.Local = time.UTC
 	newSystem = w.System
-	collectStatus = goldenStatus
+	collect = func() monitor.Status { return goldenStatus(w) }
 	return &session{t: t, w: w}
 }
 
-// goldenStatus — status из фикстур monitor + фейковая система (профиль,
-// дрейф, managed).
-func goldenStatus(sys swap.System) monitor.Status {
+// goldenStatus — снимок из фикстур monitor; профиль, дрейф и managed
+// добавляет core.Status по фейковой системе.
+func goldenStatus(w *fakesys.World) monitor.Status {
 	td := func(p ...string) string {
 		return filepath.Join(append([]string{"..", "..", "internal", "monitor", "testdata"}, p...)...)
 	}
@@ -58,8 +58,7 @@ func goldenStatus(sys swap.System) monitor.Status {
 	st.CollectedAt = time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
 	st.System = detect.System{Hostname: "golden", Kernel: fakesys.Release, Arch: "x86_64",
 		OS: &detect.OSRelease{ID: "ubuntu", Name: "Ubuntu", PrettyName: "Ubuntu 24.04.5 LTS", VersionID: "24.04"}}
-	st.RootDisk = sys.DescribeFS("/")
-	swap.AnnotateStatus(&st, sys.FS)
+	st.RootDisk = w.DescribeFS("/")
 	return st
 }
 
@@ -194,13 +193,13 @@ func TestGoldenRollbackMismatch(t *testing.T) {
 	s := newSession(t, w)
 	s.run("swap", "apply", "--size", "4G", "--yes")
 	s.run("swap", "resize", "--size", "6G", "--yes")
-	st, err := swap.ParseState([]byte(w.Files[swap.StatePath].Data))
+	st, err := journal.ParseState([]byte(w.Files[journal.StatePath].Data))
 	if err != nil {
 		t.Fatal(err)
 	}
-	st.Operations[1].Status = swap.OpRolledBack
+	st.Operations[1].Status = journal.OpRolledBack
 	b, _ := st.Marshal()
-	w.Files[swap.StatePath].Data = string(b)
+	w.Files[journal.StatePath].Data = string(b)
 	s.run("rollback", "--yes")
 	s.check("rollback_mismatch")
 }

@@ -1,4 +1,4 @@
-package main
+package render
 
 import (
 	"fmt"
@@ -9,7 +9,6 @@ import (
 	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/monitor"
 	"github.com/ashot0907/ramplus/internal/profile"
-	"github.com/ashot0907/ramplus/internal/swap"
 )
 
 // reasonText — человекочитаемые причины n/a; context переопределяет общие.
@@ -108,7 +107,8 @@ func (s *section) end(w io.Writer) error {
 	return err
 }
 
-func renderStatus(w io.Writer, st monitor.Status) error {
+// Status — ramplus status для человека.
+func Status(w io.Writer, st monitor.Status) error {
 	renders := []func(io.Writer, monitor.Status) error{
 		renderSystem, renderMemory, renderSwaps, renderZswap,
 		renderVM, renderPSI, renderRootDisk, renderZram, renderProfile,
@@ -186,7 +186,7 @@ func renderSwaps(w io.Writer, st monitor.Status) error {
 		switch wr.Code {
 		case monitor.WarnSwapOnUSB:
 			fmt.Fprintf(w, "  ВНИМАНИЕ: %s на USB-диске — swap медленный и опасный при отключении диска\n", wr.Path)
-		case swap.WarnInterrupted:
+		case monitor.WarnInterrupted:
 			fmt.Fprintf(w, "  ВНИМАНИЕ: операция RamPlus прервана (%s) — выполните: sudo ramplus rollback\n", wr.Path)
 		default:
 			fmt.Fprintf(w, "  ВНИМАНИЕ: %s: %s\n", wr.Path, wr.Code)

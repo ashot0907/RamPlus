@@ -7,17 +7,16 @@ import (
 	"strings"
 
 	"github.com/ashot0907/ramplus/internal/detect"
+	"github.com/ashot0907/ramplus/internal/journal"
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/plan"
 )
 
-// Action — операция.
-type Action string
-
+// Операции swap (rollback — общий, plan.ActionRollback).
 const (
-	ActionApply    Action = "apply"
-	ActionResize   Action = "resize"
-	ActionRemove   Action = "remove"
-	ActionRollback Action = "rollback"
+	ActionApply  Action = "apply"
+	ActionResize Action = "resize"
+	ActionRemove Action = "remove"
 )
 
 // ExistingMode — что делать с существующим (не нашим) swap.
@@ -36,14 +35,6 @@ type Options struct {
 	Existing  ExistingMode `json:"existing,omitempty"` // "" — не указан
 	DeleteOld bool         `json:"delete_old,omitempty"`
 	Force     bool         `json:"force,omitempty"`
-}
-
-// Command — командная строка операции.
-func (p Plan) Command() string {
-	if p.CommandLine != "" {
-		return p.CommandLine
-	}
-	return p.Options.Command()
 }
 
 // Command — командная строка, соответствующая опциям.
@@ -72,83 +63,20 @@ func (o Options) Command() string {
 	return b.String()
 }
 
-// Level — серьёзность проверки.
-type Level string
-
-const (
-	LevelOK   Level = "ok"
-	LevelInfo Level = "info"
-	LevelWarn Level = "warn"
-	LevelFail Level = "fail" // блокирует выполнение
-)
-
-// Check — результат preflight-проверки.
-type Check struct {
-	Level   Level  `json:"level"`
-	Title   string `json:"title"`
-	Message string `json:"message"`
-}
-
-// Alternative — один из вариантов выбора и его последствия.
-type Alternative struct {
-	Value    string `json:"value"`
-	Selected bool   `json:"selected"`
-	Summary  string `json:"summary"`
-}
-
-// Choice — решение пользователя, которое показывается явно.
-type Choice struct {
-	Title        string        `json:"title"`
-	Flag         string        `json:"flag"`
-	Value        string        `json:"value"`
-	Defaulted    bool          `json:"defaulted"` // выбрано по умолчанию, флаг не указан
-	Note         string        `json:"note,omitempty"`
-	Alternatives []Alternative `json:"alternatives,omitempty"`
-}
-
-// Plan — что будет сделано и почему.
+// Plan — план swap: общая модель (plan.Plan) плюс то, что знает только
+// swap-планировщик.
 type Plan struct {
-	Action            Action          `json:"action"`
-	Options           Options         `json:"options"` // с подставленными значениями по умолчанию
-	Path              string          `json:"path"`    // путь swapfile
-	ExistingDefaulted bool            `json:"existing_defaulted"`
-	Choices           []Choice        `json:"choices"`
-	Checks            []Check         `json:"checks"`
-	Steps             []Step          `json:"steps"`
-	SwapBefore        uint64          `json:"swap_before_bytes"`
-	SwapAfter         uint64          `json:"swap_after_bytes"`
-	Created           []string        `json:"created"`
-	Disabled          []string        `json:"disabled"`
-	Deleted           []string        `json:"deleted"`
-	MaxSize           uint64          `json:"max_size_bytes,omitempty"` // сколько можно создать на ФС цели
-	ManagedBefore     *Managed        `json:"managed_before"`
-	ManagedAfter      *Managed        `json:"managed_after"`
-	ProfileAfter      *AppliedProfile `json:"profile_after"`
-	BaselineCapture   *Baseline       `json:"-"` // снять исходные значения (первый apply профиля)
-	Profile           *ProfilePlan    `json:"profile_plan,omitempty"`
-	CommandLine       string          `json:"command"` // "" — по Options
-	Target            *Operation      `json:"-"`       // для rollback
-	TargetIndex       int             `json:"-"`       // позиция цели rollback в журнале
+	plan.Plan
+	Options           Options // с подставленными значениями по умолчанию
+	Path              string  // путь swapfile
+	ExistingDefaulted bool
+	MaxSize           uint64 // сколько можно создать на ФС цели
+	ManagedBefore     *Managed
+	ManagedAfter      *Managed
 	facts             Facts
 }
 
-// Blocked — есть проваленные проверки.
-func (p Plan) Blocked() bool { return len(p.Failures()) > 0 }
-
-// Failures — проваленные проверки.
-func (p Plan) Failures() []Check {
-	var out []Check
-	for _, c := range p.Checks {
-		if c.Level == LevelFail {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func (p *Plan) add(l Level, title, format string, a ...any) {
-	p.Checks = append(p.Checks, Check{Level: l, Title: title, Message: fmt.Sprintf(format, a...)})
-}
+func (p *Plan) add(l Level, title, format string, a ...any) { p.Plan.Add(l, title, format, a...) }
 
 // Пороговые значения.
 const (
@@ -190,8 +118,9 @@ func BuildPlan(f Facts, o Options) Plan {
 }
 
 func buildPlan(f Facts, o Options) Plan {
-	p := Plan{Action: o.Action, Options: o, ManagedBefore: f.State.Managed, facts: f, Path: f.Target.Path}
-	p.commonChecks(f)
+	p := Plan{Options: o, ManagedBefore: f.Managed, facts: f, Path: f.Target.Path}
+	p.Plan.Action = o.Action
+	journal.CommonChecks(&p.Plan, f.Basics)
 	switch o.Action {
 	case ActionApply:
 		p.planApply(f)
@@ -200,12 +129,15 @@ func buildPlan(f Facts, o Options) Plan {
 	case ActionRemove:
 		p.planRemove(f)
 	case ActionRollback:
-		p.planRollback(f)
+		journal.PlanRollback(&p.Plan, f.Basics)
 	default:
 		p.add(LevelFail, "операция", "неизвестная операция %q", o.Action)
 	}
 	if o.Action != ActionRollback {
-		p.ProfileAfter = f.State.Profile // swap-операции профиль не меняют
+		// swap-операции меняют только раздел managed; профиль — как был.
+		p.Effects.Managed = EncodeManaged(p.ManagedAfter)
+		p.Effects.Profile = f.State.Profile
+		p.Effects.Finalize = finalize
 	}
 	p.diskCheck(f)
 	p.memoryCheck(f)
@@ -213,31 +145,52 @@ func buildPlan(f Facts, o Options) Plan {
 	if p.Steps == nil {
 		p.Steps = []Step{}
 	}
+	// p.Options — с подставленными значениями по умолчанию (--existing=keep).
+	p.Plan.Command = p.Options.Command()
+	p.Plan.Swap = view(f, p.Options)
 	return p
 }
 
-func (p *Plan) commonChecks(f Facts) {
-	if f.EUID == 0 {
-		p.add(LevelOK, "root", "запущено от root")
-	} else {
-		p.add(LevelInfo, "root", "план строится без root; для выполнения нужен sudo")
-	}
-	if !f.Systemd {
-		p.add(LevelFail, "systemd", "systemd не обнаружен (%s): RamPlus настраивает swap через systemd .swap-юниты", SystemdRunDir)
-	}
-	if f.StateErr != nil {
-		p.add(LevelFail, "журнал", "не удалось прочитать %s: %v", StatePath, f.StateErr)
-	}
-	if r := f.Recovery; r != nil && p.Action != ActionRollback {
-		msg := fmt.Sprintf("операция %s не завершена (процесс прервался)", r.OpID)
-		if r.Pending != nil {
-			msg += fmt.Sprintf(" на шаге «%s»: %s", r.Pending.Step.Describe(), r.Detail)
+var actionTitle = map[Action]string{
+	ActionApply:    "создание swapfile",
+	ActionResize:   "изменение размера swapfile",
+	ActionRemove:   "удаление swapfile",
+	ActionRollback: "откат последней операции",
+}
+
+// view — блок «Сейчас» для плана: что есть в системе.
+func view(f Facts, o Options) *plan.SwapView {
+	v := &plan.SwapView{Swaps: []plan.SwapRow{}, ApplyCommand: o.Command(), Title: actionTitle[o.Action]}
+	for _, s := range f.Swaps {
+		row := plan.SwapRow{Path: s.Path, Type: s.Type, Size: s.SizeBytes, Used: s.UsedBytes, Priority: s.Priority}
+		switch {
+		case isZram(s.Path):
+			row.Tag = "zram — не затрагивается"
+		case f.Managed != nil && s.Path == f.Managed.Path:
+			row.Tag = "RamPlus"
+		case len(f.fstabEntriesFor(s.Path)) > 0:
+			row.Tag = "в /etc/fstab"
 		}
-		p.add(LevelFail, "журнал", "%s — сначала выполните: sudo ramplus rollback", msg)
+		v.Swaps = append(v.Swaps, row)
 	}
-	if f.SwapsErr != nil {
-		p.add(LevelFail, "swap", "не удалось прочитать %s: %v", SwapsPath, f.SwapsErr)
+	fi := f.Target.FS
+	t := &plan.FSView{FSType: fi.FSType, Source: fi.Source, MountPoint: fi.MountPoint, Disk: "диск n/a",
+		Total: fi.TotalBytes, Avail: fi.AvailableBytes}
+	if len(fi.Disks) > 0 {
+		d := fi.Disks[0]
+		t.Disk = fmt.Sprintf("%s, %s, %s", d.Name, kindText(fi.Kind), d.Transport)
 	}
+	if fi.FSType != "" || (fi.TotalBytes != nil && fi.AvailableBytes != nil) {
+		v.Target = t
+	}
+	if a, ok := f.Mem["MemAvailable"]; ok {
+		v.MemAvailable = &a
+		v.MemTotal = f.Mem["MemTotal"]
+	}
+	if m := f.Managed; m != nil {
+		v.Managed = &plan.ManagedView{Path: m.Path, Size: m.SizeBytes, Priority: m.Priority, Unit: m.Unit}
+	}
+	return v
 }
 
 func (p *Plan) checkSize(size uint64) bool {
@@ -478,7 +431,7 @@ func choosePriority(f Facts) (prio int, note string, conflict bool) {
 
 func (p *Plan) planApply(f Facts) {
 	o := &p.Options
-	if m := f.State.Managed; m != nil {
+	if m := f.Managed; m != nil {
 		p.add(LevelFail, "swap RamPlus", "уже создан: %s, %s. Изменить размер: ramplus swap resize --size N; удалить: ramplus swap remove",
 			m.Path, FormatSize(m.SizeBytes))
 		return
@@ -589,7 +542,7 @@ func (p *Plan) checkResume(f Facts, what string) {
 }
 
 func (p *Plan) requireManaged(f Facts) *Managed {
-	m := f.State.Managed
+	m := f.Managed
 	if m == nil {
 		p.add(LevelFail, "swap RamPlus", "RamPlus swap не найден — сначала: ramplus swap apply --size N")
 	}
@@ -660,7 +613,7 @@ func (p *Plan) planRemove(f Facts) {
 		p.add(LevelWarn, "swap", "после удаления в системе не останется swap")
 	}
 	for _, op := range f.State.Operations {
-		if op.Status != OpCommitted {
+		if op.Status != journal.OpCommitted {
 			continue
 		}
 		for _, a := range op.Applied {
@@ -671,64 +624,6 @@ func (p *Plan) planRemove(f Facts) {
 		}
 	}
 	p.ManagedAfter = nil
-}
-
-func (p *Plan) planRollback(f Facts) {
-	for i := len(f.State.Operations) - 1; i >= 0; i-- {
-		op := f.State.Operations[i]
-		if op.Status == OpRollbackFailed {
-			p.add(LevelFail, "rollback", "операция %s (%s) откатилась не полностью — нужна ручная проверка по %s (поле applied) и бэкапам в %s",
-				op.ID, op.Command, StatePath, BackupDir)
-			return
-		}
-		if op.Status == OpCommitted || op.Status == OpInProgress {
-			break
-		}
-	}
-	idx, ok := f.State.LastUndoable()
-	if !ok {
-		p.add(LevelFail, "rollback", "нечего откатывать: в %s нет выполненных операций", StatePath)
-		return
-	}
-	op := f.State.Operations[idx]
-	p.Target, p.TargetIndex = &op, idx
-	p.add(LevelInfo, "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
-
-	// Состояние системы должно совпадать с результатом операции по журналу.
-	ignore := map[string]bool{}
-	if r := f.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
-		ignore[r.Pending.Step.Path] = true
-	}
-	if diff := CheckExpected(f, op, ignore); len(diff) > 0 {
-		p.add(LevelFail, "состояние", "состояние системы не совпадает с журналом, нужна ручная проверка (ничего не изменено):\n      - %s",
-			strings.Join(diff, "\n      - "))
-		return
-	}
-	p.add(LevelOK, "состояние", "система в состоянии, записанном в журнале после операции %s", op.ID)
-
-	if op.Status == OpInProgress {
-		p.add(LevelWarn, "rollback", "операция была прервана посреди выполнения — откатываются записанные в журнал шаги")
-		if r := f.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
-			step := r.Pending.Step.Describe()
-			switch r.Verdict {
-			case VerdictPresent:
-				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — будет откачен", step, r.Detail)
-				for _, u := range r.Pending.Undo {
-					if u.Kind == KindDeleteSwapfile {
-						u.SizeAtMost = true // файл мог остаться недописанным
-					}
-					p.Steps = append(p.Steps, u)
-				}
-			case VerdictAbsent:
-				p.add(LevelInfo, "прерванный шаг", "«%s»: %s — откатывать нечего", step, r.Detail)
-			default:
-				p.add(LevelFail, "прерванный шаг", "«%s»: %s — RamPlus не будет это трогать, нужна ручная проверка", step, r.Detail)
-			}
-		}
-	}
-	p.Steps = append(p.Steps, UndoSteps(op.Applied)...)
-	p.ManagedAfter = op.ManagedBefore
-	p.ProfileAfter = op.ProfileBefore
 }
 
 // diskCheck: после создания на ФС цели должно остаться RequiredFree.

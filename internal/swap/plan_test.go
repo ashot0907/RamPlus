@@ -1,7 +1,6 @@
 package swap
 
 import (
-	"bytes"
 	"strings"
 	"testing"
 
@@ -91,15 +90,6 @@ func hasStep(p Plan, k StepKind, path string) bool {
 	return false
 }
 
-func render(t *testing.T, p Plan, verbose bool) string {
-	t.Helper()
-	var out bytes.Buffer
-	if err := p.RenderWith(&out, RenderOptions{Verbose: verbose}); err != nil {
-		t.Fatal(err)
-	}
-	return out.String()
-}
-
 func TestPlanHappyPath(t *testing.T) {
 	p := BuildPlan(baseFacts(), applyOpts(8*GiB))
 	if p.Blocked() {
@@ -114,14 +104,14 @@ func TestPlanHappyPath(t *testing.T) {
 	if p.ManagedAfter.Unit != "ramplus.swapfile.swap" || p.Steps[3].Priority != 10 {
 		t.Errorf("unit/priority: %+v", p.ManagedAfter)
 	}
-	out := render(t, p, false)
+	out := renderPlan(t, p, false)
 	if !strings.Contains(out, "план выполним") || strings.Contains(out, "[Swap]") || !strings.Contains(out, "--verbose") {
 		t.Errorf("render:\n%s", out)
 	}
 }
 
 func TestPlanVerboseShowsUnit(t *testing.T) {
-	out := render(t, BuildPlan(baseFacts(), applyOpts(4*GiB)), true)
+	out := renderPlan(t, BuildPlan(baseFacts(), applyOpts(4*GiB)), true)
 	for _, want := range []string{"│ [Swap]", "│ What=/ramplus.swapfile", "│ Priority=10", "│ WantedBy=swap.target", "Managed by RamPlus"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("verbose lacks %q:\n%s", want, out)
@@ -477,7 +467,7 @@ func TestPlanResume(t *testing.T) {
 	if _, ok := findCheck(BuildPlan(f, applyOpts(4*GiB)), "гибернация"); ok {
 		t.Error("keep does not touch existing swap — no hibernation warning")
 	}
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Unit: "ramplus.swapfile.swap"}
+	f.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Unit: "ramplus.swapfile.swap"}
 	wantLevel(t, BuildPlan(f, Options{Action: ActionRemove}), "гибернация", LevelWarn)
 }
 
@@ -498,7 +488,7 @@ func TestPlanMemoryForSwapoff(t *testing.T) {
 
 func TestPlanRemoveMemory(t *testing.T) {
 	f := baseFacts()
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 8 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap"}
+	f.Managed = &Managed{Path: ManagedPath, SizeBytes: 8 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap"}
 	f.Swaps = []monitor.SwapDevice{{Path: ManagedPath, Type: "file", SizeBytes: 8 * GiB, UsedBytes: 7 * GiB, Priority: 10}}
 	f.Mem["MemAvailable"] = 3 * GiB
 	f.Exists = map[string]bool{ManagedPath: true, UnitDir + "/ramplus.swapfile.swap": true}
@@ -547,7 +537,7 @@ func TestPlanBlockers(t *testing.T) {
 		title string
 	}{
 		{"no systemd", func(f *Facts) { f.Systemd = false }, "systemd"},
-		{"already managed", func(f *Facts) { f.State.Managed = managed }, "swap RamPlus"},
+		{"already managed", func(f *Facts) { f.Managed = managed }, "swap RamPlus"},
 		{"foreign file", func(f *Facts) { f.Exists[ManagedPath] = true }, "файлы"},
 		{"foreign unit", func(f *Facts) { f.Exists[UnitDir+"/ramplus.swapfile.swap"] = true }, "файлы"},
 		{"interrupted op", func(f *Facts) { f.Recovery = &Recovery{OpID: "x"} }, "журнал"},
@@ -565,7 +555,7 @@ func TestPlanBlockers(t *testing.T) {
 
 func TestPlanResize(t *testing.T) {
 	f := baseFacts()
-	f.State.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap", FSType: "ext4"}
+	f.Managed = &Managed{Path: ManagedPath, SizeBytes: 4 * GiB, Priority: 10, Unit: "ramplus.swapfile.swap", FSType: "ext4"}
 	f.Swaps = []monitor.SwapDevice{{Path: ManagedPath, Type: "file", SizeBytes: 4 * GiB, Priority: 10}}
 	f.Exists = map[string]bool{ManagedPath: true}
 	setFS(&f, fsInfo("/", "ext4", detect.KindNVMe, "nvme", 100*GiB, 12*GiB))
@@ -578,7 +568,7 @@ func TestPlanResize(t *testing.T) {
 		t.Errorf("after=%d managed=%+v disabled=%v", p.SwapAfter/GiB, p.ManagedAfter, p.Disabled)
 	}
 	wantLevel(t, BuildPlan(f, Options{Action: ActionResize, Size: 4 * GiB}), "размер", LevelFail)
-	f.State.Managed = nil
+	f.Managed = nil
 	wantLevel(t, BuildPlan(f, Options{Action: ActionResize, Size: 6 * GiB}), "swap RamPlus", LevelFail)
 }
 
@@ -630,22 +620,11 @@ func TestOptionsCommand(t *testing.T) {
 	}
 }
 
-func TestAnnotateStatus(t *testing.T) {
-	w := newWorld(t)
-	st := State{Managed: &Managed{Path: "/custom/ramplus.swapfile"},
-		Operations: []Operation{{ID: "1", Action: ActionApply, Status: OpInProgress}}}
-	b, _ := st.Marshal()
-	w.files[StateDir] = &fakeFile{dir: true}
-	w.files[StatePath] = &fakeFile{data: string(b)}
-	status := monitor.Status{Swaps: monitor.Swaps{Devices: []monitor.SwapDevice{
-		{Path: "/swap.img"}, {Path: "/custom/ramplus.swapfile"}, {Path: ManagedPath},
-	}}}
-	AnnotateStatus(&status, &fakeFS{w})
-	got := []bool{status.Swaps.Devices[0].Managed, status.Swaps.Devices[1].Managed, status.Swaps.Devices[2].Managed}
-	if got[0] || !got[1] || !got[2] {
-		t.Errorf("managed = %v", got)
-	}
-	if len(status.Swaps.Warnings) != 1 || status.Swaps.Warnings[0].Code != WarnInterrupted {
-		t.Errorf("warnings = %+v", status.Swaps.Warnings)
+// Мелочь из ревью: приоритет в «Сейчас» и в проверке — один и тот же.
+func TestPriorityNoteUsesActualPriority(t *testing.T) {
+	f := withOldSwap(baseFacts(), 0) // /swap.img с приоритетом -2
+	_, note, _ := choosePriority(f)
+	if !strings.Contains(note, "(-2)") {
+		t.Errorf("note = %q", note)
 	}
 }

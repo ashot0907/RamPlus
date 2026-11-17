@@ -30,6 +30,8 @@ type SwapDevice struct {
 // Коды предупреждений о swap.
 const (
 	WarnSwapOnUSB = "swap_on_usb" // swap на USB-диске: медленно и опасно при отключении
+	// WarnInterrupted — в журнале RamPlus есть незавершённая операция.
+	WarnInterrupted = "ramplus_interrupted_operation"
 )
 
 // SwapWarning — предупреждение, относящееся к конкретному swap-устройству.

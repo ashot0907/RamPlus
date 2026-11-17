@@ -168,18 +168,25 @@ sudo ramplus rollback                              # общий стек со sw
 ## Структура
 
 ```
-cmd/ramplus        CLI
+cmd/ramplus        CLI — тонкая оболочка над internal/core
+cmd/ramplus-probe  нагрузка, latency-probe, сэмплер и отчёт для bench.sh
+internal/core      сервисный слой: статус, планы, выполнение (CLI сейчас, демон и веб потом)
+internal/plan      модель плана — данные (JSON): проверки, выбор, шаги, итог
+internal/journal   журнал state.json, write-ahead, стек отката, сверка состояния
+internal/swap      swap: факты, планировщик, шаги
+internal/profile   профили: каталог, параметры, sysctl.d, планировщик, шаги
+internal/render    текстовый вывод для CLI
+internal/sys       интерфейсы FS/Executor/Kernel и реальные реализации
+internal/fakesys   фейковая система для тестов
 internal/detect    система, диски, ФС
 internal/monitor   meminfo, swaps, zswap, zram, PSI, vm sysctl
-internal/profile   каталог профилей, параметры, sysctl.d, файлы постоянства
-internal/swap      план, preflight, выполнение с журналом и откатом (swap и профили)
-cmd/ramplus-probe  нагрузка, latency-probe, сэмплер и отчёт для bench.sh
 scripts/           интеграционный тест для VM, бенчмарк
 ```
 
-Все системные действия в `internal/swap` идут через интерфейсы `FS`,
-`Executor` и `Kernel`. Юнит-тесты работают на фейках и ничего не меняют в
-системе.
+Все системные действия идут через интерфейсы `FS`, `Executor` и `Kernel`
+(`internal/sys`). Юнит-тесты работают на фейке (`internal/fakesys`) и ничего
+не меняют в системе. Golden-тесты (`cmd/ramplus/testdata/golden`) фиксируют
+текстовый вывод CLI.
 
 Парсеры `/proc` и `/sys` — это чистые функции (`io.Reader`/`[]byte` →
 структура). Они покрыты тестами на fixture-файлах из `testdata/`.

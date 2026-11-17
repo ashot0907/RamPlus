@@ -1,4 +1,9 @@
-package swap
+// Package journal — движок изменений RamPlus: журнал /var/lib/ramplus/state.json
+// (v3), операции и шаги с отменой, write-ahead (pending/done), стек отката,
+// сверка состояния, миграции v1/v2→v3, блокировка. Про swap и профили не
+// знает: шаги регистрируются через Register, разделы managed/profile/
+// baseline хранятся как непрозрачный JSON.
+package journal
 
 import (
 	"crypto/rand"
@@ -8,6 +13,15 @@ import (
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/detect"
+	"github.com/ashot0907/ramplus/internal/plan"
+)
+
+// Пути журнала.
+const (
+	StateDir  = "/var/lib/ramplus"
+	StatePath = StateDir + "/state.json" // журнал операций
+	BackupDir = StateDir + "/backups"    // копии изменённых файлов
+	LockPath  = "/run/lock/ramplus.lock" // защита от параллельного запуска
 )
 
 // StateVersion — версия формата state.json.
@@ -29,52 +43,24 @@ const (
 	OpRolledBack     = "rolled_back"     // отменена через ramplus rollback
 )
 
-// Managed — swap, которым управляет RamPlus.
-type Managed struct {
-	Path      string    `json:"path"`
-	Dir       string    `json:"dir,omitempty"` // подтом btrfs, созданный RamPlus
-	SizeBytes uint64    `json:"size_bytes"`
-	Priority  int       `json:"priority"`
-	Unit      string    `json:"unit"`
-	FSType    string    `json:"fs_type"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
-// AppliedProfile — профиль, применённый RamPlus.
-type AppliedProfile struct {
-	Name       string            `json:"name"`
-	Status     string            `json:"status"`      // standard | experimental | verified | modified
-	BaseStatus string            `json:"base_status"` // статус профиля без --set
-	Overrides  map[string]string `json:"overrides,omitempty"`
-	Values     map[string]string `json:"values"` // ожидаемые runtime-значения
-	AppliedAt  time.Time         `json:"applied_at"`
-}
-
-// Baseline — значения системы до первого apply профиля (для reset).
-// Снимается один раз и не перезаписывается последующими apply.
-type Baseline struct {
-	Values     map[string]string `json:"values"`
-	CapturedAt time.Time         `json:"captured_at"`
-	OpID       string            `json:"op_id"`
-}
-
 // Operation — запись журнала об одной операции.
 type Operation struct {
-	ID            string    `json:"id"`
-	Action        Action    `json:"action"`
-	Command       string    `json:"command"`
-	Status        string    `json:"status"`
-	Target        string    `json:"target,omitempty"` // для rollback — ID отменяемой операции
-	StartedAt     time.Time `json:"started_at"`
-	FinishedAt    time.Time `json:"finished_at,omitzero"`
-	Applied       []Applied `json:"applied"`
-	ManagedBefore *Managed  `json:"managed_before"`
-	ManagedAfter  *Managed  `json:"managed_after"`
+	ID         string      `json:"id"`
+	Action     plan.Action `json:"action"`
+	Command    string      `json:"command"`
+	Status     string      `json:"status"`
+	Target     string      `json:"target,omitempty"` // для rollback — ID отменяемой операции
+	StartedAt  time.Time   `json:"started_at"`
+	FinishedAt time.Time   `json:"finished_at,omitzero"`
+	Applied    []Applied   `json:"applied"`
+	// Разделы до/после операции — содержимое задают домены (swap, profile).
+	ManagedBefore json.RawMessage `json:"managed_before"`
+	ManagedAfter  json.RawMessage `json:"managed_after"`
 	// ProfileBefore/After — активный профиль до и после (rollback
 	// восстанавливает ProfileBefore). BaselineCaptured — эта операция
 	// сняла исходные значения (её откат их забывает).
-	ProfileBefore    *AppliedProfile `json:"profile_before,omitempty"`
-	ProfileAfter     *AppliedProfile `json:"profile_after,omitempty"`
+	ProfileBefore    json.RawMessage `json:"profile_before,omitempty"`
+	ProfileAfter     json.RawMessage `json:"profile_after,omitempty"`
 	BaselineCaptured bool            `json:"baseline_captured,omitempty"`
 	Error            string          `json:"error,omitempty"`
 }
@@ -82,10 +68,28 @@ type Operation struct {
 // State — /var/lib/ramplus/state.json.
 type State struct {
 	Version    int             `json:"version"`
-	Managed    *Managed        `json:"managed"`
-	Profile    *AppliedProfile `json:"profile"`
-	Baseline   *Baseline       `json:"baseline,omitempty"`
+	Managed    json.RawMessage `json:"managed"`            // swap RamPlus (internal/swap)
+	Profile    json.RawMessage `json:"profile"`            // активный профиль (internal/profile)
+	Baseline   json.RawMessage `json:"baseline,omitempty"` // исходные значения (internal/profile)
 	Operations []Operation     `json:"operations"`
+}
+
+// raw — null и пусто приводятся к nil (как прежние nil-указатели: с
+// omitempty поле не пишется).
+func raw(m json.RawMessage) json.RawMessage {
+	if len(m) == 0 || string(m) == "null" {
+		return nil
+	}
+	return m
+}
+
+func (s *State) normalize() {
+	s.Managed, s.Profile, s.Baseline = raw(s.Managed), raw(s.Profile), raw(s.Baseline)
+	for i := range s.Operations {
+		op := &s.Operations[i]
+		op.ManagedBefore, op.ManagedAfter = raw(op.ManagedBefore), raw(op.ManagedAfter)
+		op.ProfileBefore, op.ProfileAfter = raw(op.ProfileBefore), raw(op.ProfileAfter)
+	}
 }
 
 // ParseState разбирает state.json.
@@ -94,6 +98,7 @@ func ParseState(b []byte) (State, error) {
 	if err := json.Unmarshal(b, &s); err != nil {
 		return State{}, fmt.Errorf("%w: state.json: %v", detect.ErrParse, err)
 	}
+	s.normalize()
 	switch s.Version {
 	case 1:
 		// В v1 журнал писался после шага: каждая запись — выполненный шаг.
@@ -154,7 +159,7 @@ func migrateDuplicateIDs(s *State) {
 	}
 	for i := range s.Operations {
 		op := &s.Operations[i]
-		if op.Action != ActionRollback {
+		if op.Action != plan.ActionRollback {
 			continue
 		}
 		prefix := State{Operations: s.Operations[:i]}
@@ -225,7 +230,7 @@ func (s State) LastUndoable() (int, bool) {
 			// Прерванная операция (в т.ч. прерванный rollback) отменяется
 			// первой: система возвращается к состоянию до неё.
 			return i, true
-		case op.Action == ActionRollback:
+		case op.Action == plan.ActionRollback:
 			continue
 		case op.Status == OpCommitted:
 			return i, true
@@ -240,14 +245,6 @@ func (s State) Pending() *Operation {
 		if s.Operations[i].Status == OpInProgress {
 			return &s.Operations[i]
 		}
-	}
-	return nil
-}
-
-// ManagedPaths — пути swap, которыми управляет RamPlus (для status).
-func ManagedPaths(s State) []string {
-	if s.Managed != nil {
-		return []string{s.Managed.Path}
 	}
 	return nil
 }
