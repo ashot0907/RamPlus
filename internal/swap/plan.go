@@ -38,6 +38,14 @@ type Options struct {
 	Force     bool         `json:"force,omitempty"`
 }
 
+// Command — командная строка операции.
+func (p Plan) Command() string {
+	if p.CommandLine != "" {
+		return p.CommandLine
+	}
+	return p.Options.Command()
+}
+
 // Command — командная строка, соответствующая опциям.
 func (o Options) Command() string {
 	var b strings.Builder
@@ -100,23 +108,27 @@ type Choice struct {
 
 // Plan — что будет сделано и почему.
 type Plan struct {
-	Action            Action     `json:"action"`
-	Options           Options    `json:"options"` // с подставленными значениями по умолчанию
-	Path              string     `json:"path"`    // путь swapfile
-	ExistingDefaulted bool       `json:"existing_defaulted"`
-	Choices           []Choice   `json:"choices"`
-	Checks            []Check    `json:"checks"`
-	Steps             []Step     `json:"steps"`
-	SwapBefore        uint64     `json:"swap_before_bytes"`
-	SwapAfter         uint64     `json:"swap_after_bytes"`
-	Created           []string   `json:"created"`
-	Disabled          []string   `json:"disabled"`
-	Deleted           []string   `json:"deleted"`
-	MaxSize           uint64     `json:"max_size_bytes,omitempty"` // сколько можно создать на ФС цели
-	ManagedBefore     *Managed   `json:"managed_before"`
-	ManagedAfter      *Managed   `json:"managed_after"`
-	Target            *Operation `json:"-"` // для rollback
-	TargetIndex       int        `json:"-"` // позиция цели rollback в журнале
+	Action            Action          `json:"action"`
+	Options           Options         `json:"options"` // с подставленными значениями по умолчанию
+	Path              string          `json:"path"`    // путь swapfile
+	ExistingDefaulted bool            `json:"existing_defaulted"`
+	Choices           []Choice        `json:"choices"`
+	Checks            []Check         `json:"checks"`
+	Steps             []Step          `json:"steps"`
+	SwapBefore        uint64          `json:"swap_before_bytes"`
+	SwapAfter         uint64          `json:"swap_after_bytes"`
+	Created           []string        `json:"created"`
+	Disabled          []string        `json:"disabled"`
+	Deleted           []string        `json:"deleted"`
+	MaxSize           uint64          `json:"max_size_bytes,omitempty"` // сколько можно создать на ФС цели
+	ManagedBefore     *Managed        `json:"managed_before"`
+	ManagedAfter      *Managed        `json:"managed_after"`
+	ProfileAfter      *AppliedProfile `json:"profile_after"`
+	BaselineCapture   *Baseline       `json:"-"` // снять исходные значения (первый apply профиля)
+	Profile           *ProfilePlan    `json:"profile_plan,omitempty"`
+	CommandLine       string          `json:"command"` // "" — по Options
+	Target            *Operation      `json:"-"`       // для rollback
+	TargetIndex       int             `json:"-"`       // позиция цели rollback в журнале
 	facts             Facts
 }
 
@@ -191,6 +203,9 @@ func buildPlan(f Facts, o Options) Plan {
 		p.planRollback(f)
 	default:
 		p.add(LevelFail, "операция", "неизвестная операция %q", o.Action)
+	}
+	if o.Action != ActionRollback {
+		p.ProfileAfter = f.State.Profile // swap-операции профиль не меняют
 	}
 	p.diskCheck(f)
 	p.memoryCheck(f)
@@ -432,7 +447,8 @@ func choosePriority(f Facts) (prio int, note string, conflict bool) {
 			}
 			hasZram = true
 		case !f.isOurPath(s.Path):
-			if s.Priority > maxDisk {
+			// Начальное -1 не годится: приоритеты бывают -2, -3…
+			if !hasDisk || s.Priority > maxDisk {
 				maxDisk = s.Priority
 			}
 			hasDisk = true
@@ -712,6 +728,7 @@ func (p *Plan) planRollback(f Facts) {
 	}
 	p.Steps = append(p.Steps, UndoSteps(op.Applied)...)
 	p.ManagedAfter = op.ManagedBefore
+	p.ProfileAfter = op.ProfileBefore
 }
 
 // diskCheck: после создания на ФС цели должно остаться RequiredFree.

@@ -110,6 +110,52 @@ ramplus swap check-clean                           # нет ли следов Ra
 
 Интеграционный тест (только в одноразовой VM): `sudo RAMPLUS_VM_TEST=1 scripts/vm-test.sh ./ramplus`.
 
+## Профили
+
+```sh
+ramplus profile list                               # профили и статусы
+ramplus profile show zswap-lz4                     # параметры и evidence
+ramplus profile plan zswap-lz4 [--set vm.swappiness=80] [--verbose]   # без root
+sudo ramplus profile apply zswap-lz4 --experimental
+ramplus profile current                            # что применено, отличия от исходных значений
+sudo ramplus profile reset                         # вернуть значения до первого apply
+sudo ramplus rollback                              # общий стек со swap
+```
+
+Профиль задаёт параметры zswap (`enabled`, `compressor`, `zpool`,
+`max_pool_percent`, `shrinker_enabled`) и sysctl (`vm.swappiness`,
+`vm.page-cluster`, `vm.watermark_scale_factor`, `vm.vfs_cache_pressure`).
+Параметр, которого нет в профиле, не трогается.
+
+| профиль | статус |
+|---|---|
+| `default` | стандарт Ubuntu 24.04: zswap выключен, swappiness 60, page-cluster 3, watermark_scale_factor 10, vfs_cache_pressure 100 |
+| `zswap-lz4` | экспериментальный: zswap, lz4, zsmalloc, пул 20%, остальное как в default |
+| `zswap-zstd` | экспериментальный: то же с zstd |
+
+- **Статусы.** Экспериментальный профиль применяется только с явным
+  подтверждением: в терминале — вопрос, в скриптах — `--experimental`.
+  «Проверенным» профиль становится только с evidence, то есть с
+  результатом `scripts/bench.sh` на реальном SSD; это проверяется при
+  загрузке каталога. `--set ключ=значение` меняет параметр поверх
+  профиля, и профиль помечается как «изменённый пользователем».
+- **Применение.** Значения пишутся сразу в `/sys/module/zswap/parameters`
+  и `/proc/sys/vm`. После перезагрузки их восстанавливают
+  `/etc/sysctl.d/99-ramplus.conf` и oneshot-юнит `ramplus-zswap.service`
+  (значения встроены в юнит). Kernel cmdline и GRUB не меняются.
+- **Проверки до изменений:**
+  - доступность компрессора (`/proc/crypto` или модуль) и zpool;
+  - zswap.* в cmdline — предупреждение;
+  - тот же ключ в `/etc/sysctl.d` после нашего файла — предупреждение с
+    порядком применения;
+  - zswap поверх zram — отказ, обойти можно через `--force`;
+  - диапазоны значений `--set`.
+- **Журнал.** Исходные значения системы снимаются один раз, при первом
+  apply. Перед rollback текущие runtime-значения и содержимое наших
+  файлов сверяются с журналом. `ramplus status` показывает активный
+  профиль и дрейф, если значения поменяли вручную; в JSON это поля
+  `profile` и `drift`.
+
 ## Бенчмарк
 
 `scripts/bench.sh` сравнивает no-swap, swap и три конфигурации zswap на
@@ -125,7 +171,8 @@ ramplus swap check-clean                           # нет ли следов Ra
 cmd/ramplus        CLI
 internal/detect    система, диски, ФС
 internal/monitor   meminfo, swaps, zswap, zram, PSI, vm sysctl
-internal/swap      план, preflight, выполнение с журналом и откатом
+internal/profile   каталог профилей, параметры, sysctl.d, файлы постоянства
+internal/swap      план, preflight, выполнение с журналом и откатом (swap и профили)
 cmd/ramplus-probe  нагрузка, latency-probe, сэмплер и отчёт для bench.sh
 scripts/           интеграционный тест для VM, бенчмарк
 ```

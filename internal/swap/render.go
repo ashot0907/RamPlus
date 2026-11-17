@@ -8,10 +8,12 @@ import (
 )
 
 var actionTitle = map[Action]string{
-	ActionApply:    "создание swapfile",
-	ActionResize:   "изменение размера swapfile",
-	ActionRemove:   "удаление swapfile",
-	ActionRollback: "откат последней операции",
+	ActionApply:        "создание swapfile",
+	ActionResize:       "изменение размера swapfile",
+	ActionRemove:       "удаление swapfile",
+	ActionRollback:     "откат последней операции",
+	ActionProfileApply: "применение профиля",
+	ActionProfileReset: "сброс профиля",
 }
 
 var levelTag = map[Level]string{
@@ -28,11 +30,14 @@ func (p Plan) Render(w io.Writer) error { return p.RenderWith(w, RenderOptions{}
 
 // RenderWith печатает план с настройками.
 func (p Plan) RenderWith(w io.Writer, opts RenderOptions) error {
+	if p.Profile != nil {
+		return p.renderProfile(w, opts)
+	}
 	f := p.facts
 	pr := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
 
 	pr("План: %s\n", actionTitle[p.Action])
-	pr("Команда: %s\n\n", p.Options.Command())
+	pr("Команда: %s\n\n", p.Command())
 
 	pr("Сейчас\n")
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

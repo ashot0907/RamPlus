@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/detect"
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // fakeWorld — система целиком в памяти. Тесты не выполняют реальных
@@ -48,7 +49,9 @@ type fakeWorld struct {
 	crash  bool // вместо ошибки — «падение процесса» (panic crashed{})
 	// frozenClock — часы стоят: все операции получают одно и то же время.
 	frozenClock bool
-	mutations   int
+	// compressors/zpools — что ядро примет при записи в параметры zswap.
+	compressors, zpools map[string]bool
+	mutations           int
 	// mounts — дополнительные ФС для --path (точка монтирования → описание).
 	mounts map[string]fakeMount
 	log    []string
@@ -304,6 +307,29 @@ func (f *fakeFS) Stat(name string) (fs.FileInfo, error) {
 	return fakeInfo{filepath.Base(name), *file}, nil
 }
 
+func (f *fakeFS) WriteValue(name, value string) error {
+	if err := f.w.mutate("write-value " + name); err != nil {
+		return err
+	}
+	file, ok := f.w.files[name]
+	if !ok || file.dir {
+		return notExist("open", name)
+	}
+	v := strings.TrimSpace(value)
+	switch name {
+	case profile.ZswapParamDir + "/compressor":
+		if !f.w.compressors[v] {
+			return &fs.PathError{Op: "write", Path: name, Err: syscall.EINVAL}
+		}
+	case profile.ZswapParamDir + "/zpool":
+		if !f.w.zpools[v] {
+			return &fs.PathError{Op: "write", Path: name, Err: syscall.EINVAL}
+		}
+	}
+	file.data = v + "\n"
+	return nil
+}
+
 func (f *fakeFS) ReadPrefix(name string, n int) ([]byte, error) {
 	file, ok := f.w.files[name]
 	if !ok {
@@ -465,6 +491,12 @@ func (e *fakeExec) LookPath(file string) (string, error) {
 func (e *fakeExec) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	w := e.w
 	cmd := name + " " + strings.Join(args, " ")
+	if strings.HasPrefix(cmd, "systemctl is-enabled ") { // только чтение
+		if w.enabled[args[len(args)-1]] {
+			return []byte("enabled\n"), nil
+		}
+		return []byte("disabled\n"), fmt.Errorf("exit status 1")
+	}
 	if cmd == "btrfs filesystem mkswapfile --help" { // только чтение
 		if w.btrfsTool && w.mkswapfile {
 			return nil, nil
@@ -564,3 +596,43 @@ func (k *fakeKernel) Swapoff(path string) error {
 }
 
 func (w *fakeWorld) fsOf(path string) string { _, m := w.mount(path); return m.fsType }
+
+const fakeRelease = "7.0.0-test"
+
+// withKernelParams — параметры zswap и vm.* как на стоковой Ubuntu.
+// withZpool=false — ядро 7.0+, где параметра zpool нет.
+func (w *fakeWorld) withKernelParams(withZpool bool) *fakeWorld {
+	dir := func(p string) { w.files[p] = &fakeFile{dir: true, mode: 0o755} }
+	val := func(p, v string) { w.files[p] = &fakeFile{data: v + "\n", mode: 0o644} }
+	for _, d := range []string{"/sys", "/sys/module", "/sys/module/zswap", profile.ZswapParamDir, "/proc/sys", "/proc/sys/vm",
+		"/proc/sys/kernel", "/sys/module/zsmalloc", "/etc/sysctl.d", "/usr/lib/sysctl.d", "/lib/modules", "/lib/modules/" + fakeRelease,
+		"/lib/modules/" + fakeRelease + "/kernel", "/lib/modules/" + fakeRelease + "/kernel/crypto"} {
+		dir(d)
+	}
+	val(profile.ZswapParamDir+"/enabled", "N")
+	val(profile.ZswapParamDir+"/compressor", "lzo")
+	val(profile.ZswapParamDir+"/max_pool_percent", "20")
+	val(profile.ZswapParamDir+"/shrinker_enabled", "Y")
+	w.zpools = map[string]bool{"zsmalloc": true}
+	if withZpool {
+		val(profile.ZswapParamDir+"/zpool", "zbud")
+		w.zpools["zbud"] = true
+		dir("/sys/module/zbud")
+	}
+	val("/proc/sys/vm/swappiness", "60")
+	val("/proc/sys/vm/page-cluster", "3")
+	val("/proc/sys/vm/watermark_scale_factor", "10")
+	val("/proc/sys/vm/vfs_cache_pressure", "100")
+	val(OSReleasePath, fakeRelease)
+	w.files[CryptoPath] = &fakeFile{data: "name         : lzo\ndriver       : lzo-generic\n\nname         : deflate\n", mode: 0o444}
+	w.files["/lib/modules/"+fakeRelease+"/modules.builtin"] = &fakeFile{data: "kernel/mm/zsmalloc.ko\nkernel/crypto/lzo.ko\n"}
+	w.files["/lib/modules/"+fakeRelease+"/kernel/crypto/lz4.ko.zst"] = &fakeFile{data: "\x28\xb5"}
+	w.files["/lib/modules/"+fakeRelease+"/kernel/crypto/zstd.ko.zst"] = &fakeFile{data: "\x28\xb5"}
+	w.compressors = map[string]bool{"lzo": true, "lz4": true, "zstd": true}
+	// Ubuntu: /etc/sysctl.d/99-sysctl.conf → ../sysctl.conf
+	w.files["/etc/sysctl.conf"] = &fakeFile{data: "# /etc/sysctl.conf\n", mode: 0o644}
+	w.files["/etc/sysctl.d/99-sysctl.conf"] = &fakeFile{data: "# /etc/sysctl.conf\n", mode: 0o644}
+	w.links["/etc/sysctl.d/99-sysctl.conf"] = "/etc/sysctl.conf"
+	w.files["/etc/sysctl.d/10-console-messages.conf"] = &fakeFile{data: "kernel.printk = 4 4 1 7\n", mode: 0o644}
+	return w
+}

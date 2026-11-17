@@ -16,6 +16,9 @@
 #      со строкой в fstab, как в Ubuntu desktop) → rollback: старый swap
 #      снова активен, fstab восстановлен байт в байт
 #   C. replace --delete-old → rollback пересоздаёт старый swapfile
+#   D. профиль zswap-lz4: plan → apply --experimental → status → «перезагрузка»
+#      (ручная порча значений + restart ramplus-zswap.service) → дрейф →
+#      rollback → apply + default --set → reset = значения как в начале
 set -euo pipefail
 
 BIN=${1:-./ramplus}
@@ -241,5 +244,94 @@ if [[ -f $OLD ]]; then
 else
 	step "C. пропущен: $OLD — раздел, а не файл"
 fi
+
+########################################################################
+ZP=/sys/module/zswap/parameters
+PROFILE_FILES=(/etc/sysctl.d/99-ramplus.conf /etc/systemd/system/ramplus-zswap.service)
+
+# params — текущие значения параметров профиля (путь=значение).
+params() {
+	local f
+	for f in "$ZP"/enabled "$ZP"/compressor "$ZP"/zpool "$ZP"/max_pool_percent "$ZP"/shrinker_enabled \
+		/proc/sys/vm/swappiness /proc/sys/vm/page-cluster /proc/sys/vm/watermark_scale_factor /proc/sys/vm/vfs_cache_pressure; do
+		if [[ -r $f ]]; then
+			printf '%s=%s\n' "$f" "$(<"$f")"
+		fi
+	done
+}
+
+assert_param() {
+	local f=${1:-} want=${2:-} got=""
+	got=$(<"$f")
+	[[ $got == "$want" ]] || die "$f = $got, ожидалось $want"
+	echo "ok: $f = $want"
+}
+
+assert_no_profile_files() {
+	local f
+	for f in "${PROFILE_FILES[@]}"; do
+		[[ ! -e $f ]] || die "остался $f"
+	done
+	echo "ok: файлов профиля нет"
+}
+
+step "D0. исходные значения"
+INITIAL_PARAMS=$(params)
+echo "$INITIAL_PARAMS"
+assert_no_profile_files
+
+step "D1. plan без root ничего не меняет"
+rp profile plan zswap-lz4 | grep -q 'zswap.compressor' || die "plan не показал zswap.compressor"
+assert_eq "$(params)" "$INITIAL_PARAMS" "plan не изменил значения"
+
+step "D2. apply без подтверждения экспериментального профиля — отказ"
+if rp profile apply zswap-lz4 --yes; then
+	die "экспериментальный профиль применился без --experimental"
+fi
+assert_eq "$(params)" "$INITIAL_PARAMS" "значения не изменились"
+
+step "D3. apply --experimental"
+rp profile apply zswap-lz4 --experimental --yes
+assert_param "$ZP/enabled" Y
+assert_param "$ZP/compressor" lz4
+assert_param "$ZP/max_pool_percent" 20
+if [[ -e $ZP/zpool ]]; then
+	assert_param "$ZP/zpool" zsmalloc
+fi
+grep -q '# Managed by RamPlus' /etc/sysctl.d/99-ramplus.conf || die "нет маркера в 99-ramplus.conf"
+systemctl is-enabled ramplus-zswap.service >/dev/null || die "ramplus-zswap.service не enabled"
+
+step "D4. status: профиль активен"
+rp status --json | grep -q '"name": "zswap-lz4"' || die "status --json: нет профиля"
+rp status | sed -n '/Профиль RamPlus/,/^$/p'
+
+step "D5. «перезагрузка»: значения испорчены вручную, юнит их возвращает"
+echo N >"$ZP/enabled"
+echo lzo >"$ZP/compressor"
+systemctl restart ramplus-zswap.service
+assert_param "$ZP/enabled" Y
+assert_param "$ZP/compressor" lz4
+
+step "D6. дрейф: ручная запись swappiness → status предупреждает"
+SWAPPINESS=$(</proc/sys/vm/swappiness)
+echo 133 >/proc/sys/vm/swappiness
+rp status --json | grep -q '"key": "vm.swappiness"' || die "status --json: нет дрейфа vm.swappiness"
+rp status | grep -q 'значения изменены вручную' || die "status не предупредил о дрейфе"
+echo "$SWAPPINESS" >/proc/sys/vm/swappiness
+
+step "D7. rollback: значения как в начале, файлов нет"
+rp rollback --yes
+assert_eq "$(params)" "$INITIAL_PARAMS" "значения как в начале"
+assert_no_profile_files
+
+step "D8. apply + default --set → reset: значения как в начале, файлов нет"
+rp profile apply zswap-lz4 --experimental --yes
+rp profile apply default --set vm.swappiness=80 --yes
+assert_param /proc/sys/vm/swappiness 80
+rp profile reset --yes
+assert_eq "$(params)" "$INITIAL_PARAMS" "значения как в начале"
+assert_no_profile_files
+rp profile reset --yes | grep -q 'Нечего делать' || die "повторный reset должен быть пустым"
+"$BIN" swap check-clean || die "после reset остались следы"
 
 printf '\nВСЕ СЦЕНАРИИ ПРОЙДЕНЫ\n'

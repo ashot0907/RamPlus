@@ -1,0 +1,18 @@
+{
+  "name": "zswap-lz4",
+  "title": "zswap + lz4",
+  "description": "zswap включён: lz4, zsmalloc, пул до 20% RAM; sysctl как в default.",
+  "status": "experimental",
+  "evidence": "",
+  "comment": "Не подтверждён scripts/bench.sh на реальном SSD (см. CLAUDE.md). Прогон --quick в VM (2026-11-17) для выбора значений не используется.",
+  "params": {
+    "zswap.enabled": "Y",
+    "zswap.compressor": "lz4",
+    "zswap.zpool": "zsmalloc",
+    "zswap.max_pool_percent": "20",
+    "vm.swappiness": "60",
+    "vm.page-cluster": "3",
+    "vm.watermark_scale_factor": "10",
+    "vm.vfs_cache_pressure": "100"
+  }
+}

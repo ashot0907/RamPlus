@@ -10,6 +10,7 @@ import (
 
 	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // Target — куда ляжет swapfile.
@@ -148,7 +149,7 @@ func Gather(ctx context.Context, sys System, requested string) Facts {
 	}
 
 	check := []string{f.Target.Path, filepath.Join(UnitDir, UnitName(f.Target.Path)),
-		ManagedPath, BtrfsPath, BtrfsDir, LegacyPath}
+		ManagedPath, BtrfsPath, BtrfsDir, LegacyPath, profile.SysctlFilePath, ZswapUnitPath}
 	if m := f.State.Managed; m != nil {
 		check = append(check, m.Path, filepath.Join(UnitDir, m.Unit))
 	}
@@ -186,7 +187,7 @@ func Gather(ctx context.Context, sys System, requested string) Facts {
 	if idx, ok := f.State.LastUndoable(); ok {
 		for _, a := range f.State.Operations[idx].Applied {
 			k := a.Step.Kind
-			observe(a.Step.Path, k == KindWriteFile || k == KindDeleteConfig || k == KindRemoveFile)
+			observe(a.Step.Path, k == KindWriteFile || k == KindDeleteConfig || k == KindRemoveFile || k == KindSetValue)
 		}
 	}
 

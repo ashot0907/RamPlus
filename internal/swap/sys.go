@@ -20,6 +20,7 @@ const (
 	BtrfsDir        = "/ramplus-swap"       // NOCOW-подтом на btrfs (путь по умолчанию)
 	BtrfsPath       = BtrfsDir + "/" + DefaultFileName
 	LegacyPath      = "/ramplus.swap" // путь по умолчанию в state.json v1
+	ZswapUnitPath   = "/etc/systemd/system/ramplus-zswap.service"
 	StateDir        = "/var/lib/ramplus"
 	StatePath       = StateDir + "/state.json" // журнал операций
 	BackupDir       = StateDir + "/backups"    // копии изменённых файлов
@@ -52,6 +53,9 @@ type FS interface {
 	Fallocate(name string, size uint64) error
 	// WriteZeros заполняет существующий файл size нулями.
 	WriteZeros(name string, size uint64) error
+	// WriteValue пишет значение в существующий файл /proc или /sys (без
+	// временного файла).
+	WriteValue(name, value string) error
 	// ReadPrefix читает до n первых байт файла (заголовок swap).
 	ReadPrefix(name string, n int) ([]byte, error)
 	// Glob — как filepath.Glob.

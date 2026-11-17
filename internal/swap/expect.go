@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // swapSizeSlack — /proc/swaps показывает размер без заголовка (страница)
@@ -30,7 +32,8 @@ type expectedSwap struct {
 func CheckExpected(f Facts, op Operation, ignore map[string]bool) []string {
 	files := map[string]expectedFile{}
 	swaps := map[string]expectedSwap{}
-	fstab := map[string]bool{} // строка → должна быть закомментирована RamPlus
+	fstab := map[string]bool{}    // строка → должна быть закомментирована RamPlus
+	values := map[string]string{} // runtime-путь → значение
 	for _, a := range op.Applied {
 		if a.Status != StepDone {
 			continue
@@ -48,6 +51,8 @@ func CheckExpected(f Facts, op Operation, ignore map[string]bool) []string {
 			files[s.Path] = expectedFile{exists: true, dir: true}
 		case KindRmdir, KindBtrfsSubvolDelete:
 			files[s.Path] = expectedFile{}
+		case KindSetValue:
+			values[s.Path] = s.Content
 		case KindSwapon:
 			swaps[s.Path] = expectedSwap{active: true, priority: s.Priority, size: s.Size}
 		case KindSwapoff:
@@ -93,6 +98,22 @@ func CheckExpected(f Facts, op Operation, ignore map[string]bool) []string {
 			out = append(out, fmt.Sprintf("swap %s: приоритет %d, по журналу %d", path, got.Priority, want.priority))
 		case want.active && want.size > 0 && (got.SizeBytes > want.size || want.size-got.SizeBytes > swapSizeSlack):
 			out = append(out, fmt.Sprintf("swap %s: размер %s, по журналу %s", path, FormatSize(got.SizeBytes), FormatSize(want.size)))
+		}
+	}
+	for path, want := range values {
+		if ignore[path] {
+			continue
+		}
+		got, ok := f.Observed[path]
+		if !ok || !got.HasContent {
+			continue
+		}
+		if cur := strings.TrimSpace(got.Content); cur != want {
+			name := path
+			if k := profile.KeyForPath(path); k != "" {
+				name = k
+			}
+			out = append(out, fmt.Sprintf("%s = %s, по журналу %s", name, cur, want))
 		}
 	}
 	for line, marked := range fstab {

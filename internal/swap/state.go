@@ -40,6 +40,24 @@ type Managed struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// AppliedProfile — профиль, применённый RamPlus.
+type AppliedProfile struct {
+	Name       string            `json:"name"`
+	Status     string            `json:"status"`      // standard | experimental | verified | modified
+	BaseStatus string            `json:"base_status"` // статус профиля без --set
+	Overrides  map[string]string `json:"overrides,omitempty"`
+	Values     map[string]string `json:"values"` // ожидаемые runtime-значения
+	AppliedAt  time.Time         `json:"applied_at"`
+}
+
+// Baseline — значения системы до первого apply профиля (для reset).
+// Снимается один раз и не перезаписывается последующими apply.
+type Baseline struct {
+	Values     map[string]string `json:"values"`
+	CapturedAt time.Time         `json:"captured_at"`
+	OpID       string            `json:"op_id"`
+}
+
 // Operation — запись журнала об одной операции.
 type Operation struct {
 	ID            string    `json:"id"`
@@ -52,14 +70,22 @@ type Operation struct {
 	Applied       []Applied `json:"applied"`
 	ManagedBefore *Managed  `json:"managed_before"`
 	ManagedAfter  *Managed  `json:"managed_after"`
-	Error         string    `json:"error,omitempty"`
+	// ProfileBefore/After — активный профиль до и после (rollback
+	// восстанавливает ProfileBefore). BaselineCaptured — эта операция
+	// сняла исходные значения (её откат их забывает).
+	ProfileBefore    *AppliedProfile `json:"profile_before,omitempty"`
+	ProfileAfter     *AppliedProfile `json:"profile_after,omitempty"`
+	BaselineCaptured bool            `json:"baseline_captured,omitempty"`
+	Error            string          `json:"error,omitempty"`
 }
 
 // State — /var/lib/ramplus/state.json.
 type State struct {
-	Version    int         `json:"version"`
-	Managed    *Managed    `json:"managed"`
-	Operations []Operation `json:"operations"`
+	Version    int             `json:"version"`
+	Managed    *Managed        `json:"managed"`
+	Profile    *AppliedProfile `json:"profile"`
+	Baseline   *Baseline       `json:"baseline,omitempty"`
+	Operations []Operation     `json:"operations"`
 }
 
 // ParseState разбирает state.json.

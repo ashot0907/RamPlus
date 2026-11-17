@@ -26,6 +26,26 @@ type Status struct {
 	PSI           PSI             `json:"psi"`
 	RootDisk      detect.RootDisk `json:"root_disk"`
 	Zram          Zram            `json:"zram"`
+	// Profile — активный профиль RamPlus (nil — не применялся).
+	Profile *ProfileInfo `json:"profile"`
+	// Drift — runtime-значения, отличающиеся от применённого профиля
+	// (кто-то поменял вручную). Никогда не nil.
+	Drift []DriftItem `json:"drift"`
+}
+
+// ProfileInfo — активный профиль RamPlus.
+type ProfileInfo struct {
+	Name      string            `json:"name"`
+	Status    string            `json:"status"` // standard | experimental | verified | modified
+	Overrides map[string]string `json:"overrides,omitempty"`
+	AppliedAt time.Time         `json:"applied_at"`
+}
+
+// DriftItem — параметр, отличающийся от профиля.
+type DriftItem struct {
+	Key      string `json:"key"`
+	Expected string `json:"expected"`
+	Actual   string `json:"actual"`
 }
 
 // Paths — откуда читать источники. Подменяется в тестах.
@@ -72,5 +92,6 @@ func CollectFrom(p Paths) Status {
 		PSI:           ReadPSI(p.PSIMemory),
 		Zram:          ReadZram(p.SysBlock),
 		RootDisk:      detect.RootDisk{Kind: detect.KindUnknown, Disks: []detect.BlockDevice{}},
+		Drift:         []DriftItem{},
 	}
 }

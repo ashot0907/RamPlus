@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // legacyConfigMax — remove_file из журнала v1: файлы до этого размера
@@ -299,6 +300,12 @@ func (r *Runner) prepare(s Step) (Applied, error) {
 			}
 			a.Undo = []Step{{Kind: KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(st.Mode().Perm())}}
 		}
+	case KindSetValue:
+		prev, err := fsys.ReadFile(s.Path)
+		if err != nil {
+			return a, err
+		}
+		a.Undo = []Step{{Kind: KindSetValue, Path: s.Path, Content: strings.TrimSpace(string(prev))}}
 	case KindChmod, KindMkswap, KindChattrNoCOW:
 		// отменять нечего
 	default:
@@ -363,7 +370,7 @@ func checkConfig(s Step, current string) error {
 		return nil
 	case s.Content != "":
 		return fmt.Errorf("%s: изменён после записи RamPlus: %w", s.Path, ErrNotOurs)
-	case strings.Contains(current, strings.TrimSpace(unitHeader)):
+	case strings.Contains(current, profile.Marker):
 		return nil
 	default:
 		return fmt.Errorf("%s: нет маркера RamPlus: %w", s.Path, ErrNotOurs)
@@ -414,6 +421,18 @@ func (r *Runner) do(ctx context.Context, s Step) error {
 
 	case KindChmod:
 		return fsys.Chmod(s.Path, fs.FileMode(s.Mode))
+	case KindSetValue:
+		if err := fsys.WriteValue(s.Path, s.Content); err != nil {
+			return fmt.Errorf("запись %s в %s: %w", s.Content, s.Path, err)
+		}
+		// Ядро может принять запись, но оставить другое значение.
+		b, err := fsys.ReadFile(s.Path)
+		if err != nil {
+			return err
+		}
+		if got := strings.TrimSpace(string(b)); got != s.Content {
+			return fmt.Errorf("%s: записано %q, а ядро показывает %q", s.Path, s.Content, got)
+		}
 	case KindMkswap:
 		return r.run(ctx, "mkswap", s.Path)
 	case KindSwapon:
@@ -524,6 +543,19 @@ func VerifyPending(sys System, a Applied) (Verdict, string) {
 	}
 
 	switch s.Kind {
+	case KindSetValue:
+		cur, ok := readFile()
+		prev, _ := prevValue(a)
+		switch {
+		case !ok:
+			return VerdictMismatch, s.Path + " недоступен"
+		case strings.TrimSpace(cur) == s.Content:
+			return VerdictPresent, fmt.Sprintf("%s = %s, как в журнале", s.Path, s.Content)
+		case strings.TrimSpace(cur) == prev:
+			return VerdictAbsent, s.Path + " не изменён"
+		default:
+			return VerdictMismatch, fmt.Sprintf("%s = %s: ни прежнее (%s), ни записанное (%s)", s.Path, strings.TrimSpace(cur), prev, s.Content)
+		}
 	case KindAllocate, KindBtrfsMkswapfile:
 		st, ok := stat()
 		switch {
@@ -611,6 +643,15 @@ func VerifyPending(sys System, a Applied) (Verdict, string) {
 	default: // chmod, mkswap, chattr — отменять нечего
 		return VerdictAbsent, "отменять нечего"
 	}
+}
+
+func prevValue(a Applied) (string, bool) {
+	for _, u := range a.Undo {
+		if u.Kind == KindSetValue {
+			return u.Content, true
+		}
+	}
+	return "", false
 }
 
 func hasLine(content, line string) bool {

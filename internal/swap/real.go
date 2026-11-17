@@ -29,6 +29,18 @@ type OSFS struct{}
 
 func (OSFS) ReadFile(name string) ([]byte, error)  { return os.ReadFile(name) }
 func (OSFS) Stat(name string) (fs.FileInfo, error) { return os.Stat(name) }
+func (OSFS) WriteValue(name, value string) error {
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_TRUNC, 0)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(value + "\n"); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
+}
+
 func (OSFS) ReadPrefix(name string, n int) ([]byte, error) {
 	f, err := os.Open(name)
 	if err != nil {

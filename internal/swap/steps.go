@@ -3,6 +3,8 @@ package swap
 import (
 	"fmt"
 	"strings"
+
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // StepKind — тип системного действия.
@@ -26,6 +28,9 @@ const (
 	KindChattrNoCOW       StepKind = "chattr_nocow"        // chattr +C Path
 	KindBtrfsSubvolCreate StepKind = "btrfs_subvol_create" //
 	KindBtrfsSubvolDelete StepKind = "btrfs_subvol_delete" //
+	// KindSetValue — записать runtime-значение (Content) в Path
+	// (/proc/sys/vm/*, /sys/module/zswap/parameters/*); отмена — прежнее.
+	KindSetValue StepKind = "set_value"
 	// KindRemoveFile — только из журналов v1 (отмена создания файла).
 	// Выполняется обратимо: маленький файл восстанавливается по содержимому,
 	// большой (swapfile) — пересозданием.
@@ -68,6 +73,11 @@ func (s Step) Describe() string {
 		return fmt.Sprintf("btrfs filesystem mkswapfile --size %s %s", sizeFlag(s.Size), s.Path)
 	case KindChmod:
 		return fmt.Sprintf("chmod %o %s", s.Mode, s.Path)
+	case KindSetValue:
+		if k := profile.KeyForPath(s.Path); k != "" {
+			return fmt.Sprintf("%s = %s (запись в %s)", k, s.Content, s.Path)
+		}
+		return fmt.Sprintf("записать %q в %s", s.Content, s.Path)
 	case KindMkswap:
 		return "mkswap " + s.Path
 	case KindSwapon:

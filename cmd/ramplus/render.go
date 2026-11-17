@@ -8,6 +8,7 @@ import (
 
 	"github.com/ashot0907/ramplus/internal/detect"
 	"github.com/ashot0907/ramplus/internal/monitor"
+	"github.com/ashot0907/ramplus/internal/profile"
 	"github.com/ashot0907/ramplus/internal/swap"
 )
 
@@ -110,7 +111,7 @@ func (s *section) end(w io.Writer) error {
 func renderStatus(w io.Writer, st monitor.Status) error {
 	renders := []func(io.Writer, monitor.Status) error{
 		renderSystem, renderMemory, renderSwaps, renderZswap,
-		renderVM, renderPSI, renderRootDisk, renderZram,
+		renderVM, renderPSI, renderRootDisk, renderZram, renderProfile,
 	}
 	for _, r := range renders {
 		if err := r(w, st); err != nil {
@@ -389,4 +390,31 @@ func renderZram(w io.Writer, st monitor.Status) error {
 		}
 	}
 	return s.end(w)
+}
+
+func renderProfile(w io.Writer, st monitor.Status) error {
+	s := newSection(w, "Профиль RamPlus")
+	if st.Profile == nil {
+		s.line("не применялся (ramplus profile list)")
+		return s.end(w)
+	}
+	s.kv("Профиль", st.Profile.Name)
+	s.kv("Статус", profile.StatusText(st.Profile.Status))
+	for k, v := range st.Profile.Overrides {
+		s.kv("--set", k+"="+v)
+	}
+	if !st.Profile.AppliedAt.IsZero() {
+		s.kv("Применён", st.Profile.AppliedAt.Local().Format("2006-01-02 15:04:05"))
+	}
+	if err := s.end(w); err != nil {
+		return err
+	}
+	if len(st.Drift) > 0 {
+		var parts []string
+		for _, d := range st.Drift {
+			parts = append(parts, fmt.Sprintf("%s = %s (профиль: %s)", d.Key, d.Actual, d.Expected))
+		}
+		fmt.Fprintf(w, "  ВНИМАНИЕ: значения изменены вручную, профиль не соблюдается: %s\n\n", strings.Join(parts, "; "))
+	}
+	return nil
 }

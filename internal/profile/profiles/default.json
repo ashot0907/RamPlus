@@ -1,0 +1,15 @@
+{
+  "name": "default",
+  "title": "Стандарт Ubuntu 24.04",
+  "description": "Значения стоковой Ubuntu 24.04: zswap выключен, swappiness 60, page-cluster 3, watermark_scale_factor 10, vfs_cache_pressure 100. Применение возвращает стандарт.",
+  "status": "standard",
+  "evidence": "",
+  "comment": "Значения по умолчанию ядра и Ubuntu 24.04, а не выбор RamPlus — бенчмарк не требуется.",
+  "params": {
+    "zswap.enabled": "N",
+    "vm.swappiness": "60",
+    "vm.page-cluster": "3",
+    "vm.watermark_scale_factor": "10",
+    "vm.vfs_cache_pressure": "100"
+  }
+}

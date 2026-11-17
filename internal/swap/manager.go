@@ -35,6 +35,12 @@ func (m *Manager) Plan(ctx context.Context, o Options) Plan {
 //  6. запись операции в журнал ДО первого изменения; 7. шаги с журналом
 //     после каждого; при ошибке — откат выполненных шагов.
 func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan, error) {
+	return m.ExecuteFunc(ctx, func(ctx context.Context) Plan { return BuildPlan(Gather(ctx, m.Sys, o.Path), o) }, confirm)
+}
+
+// ExecuteFunc — как Execute, но план строит build (под блокировкой). Так
+// выполняются и операции профилей: журнал и стек отката общие.
+func (m *Manager) ExecuteFunc(ctx context.Context, build func(context.Context) Plan, confirm Confirm) (Plan, error) {
 	if m.Sys.Kernel.Geteuid() != 0 {
 		return Plan{}, ErrNeedRoot
 	}
@@ -47,8 +53,8 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	}
 	defer unlock()
 
-	f := Gather(ctx, m.Sys, o.Path)
-	p := BuildPlan(f, o)
+	p := build(ctx)
+	f := p.facts
 	if err := p.RenderWith(m.Out, RenderOptions{Verbose: m.Verbose}); err != nil {
 		return p, err
 	}
@@ -72,12 +78,17 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	op := Operation{
 		ID:            NewOpID(now, state.Operations),
 		Action:        p.Action,
-		Command:       p.Options.Command(),
+		Command:       p.Command(),
 		Status:        OpInProgress,
 		StartedAt:     now,
 		Applied:       []Applied{},
 		ManagedBefore: state.Managed,
 		ManagedAfter:  p.ManagedAfter,
+		ProfileBefore: state.Profile,
+		ProfileAfter:  p.ProfileAfter,
+	}
+	if p.BaselineCapture != nil && state.Baseline == nil {
+		op.BaselineCaptured = true
 	}
 	if p.Target != nil {
 		op.Target = p.Target.ID
@@ -140,6 +151,15 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 	if state.Managed != nil && state.Managed.CreatedAt.IsZero() {
 		state.Managed.CreatedAt = now
 	}
+	state.Profile = p.ProfileAfter
+	if state.Profile != nil && state.Profile.AppliedAt.IsZero() {
+		state.Profile.AppliedAt = now
+	}
+	if state.Operations[cur].BaselineCaptured {
+		b := *p.BaselineCapture
+		b.CapturedAt, b.OpID = now, op.ID
+		state.Baseline = &b
+	}
 	if p.Target != nil {
 		// Ровно одна операция — по позиции в стеке, с проверкой ID.
 		// Никаких массовых изменений статуса по ID.
@@ -148,6 +168,9 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm Confirm) (Plan
 			return p, fmt.Errorf("шаги выполнены, но цель rollback #%d (%s) не найдена в журнале — проверьте %s вручную", t, p.Target.ID, StatePath)
 		}
 		state.Operations[t].Status = OpRolledBack
+		if state.Operations[t].BaselineCaptured {
+			state.Baseline = nil // откатили первый apply профиля: исходные значения снова текущие
+		}
 	}
 	if err := save(); err != nil {
 		// Изменения выполнены, но журнал не обновился — это нужно знать.

@@ -3,6 +3,8 @@ package swap
 import (
 	"fmt"
 	"sort"
+
+	"github.com/ashot0907/ramplus/internal/profile"
 )
 
 // CleanProblems — что мешает считать систему чистой от RamPlus: по
@@ -15,6 +17,9 @@ func CleanProblems(f Facts) []string {
 	}
 	if m := f.State.Managed; m != nil {
 		out = append(out, fmt.Sprintf("RamPlus управляет swap %s (%s)", m.Path, StatePath))
+	}
+	if p := f.State.Profile; p != nil {
+		out = append(out, fmt.Sprintf("применён профиль RamPlus %s — ramplus profile reset", p.Name))
 	}
 	for _, op := range f.State.Operations {
 		switch op.Status {
@@ -33,7 +38,7 @@ func CleanProblems(f Facts) []string {
 		out = append(out, "есть юнит RamPlus "+u)
 	}
 	var files []string
-	for _, p := range []string{ManagedPath, BtrfsPath, BtrfsDir, LegacyPath} {
+	for _, p := range []string{ManagedPath, BtrfsPath, BtrfsDir, LegacyPath, profile.SysctlFilePath, ZswapUnitPath} {
 		if f.Exists[p] {
 			files = append(files, p)
 		}
