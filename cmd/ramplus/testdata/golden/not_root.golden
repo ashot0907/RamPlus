@@ -1,0 +1,9 @@
+$ ramplus swap apply --size 4G --yes
+error: нужны права root: запустите через sudo: sudo ramplus swap apply --size 4G (посмотреть план без root: --dry-run)
+
+$ ramplus rollback --yes
+error: нужны права root: запустите через sudo: sudo ramplus rollback (посмотреть план без root: --dry-run)
+
+$ ramplus profile reset --yes
+error: нужны права root: запустите через sudo: sudo ramplus profile reset (план без root: ramplus profile reset --dry-run)
+

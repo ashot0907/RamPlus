@@ -1,0 +1,189 @@
+$ ramplus swap plan --size 12G --existing=replace --delete-old --verbose
+План: создание swapfile
+Команда: ramplus swap apply --size 12G --existing=replace --delete-old
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 1.0 GiB  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 12.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+  Существующий swap (--existing): replace  [указано]
+      keep      итого swap 20.0 GiB: /swap.img остаётся, новый добавляется с приоритетом 10 и используется первым
+    * replace   итого swap 12.0 GiB: /swap.img — swapoff и комментарий в /etc/fstab; файл удаляется (--delete-old)
+  Старые swap-файлы (--delete-old): удалить  [указано]
+      оставить  на диске остаётся /swap.img (8.0 GiB): вернуть можно через rollback
+    * удалить   освобождается 8.0 GiB; rollback пересоздаст пустые swap-файлы того же размера
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] существующий swap: /swap.img (file, 8.0 GiB, занято 1.0 GiB, приоритет -2): выбрано --existing=replace
+  [info] приоритет: новый swap получит приоритет 10 (выше существующего swap (-2): новый используется первым)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 288.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /swap.img: нужно перенести 1.0 GiB; доступно RAM 8.0 GiB + свободно в остающемся swap 12.0 GiB (запас 256.0 MiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 12.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+      ┌── /etc/systemd/system/ramplus.swapfile.swap
+      │ # Managed by RamPlus: do not edit, use `ramplus swap`.
+      │ [Unit]
+      │ Description=RamPlus swapfile /ramplus.swapfile
+      │ Documentation=https://github.com/ashot0907/ramplus
+      │ 
+      │ [Swap]
+      │ What=/ramplus.swapfile
+      │ Priority=10
+      │ 
+      │ [Install]
+      │ WantedBy=swap.target
+      └──
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. удалить файл /swap.img (8.0 GiB)
+
+Итог
+  swap: 8.0 GiB → 12.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: /swap.img, строка fstab «/swap.img none swap sw 0 0»
+  удаляется: /swap.img
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 12G --existing=replace --delete-old
+
+$ ramplus swap apply --size 12G --existing=replace --delete-old --yes
+План: создание swapfile
+Команда: ramplus swap apply --size 12G --existing=replace --delete-old
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 1.0 GiB  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 12.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+  Существующий swap (--existing): replace  [указано]
+      keep      итого swap 20.0 GiB: /swap.img остаётся, новый добавляется с приоритетом 10 и используется первым
+    * replace   итого swap 12.0 GiB: /swap.img — swapoff и комментарий в /etc/fstab; файл удаляется (--delete-old)
+  Старые swap-файлы (--delete-old): удалить  [указано]
+      оставить  на диске остаётся /swap.img (8.0 GiB): вернуть можно через rollback
+    * удалить   освобождается 8.0 GiB; rollback пересоздаст пустые swap-файлы того же размера
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] существующий swap: /swap.img (file, 8.0 GiB, занято 1.0 GiB, приоритет -2): выбрано --existing=replace
+  [info] приоритет: новый swap получит приоритет 10 (выше существующего swap (-2): новый используется первым)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 288.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /swap.img: нужно перенести 1.0 GiB; доступно RAM 8.0 GiB + свободно в остающемся swap 12.0 GiB (запас 256.0 MiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 12.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. удалить файл /swap.img (8.0 GiB)
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 8.0 GiB → 12.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: /swap.img, строка fstab «/swap.img none swap sw 0 0»
+  удаляется: /swap.img
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 12G --existing=replace --delete-old
+
+Выполнение (операция <OPID>)
+  [1/11] создать /ramplus.swapfile, 12.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [2/11] chmod 600 /ramplus.swapfile ... ok
+  [3/11] mkswap /ramplus.swapfile ... ok
+  [4/11] swapon /ramplus.swapfile (приоритет 10) ... ok
+  [5/11] записать /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/11] systemctl daemon-reload ... ok
+  [7/11] systemctl enable ramplus.swapfile.swap ... ok
+  [8/11] swapoff /swap.img ... ok
+  [9/11] закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups) ... ok
+  [10/11] systemctl daemon-reload ... ok
+  [11/11] удалить файл /swap.img (8.0 GiB) ... ok
+Готово.
+
+$ ramplus rollback --yes
+План: откат последней операции
+Команда: ramplus rollback
+
+Сейчас
+  swap        /ramplus.swapfile  file  12.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 12.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [info] rollback: отменяется операция <OPID> от 2026-11-16 12:00:01: ramplus swap apply --size 12G --existing=replace --delete-old
+  [ok]   состояние: система в состоянии, записанном в журнале после операции <OPID>
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 292.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. создать /swap.img, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /swap.img
+   3. mkswap /swap.img
+   4. вернуть в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0"
+   5. systemctl daemon-reload
+   6. swapon /swap.img (приоритет — автоматически)
+   7. systemctl disable ramplus.swapfile.swap
+   8. удалить /etc/systemd/system/ramplus.swapfile.swap
+   9. systemctl daemon-reload
+  10. swapoff /ramplus.swapfile
+  11. удалить файл /ramplus.swapfile (12.0 GiB)
+
+Итог
+  swap: 12.0 GiB → 8.0 GiB
+  создаётся: /swap.img
+  отключается: /ramplus.swapfile
+  удаляется: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus rollback
+
+Выполнение (операция <OPID>)
+  [1/11] создать /swap.img, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [2/11] chmod 600 /swap.img ... ok
+  [3/11] mkswap /swap.img ... ok
+  [4/11] вернуть в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" ... ok
+  [5/11] systemctl daemon-reload ... ok
+  [6/11] swapon /swap.img (приоритет — автоматически) ... ok
+  [7/11] systemctl disable ramplus.swapfile.swap ... ok
+  [8/11] удалить /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [9/11] systemctl daemon-reload ... ok
+  [10/11] swapoff /ramplus.swapfile ... ok
+  [11/11] удалить файл /ramplus.swapfile (12.0 GiB) ... ok
+Готово.
+

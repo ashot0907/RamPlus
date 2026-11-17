@@ -1,0 +1,336 @@
+$ ramplus status
+Система
+  Хост         golden
+  Ядро         7.0.0-test (x86_64)
+  Дистрибутив  Ubuntu 24.04.5 LTS
+
+Память
+  Всего          31.1 GiB
+  Доступно       26.2 GiB (84%)
+  Используется   5.0 GiB (16%)
+  Кэш (Cached)   4.7 GiB
+  Swap всего     8.0 GiB
+  Swap свободно  7.7 GiB
+  Swap занято    256.0 MiB (3%)
+
+Swap-устройства
+  ПУТЬ                    ТИП        РАЗМЕР    ИСПОЛЬЗОВАНО  ПРИОРИТЕТ  ДИСК  RAMPLUS
+  /dev/nvme0n1p3          partition  16.0 GiB  512.0 MiB     -2         —     нет
+  /mnt/fast ssd/swapfile  file       8.0 GiB   0 B           10         —     нет
+
+zswap
+  Включён           нет
+  Компрессор        lzo
+  Zpool             n/a (параметра нет в этом ядре)
+  max_pool_percent  20%
+  Пул / данные      10.0 MiB / 40.0 MiB (meminfo)
+  Статистика        n/a (debugfs не смонтирован)
+
+VM (sysctl)
+  swappiness              60
+  vfs_cache_pressure      100
+  watermark_scale_factor  n/a (нет в системе)
+
+PSI memory (% времени в ожидании памяти)
+          avg10  avg60  avg300
+  some    1.53   0.87   0.25
+  full    0.40   0.12   0.03
+  оценка  норма (по some avg10)
+
+Корневой диск
+  Устройство  /dev/fake_
+  ФС          ext4
+  Тип         NVMe
+  Диск sda    NVMe, nvme
+  Свободно    n/a из 500.0 GiB (доступно без root: 300.0 GiB)
+
+zram
+  УСТРОЙСТВО  РАЗМЕР   АЛГОРИТМ  ДАННЫЕ   СЖАТО      ПАМЯТЬ     СЖАТИЕ
+  zram0       4.0 GiB  zstd      1.0 GiB  256.0 MiB  272.0 MiB  4.00x
+  zram1       0 B      lzo-rle   0 B      0 B        0 B        n/a
+
+Профиль RamPlus
+  не применялся (ramplus profile list)
+
+
+$ ramplus profile apply zswap-lz4 --experimental --yes
+План: профиль zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+Команда: ramplus profile apply zswap-lz4 --experimental
+Профиль: zswap + lz4. zswap включён: lz4, zsmalloc, пул до 20% RAM; sysctl как в default.
+Evidence: нет (результата scripts/bench.sh на реальном SSD нет)
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         ядро по умолчанию
+  zswap.compressor  lzo     →  lz4       ядро по умолчанию
+  zswap.zpool       —          zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+   3. записать /etc/sysctl.d/99-ramplus.conf
+   4. записать /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  сразу (runtime): изменится параметров: 2
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  удаляется: —
+  kernel cmdline и GRUB: не меняются
+
+Результат: план выполним. Применить: sudo ramplus profile apply zswap-lz4 --experimental
+
+Выполнение (операция <OPID>)
+  [1/6] zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor) ... ok
+  [2/6] zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled) ... ok
+  [3/6] записать /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/6] записать /etc/systemd/system/ramplus-zswap.service ... ok
+  [5/6] systemctl daemon-reload ... ok
+  [6/6] systemctl enable ramplus-zswap.service ... ok
+Готово.
+
+$ ramplus status
+Система
+  Хост         golden
+  Ядро         7.0.0-test (x86_64)
+  Дистрибутив  Ubuntu 24.04.5 LTS
+
+Память
+  Всего          31.1 GiB
+  Доступно       26.2 GiB (84%)
+  Используется   5.0 GiB (16%)
+  Кэш (Cached)   4.7 GiB
+  Swap всего     8.0 GiB
+  Swap свободно  7.7 GiB
+  Swap занято    256.0 MiB (3%)
+
+Swap-устройства
+  ПУТЬ                    ТИП        РАЗМЕР    ИСПОЛЬЗОВАНО  ПРИОРИТЕТ  ДИСК  RAMPLUS
+  /dev/nvme0n1p3          partition  16.0 GiB  512.0 MiB     -2         —     нет
+  /mnt/fast ssd/swapfile  file       8.0 GiB   0 B           10         —     нет
+
+zswap
+  Включён           нет
+  Компрессор        lzo
+  Zpool             n/a (параметра нет в этом ядре)
+  max_pool_percent  20%
+  Пул / данные      10.0 MiB / 40.0 MiB (meminfo)
+  Статистика        n/a (debugfs не смонтирован)
+
+VM (sysctl)
+  swappiness              60
+  vfs_cache_pressure      100
+  watermark_scale_factor  n/a (нет в системе)
+
+PSI memory (% времени в ожидании памяти)
+          avg10  avg60  avg300
+  some    1.53   0.87   0.25
+  full    0.40   0.12   0.03
+  оценка  норма (по some avg10)
+
+Корневой диск
+  Устройство  /dev/fake_
+  ФС          ext4
+  Тип         NVMe
+  Диск sda    NVMe, nvme
+  Свободно    n/a из 500.0 GiB (доступно без root: 300.0 GiB)
+
+zram
+  УСТРОЙСТВО  РАЗМЕР   АЛГОРИТМ  ДАННЫЕ   СЖАТО      ПАМЯТЬ     СЖАТИЕ
+  zram0       4.0 GiB  zstd      1.0 GiB  256.0 MiB  272.0 MiB  4.00x
+  zram1       0 B      lzo-rle   0 B      0 B        0 B        n/a
+
+Профиль RamPlus
+  Профиль   zswap-lz4
+  Статус    экспериментальный: не подтверждён бенчмарком на SSD
+  Применён  2026-11-16 12:00:01
+
+  ВНИМАНИЕ: значения изменены вручную, профиль не соблюдается: vm.swappiness = 133 (профиль: 60)
+
+
+$ ramplus status --json
+{
+  "schema_version": 1,
+  "collected_at": "2026-11-17T12:00:00Z",
+  "system": {
+    "hostname": "golden",
+    "kernel": "7.0.0-test",
+    "arch": "x86_64",
+    "virtualization": "",
+    "os": {
+      "id": "ubuntu",
+      "name": "Ubuntu",
+      "pretty_name": "Ubuntu 24.04.5 LTS",
+      "version_id": "24.04"
+    }
+  },
+  "memory": {
+    "total_bytes": 33399873536,
+    "available_bytes": 28081217536,
+    "used_bytes": 5318656000,
+    "free_bytes": 21859807232,
+    "cached_bytes": 5035708416,
+    "buffers_bytes": 211869696,
+    "swap_total_bytes": 8589930496,
+    "swap_free_bytes": 8321495040,
+    "swap_used_bytes": 268435456,
+    "swap_cached_bytes": 1048576
+  },
+  "swaps": {
+    "devices": [
+      {
+        "path": "/dev/nvme0n1p3",
+        "type": "partition",
+        "size_bytes": 17179865088,
+        "used_bytes": 536870912,
+        "priority": -2,
+        "managed": false
+      },
+      {
+        "path": "/mnt/fast ssd/swapfile",
+        "type": "file",
+        "size_bytes": 8589930496,
+        "used_bytes": 0,
+        "priority": 10,
+        "managed": false
+      }
+    ],
+    "warnings": []
+  },
+  "zswap": {
+    "present": true,
+    "params": {
+      "enabled": false,
+      "compressor": "lzo",
+      "zpool": null,
+      "max_pool_percent": 20,
+      "accept_threshold_percent": 90,
+      "shrinker_enabled": true
+    },
+    "pool_bytes": 10485760,
+    "stored_bytes": 41943040,
+    "stats": null,
+    "stats_error": {
+      "reason": "not_present",
+      "detail": "open ../../internal/monitor/testdata/absent: no such file or directory"
+    }
+  },
+  "vm": {
+    "swappiness": 60,
+    "vfs_cache_pressure": 100,
+    "watermark_scale_factor": null,
+    "errors": {
+      "watermark_scale_factor": {
+        "reason": "not_present",
+        "detail": "open ../../internal/monitor/testdata/vm/watermark_scale_factor: no such file or directory"
+      }
+    }
+  },
+  "psi": {
+    "some": {
+      "avg10": 1.53,
+      "avg60": 0.87,
+      "avg300": 0.25,
+      "total_us": 123456789
+    },
+    "full": {
+      "avg10": 0.4,
+      "avg60": 0.12,
+      "avg300": 0.03,
+      "total_us": 23456789
+    },
+    "pressure_level": "normal"
+  },
+  "root_disk": {
+    "mount_point": "/",
+    "source": "/dev/fake_",
+    "device": "",
+    "fs_type": "ext4",
+    "read_only": false,
+    "network": false,
+    "kind": "nvme",
+    "disks": [
+      {
+        "name": "sda",
+        "kind": "nvme",
+        "rotational": null,
+        "transport": "nvme",
+        "size_bytes": null
+      }
+    ],
+    "total_bytes": 536870912000,
+    "free_bytes": null,
+    "available_bytes": 322122547200
+  },
+  "zram": {
+    "devices": [
+      {
+        "name": "zram0",
+        "disksize_bytes": 4294967296,
+        "algorithm": "zstd",
+        "algorithms": [
+          "lzo",
+          "lzo-rle",
+          "lz4",
+          "lz4hc",
+          "842",
+          "zstd"
+        ],
+        "mm_stat": {
+          "orig_data_bytes": 1073741824,
+          "compr_data_bytes": 268435456,
+          "mem_used_bytes": 285212672,
+          "mem_limit_bytes": 0,
+          "mem_used_max_bytes": 300000000,
+          "same_pages": 1200,
+          "pages_compacted": 34,
+          "huge_pages": 56
+        },
+        "compression_ratio": 4
+      },
+      {
+        "name": "zram1",
+        "disksize_bytes": 0,
+        "algorithm": "lzo-rle",
+        "algorithms": [
+          "lzo-rle",
+          "lz4",
+          "zstd"
+        ],
+        "mm_stat": {
+          "orig_data_bytes": 0,
+          "compr_data_bytes": 0,
+          "mem_used_bytes": 0,
+          "mem_limit_bytes": 0,
+          "mem_used_max_bytes": 0,
+          "same_pages": 0,
+          "pages_compacted": 0,
+          "huge_pages": null
+        },
+        "compression_ratio": null
+      }
+    ]
+  },
+  "profile": {
+    "name": "zswap-lz4",
+    "status": "experimental",
+    "applied_at": "2026-11-16T12:00:01Z"
+  },
+  "drift": [
+    {
+      "key": "vm.swappiness",
+      "expected": "60",
+      "actual": "133"
+    }
+  ]
+}
+

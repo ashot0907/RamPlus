@@ -47,7 +47,7 @@ func newProfileCmd() *cobra.Command {
 }
 
 func activeProfile() *swap.AppliedProfile {
-	f := swap.Gather(contextBackground(), swap.DefaultSystem(), "")
+	f := swap.Gather(contextBackground(), newSystem(), "")
 	return f.State.Profile
 }
 
@@ -136,7 +136,7 @@ func newProfilePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			p := swap.PlanProfile(cmd.Context(), swap.DefaultSystem(), r)
+			p := swap.PlanProfile(cmd.Context(), newSystem(), r)
 			return p.RenderWith(cmd.OutOrStdout(), swap.RenderOptions{Verbose: f.verbose})
 		},
 	}
@@ -159,7 +159,7 @@ func newProfileApplyCmd() *cobra.Command {
 				return err
 			}
 			out := cmd.OutOrStdout()
-			sys := swap.DefaultSystem()
+			sys := newSystem()
 			if f.dryRun {
 				return swap.PlanProfile(cmd.Context(), sys, r).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
 			}
@@ -184,7 +184,7 @@ func newProfileResetCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
-			sys := swap.DefaultSystem()
+			sys := newSystem()
 			if f.dryRun {
 				return swap.PlanProfileReset(cmd.Context(), sys).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
 			}
@@ -233,7 +233,7 @@ func newProfileCurrentCmd() *cobra.Command {
 		Short: "Что применено сейчас и отличия от исходных значений системы",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			sys := swap.DefaultSystem()
+			sys := newSystem()
 			f := swap.Gather(cmd.Context(), sys, "")
 			pf := swap.GatherProfile(cmd.Context(), sys, f, nil)
 			return renderCurrent(cmd.OutOrStdout(), pf)

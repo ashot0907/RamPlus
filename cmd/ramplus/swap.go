@@ -95,7 +95,7 @@ func newPlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			m := &swap.Manager{Sys: swap.DefaultSystem(), Out: cmd.OutOrStdout()}
+			m := &swap.Manager{Sys: newSystem(), Out: cmd.OutOrStdout()}
 			return m.Plan(cmd.Context(), o).RenderWith(cmd.OutOrStdout(), swap.RenderOptions{Verbose: f.verbose})
 		},
 	}
@@ -118,7 +118,7 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 				return err
 			}
 			out := cmd.OutOrStdout()
-			m := &swap.Manager{Sys: swap.DefaultSystem(), Out: out, Verbose: f.verbose}
+			m := &swap.Manager{Sys: newSystem(), Out: out, Verbose: f.verbose}
 			if f.dryRun {
 				return m.Plan(cmd.Context(), o).RenderWith(out, swap.RenderOptions{Verbose: f.verbose})
 			}
@@ -174,7 +174,7 @@ func newCheckCleanCmd() *cobra.Command {
 			"Журнал с историей откаченных операций следом не считается. Код выхода 1 — не чисто.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			f := swap.Gather(cmd.Context(), swap.DefaultSystem(), "")
+			f := swap.Gather(cmd.Context(), newSystem(), "")
 			problems := swap.CleanProblems(f)
 			out := cmd.OutOrStdout()
 			if len(problems) == 0 {

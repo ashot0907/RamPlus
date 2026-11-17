@@ -1,0 +1,122 @@
+$ ramplus swap plan --size 12G
+План: создание swapfile
+Команда: ramplus swap apply --size 12G
+
+Сейчас
+  swap        нет
+  ФС цели     ext4 на /dev/fake_, точка / (sda, HDD, usb)
+  место на /  доступно 20.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, HDD/usb, свободно 20.0 GiB из 500.0 GiB — USB — нужен --force; мало места
+  Размер (--size): 12.0 GiB  [указано]
+      на / не хватает места даже на минимальный swap (256.0 MiB)
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [FAIL] диск: swap на USB-диске медленный и опасный при отключении (выдернули диск — процессы со страницами в swap упадут). Чтобы всё равно продолжить: --force
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [FAIL] место: на / доступно 20.0 GiB из 500.0 GiB; после создания останется 8.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 12.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 0 B → 12.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 2. Ничего не изменено.
+
+$ ramplus swap apply --size 12G --yes
+План: создание swapfile
+Команда: ramplus swap apply --size 12G
+
+Сейчас
+  swap        нет
+  ФС цели     ext4 на /dev/fake_, точка / (sda, HDD, usb)
+  место на /  доступно 20.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, HDD/usb, свободно 20.0 GiB из 500.0 GiB — USB — нужен --force; мало места
+  Размер (--size): 12.0 GiB  [указано]
+      на / не хватает места даже на минимальный swap (256.0 MiB)
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [FAIL] диск: swap на USB-диске медленный и опасный при отключении (выдернули диск — процессы со страницами в swap упадут). Чтобы всё равно продолжить: --force
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [FAIL] место: на / доступно 20.0 GiB из 500.0 GiB; после создания останется 8.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 12.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 0 B → 12.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 2. Ничего не изменено.
+error: план заблокирован проверками — ничего не изменено
+
+$ ramplus swap plan --size 4G --path /tmp/x.swapfile
+План: создание swapfile
+Команда: ramplus swap apply --size 4G --path /tmp/x.swapfile
+
+Сейчас
+  swap        нет
+  ФС цели     ext4 на /dev/fake_, точка / (sda, HDD, usb)
+  место на /  доступно 20.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /tmp/x.swapfile  [указано]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /tmp/x.swapfile ext4 на /dev/fake_, HDD/usb, свободно 20.0 GiB из 500.0 GiB — USB — нужен --force; мало места
+  Размер (--size): 4.0 GiB  [указано]
+      на / не хватает места даже на минимальный swap (256.0 MiB)
+
+Проверки
+  [ok]   root: запущено от root
+  [FAIL] путь: /tmp/x.swapfile: в /tmp swapfile создавать нельзя (виртуальная ФС или очищается при загрузке)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [FAIL] диск: swap на USB-диске медленный и опасный при отключении (выдернули диск — процессы со страницами в swap упадут). Чтобы всё равно продолжить: --force
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+
+Шаги
+  (нет)
+
+Итог
+  swap: 0 B → 0 B
+  создаётся: —
+  отключается: —
+  удаляется: —
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 2. Ничего не изменено.
+

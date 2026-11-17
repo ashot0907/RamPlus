@@ -12,7 +12,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/ashot0907/ramplus/internal/monitor"
-	"github.com/ashot0907/ramplus/internal/swap"
 )
 
 func newStatusCmd() *cobra.Command {
@@ -46,8 +45,7 @@ func newStatusCmd() *cobra.Command {
 				}
 				return w.run(ctx)
 			}
-			st := monitor.Collect()
-			swap.AnnotateStatus(&st, swap.OSFS{})
+			st := collectStatus(newSystem())
 			out := cmd.OutOrStdout()
 			if asJSON {
 				enc := json.NewEncoder(out)

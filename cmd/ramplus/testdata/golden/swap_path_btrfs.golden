@@ -1,0 +1,143 @@
+$ ramplus swap plan --size 4G --path /mnt/data/ramplus.swapfile --verbose
+План: создание swapfile
+Команда: ramplus swap apply --size 4G --path /mnt/data/ramplus.swapfile
+
+Сейчас
+  swap                нет
+  ФС цели             btrfs на /dev/fake_mnt_data, точка /mnt/data (sda, NVMe, nvme)
+  место на /mnt/data  доступно 800.0 GiB из 1000.0 GiB
+  RAM                 доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /mnt/data/ramplus.swapfile  [указано]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+      /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+    * /mnt/data/ramplus.swapfile btrfs на /dev/fake_mnt_data, NVMe/nvme, свободно 800.0 GiB из 1000.0 GiB — можно до 780.0 GiB
+  Размер (--size): 4.0 GiB  [указано]
+      на /mnt/data допустимо до 780.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /mnt/data/ramplus.swapfile (указан --path)
+  [ok]   ФС: btrfs на /dev/fake_mnt_data (точка монтирования /mnt/data): chattr +C (NOCOW) + fallocate + mkswap
+  [warn] btrfs: снапшоты подтома с активным swapfile не создаются (snapper/timeshift будут падать); безопаснее путь по умолчанию — отдельный подтом /ramplus-swap
+  [ok]   диск: NVMe (nvme)
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [ok]   место: на /mnt/data доступно 800.0 GiB из 1000.0 GiB; после создания останется 796.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /mnt/data/ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600, chattr +C (NOCOW)
+   2. chmod 600 /mnt/data/ramplus.swapfile
+   3. mkswap /mnt/data/ramplus.swapfile
+   4. swapon /mnt/data/ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/mnt-data-ramplus.swapfile.swap
+      ┌── /etc/systemd/system/mnt-data-ramplus.swapfile.swap
+      │ # Managed by RamPlus: do not edit, use `ramplus swap`.
+      │ [Unit]
+      │ Description=RamPlus swapfile /mnt/data/ramplus.swapfile
+      │ Documentation=https://github.com/ashot0907/ramplus
+      │ 
+      │ [Swap]
+      │ What=/mnt/data/ramplus.swapfile
+      │ Priority=10
+      │ 
+      │ [Install]
+      │ WantedBy=swap.target
+      └──
+   6. systemctl daemon-reload
+   7. systemctl enable mnt-data-ramplus.swapfile.swap
+
+Итог
+  swap: 0 B → 4.0 GiB
+  создаётся: /etc/systemd/system/mnt-data-ramplus.swapfile.swap, /mnt/data/ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 4G --path /mnt/data/ramplus.swapfile
+
+$ ramplus swap apply --size 4G --path /mnt/data/ramplus.swapfile --yes
+План: создание swapfile
+Команда: ramplus swap apply --size 4G --path /mnt/data/ramplus.swapfile
+
+Сейчас
+  swap                нет
+  ФС цели             btrfs на /dev/fake_mnt_data, точка /mnt/data (sda, NVMe, nvme)
+  место на /mnt/data  доступно 800.0 GiB из 1000.0 GiB
+  RAM                 доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /mnt/data/ramplus.swapfile  [указано]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+      /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+    * /mnt/data/ramplus.swapfile btrfs на /dev/fake_mnt_data, NVMe/nvme, свободно 800.0 GiB из 1000.0 GiB — можно до 780.0 GiB
+  Размер (--size): 4.0 GiB  [указано]
+      на /mnt/data допустимо до 780.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /mnt/data/ramplus.swapfile (указан --path)
+  [ok]   ФС: btrfs на /dev/fake_mnt_data (точка монтирования /mnt/data): chattr +C (NOCOW) + fallocate + mkswap
+  [warn] btrfs: снапшоты подтома с активным swapfile не создаются (snapper/timeshift будут падать); безопаснее путь по умолчанию — отдельный подтом /ramplus-swap
+  [ok]   диск: NVMe (nvme)
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [ok]   место: на /mnt/data доступно 800.0 GiB из 1000.0 GiB; после создания останется 796.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /mnt/data/ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600, chattr +C (NOCOW)
+   2. chmod 600 /mnt/data/ramplus.swapfile
+   3. mkswap /mnt/data/ramplus.swapfile
+   4. swapon /mnt/data/ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/mnt-data-ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable mnt-data-ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 0 B → 4.0 GiB
+  создаётся: /etc/systemd/system/mnt-data-ramplus.swapfile.swap, /mnt/data/ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 4G --path /mnt/data/ramplus.swapfile
+
+Выполнение (операция <OPID>)
+  [1/7] создать /mnt/data/ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600, chattr +C (NOCOW) ... ok
+  [2/7] chmod 600 /mnt/data/ramplus.swapfile ... ok
+  [3/7] mkswap /mnt/data/ramplus.swapfile ... ok
+  [4/7] swapon /mnt/data/ramplus.swapfile (приоритет 10) ... ok
+  [5/7] записать /etc/systemd/system/mnt-data-ramplus.swapfile.swap ... ok
+  [6/7] systemctl daemon-reload ... ok
+  [7/7] systemctl enable mnt-data-ramplus.swapfile.swap ... ok
+Готово.
+
+$ ramplus swap remove --dry-run
+План: удаление swapfile
+Команда: ramplus swap remove
+
+Сейчас
+  swap                /mnt/data/ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели             btrfs на /dev/fake_mnt_data, точка /mnt/data (sda, NVMe, nvme)
+  место на /mnt/data  доступно 800.0 GiB из 1000.0 GiB
+  RAM                 доступно 8.0 GiB из 16.0 GiB
+  RamPlus             /mnt/data/ramplus.swapfile, 4.0 GiB, приоритет 10, юнит mnt-data-ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] swap: после удаления в системе не останется swap
+  [ok]   память для swapoff /mnt/data/ramplus.swapfile: /mnt/data/ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /mnt/data/ramplus.swapfile
+   2. systemctl disable mnt-data-ramplus.swapfile.swap
+   3. удалить /etc/systemd/system/mnt-data-ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. удалить файл /mnt/data/ramplus.swapfile (4.0 GiB)
+
+Итог
+  swap: 4.0 GiB → 0 B
+  создаётся: —
+  отключается: /mnt/data/ramplus.swapfile
+  удаляется: /etc/systemd/system/mnt-data-ramplus.swapfile.swap, /mnt/data/ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus swap remove
+

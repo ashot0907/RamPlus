@@ -1,0 +1,87 @@
+$ ramplus profile plan zswap-zstd --set zswap.compressor=842
+План: профиль zswap-zstd — изменённый пользователем
+Команда: ramplus profile apply zswap-zstd --set zswap.compressor=842
+Профиль: zswap + zstd. zswap включён: zstd, zsmalloc, пул до 20% RAM; sysctl как в default.
+Evidence: нет (результата scripts/bench.sh на реальном SSD нет)
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ        ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y            cmdline (zswap.enabled=1)
+  zswap.compressor  lzo     →  842 (--set)  ядро по умолчанию
+  zswap.zpool       zbud    →  zsmalloc     ядро по умолчанию
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Порядок sysctl при загрузке: /usr/lib/sysctl.d/30-tune.conf (vm.page-cluster=0) → 99-ramplus.conf → /etc/sysctl.d/99-sysctl.conf (vm.swappiness=10)
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] --set: профиль изменён пользователем: zswap.compressor=842 (в профиле: zstd)
+  [FAIL] компрессор: 842 недоступен в ядре: нет в /proc/crypto и нет модуля crypto/842.ko — выберите другой (--set zswap.compressor=...)
+  [FAIL] zram: установлен генератор zram (/etc/systemd/zram-generator.conf): zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно). Отключите zram или добавьте --force
+  [warn] cmdline: в /proc/cmdline задано zswap.enabled=1: ядро применяет это при загрузке, затем ramplus-zswap.service перезаписывает значения профиля — действует профиль. Kernel cmdline и GRUB RamPlus не меняет; чтобы не путаться, уберите zswap.* из GRUB вручную
+  [warn] sysctl: /etc/sysctl.d/99-sysctl.conf задаёт vm.swappiness=10 и применяется после 99-ramplus.conf — при загрузке перебьёт значение профиля (60). Уберите ключ из этого файла
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. zswap.compressor = 842 (запись в /sys/module/zswap/parameters/compressor)
+   2. zswap.zpool = zsmalloc (запись в /sys/module/zswap/parameters/zpool)
+   3. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+   4. записать /etc/sysctl.d/99-ramplus.conf
+   5. записать /etc/systemd/system/ramplus-zswap.service
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  сразу (runtime): изменится параметров: 3
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  удаляется: —
+  kernel cmdline и GRUB: не меняются
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 2. Ничего не изменено.
+
+$ ramplus profile plan zswap-zstd --force
+План: профиль zswap-zstd — экспериментальный: не подтверждён бенчмарком на SSD
+Команда: ramplus profile apply zswap-zstd --force
+Профиль: zswap + zstd. zswap включён: zstd, zsmalloc, пул до 20% RAM; sysctl как в default.
+Evidence: нет (результата scripts/bench.sh на реальном SSD нет)
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         cmdline (zswap.enabled=1)
+  zswap.compressor  lzo     →  zstd      ядро по умолчанию
+  zswap.zpool       zbud    →  zsmalloc  ядро по умолчанию
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Порядок sysctl при загрузке: /usr/lib/sysctl.d/30-tune.conf (vm.page-cluster=0) → 99-ramplus.conf → /etc/sysctl.d/99-sysctl.conf (vm.swappiness=10)
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [warn] zram: установлен генератор zram (/etc/systemd/zram-generator.conf): zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно) — продолжаем из-за --force
+  [warn] cmdline: в /proc/cmdline задано zswap.enabled=1: ядро применяет это при загрузке, затем ramplus-zswap.service перезаписывает значения профиля — действует профиль. Kernel cmdline и GRUB RamPlus не меняет; чтобы не путаться, уберите zswap.* из GRUB вручную
+  [warn] sysctl: /etc/sysctl.d/99-sysctl.conf задаёт vm.swappiness=10 и применяется после 99-ramplus.conf — при загрузке перебьёт значение профиля (60). Уберите ключ из этого файла
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. zswap.compressor = zstd (запись в /sys/module/zswap/parameters/compressor)
+   2. zswap.zpool = zsmalloc (запись в /sys/module/zswap/parameters/zpool)
+   3. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+   4. записать /etc/sysctl.d/99-ramplus.conf
+   5. записать /etc/systemd/system/ramplus-zswap.service
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  сразу (runtime): изменится параметров: 3
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  удаляется: —
+  kernel cmdline и GRUB: не меняются
+
+Результат: план выполним. Применить: sudo ramplus profile apply zswap-zstd --force   (экспериментальный: потребуется подтверждение или --experimental)
+
+$ ramplus profile plan default --set vm.swappiness=500
+error: --set: vm.swappiness: 500 вне допустимого диапазона 0..200
+
