@@ -76,7 +76,9 @@ type Plan struct {
 	facts             Facts
 }
 
-func (p *Plan) add(l Level, title, format string, a ...any) { p.Plan.Add(l, title, format, a...) }
+func (p *Plan) add(l Level, code, title, format string, a ...any) {
+	p.Plan.Add(l, code, title, format, a...)
+}
 
 // Пороговые значения.
 const (
@@ -131,7 +133,7 @@ func buildPlan(f Facts, o Options) Plan {
 	case ActionRollback:
 		journal.PlanRollback(&p.Plan, f.Basics)
 	default:
-		p.add(LevelFail, "операция", "неизвестная операция %q", o.Action)
+		p.add(LevelFail, "operation.unknown", "операция", "неизвестная операция %q", o.Action)
 	}
 	if o.Action != ActionRollback {
 		// swap-операции меняют только раздел managed; профиль — как был.
@@ -196,10 +198,10 @@ func view(f Facts, o Options) *plan.SwapView {
 func (p *Plan) checkSize(size uint64) bool {
 	switch {
 	case size == 0:
-		p.add(LevelFail, "размер", "укажите размер: --size, например --size 8G")
+		p.add(LevelFail, "size.missing", "размер", "укажите размер: --size, например --size 8G")
 		return false
 	case size < MinSize:
-		p.add(LevelFail, "размер", "%s меньше минимума %s", FormatSize(size), FormatSize(MinSize))
+		p.add(LevelFail, "size.too_small", "размер", "%s меньше минимума %s", FormatSize(size), FormatSize(MinSize))
 		return false
 	}
 	return true
@@ -304,16 +306,16 @@ func (p *Plan) checkTargetFS(f Facts) (fsMethod, bool) {
 	fi := f.Target.FS
 	ok, reason, _ := AssessFS(fi)
 	if !ok {
-		p.add(LevelFail, "ФС", "%s", reason)
+		p.add(LevelFail, "fs.unsupported", "ФС", "%s", reason)
 		return "", false
 	}
 	where := fmt.Sprintf("%s на %s (точка монтирования %s)", fi.FSType, fi.Source, fi.MountPoint)
 	if fi.FSType != "btrfs" {
-		p.add(LevelOK, "ФС", "%s: swapfile через fallocate", where)
+		p.add(LevelOK, "fs.fallocate", "ФС", "%s: swapfile через fallocate", where)
 		return methodFallocate, true
 	}
 	if !f.HasBtrfs || !f.HasChattr {
-		p.add(LevelFail, "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
+		p.add(LevelFail, "fs.btrfs_tools_missing", "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
 		return "", false
 	}
 	m := methodFor(f, "btrfs")
@@ -322,17 +324,34 @@ func (p *Plan) checkTargetFS(f Facts) (fsMethod, bool) {
 		how = "btrfs filesystem mkswapfile"
 	}
 	if f.Target.Path == BtrfsPath {
-		p.add(LevelOK, "ФС", "%s: отдельный NOCOW-подтом %s, %s", where, BtrfsDir, how)
+		p.add(LevelOK, "fs.btrfs_subvolume", "ФС", "%s: отдельный NOCOW-подтом %s, %s", where, BtrfsDir, how)
 	} else {
-		p.add(LevelOK, "ФС", "%s: %s", where, how)
-		p.add(LevelWarn, "btrfs", "снапшоты подтома с активным swapfile не создаются (snapper/timeshift будут падать); безопаснее путь по умолчанию — отдельный подтом %s", BtrfsDir)
+		p.add(LevelOK, "fs.btrfs_path", "ФС", "%s: %s", where, how)
+		p.add(LevelWarn, "btrfs.snapshots", "btrfs", "снапшоты подтома с активным swapfile не создаются (snapper/timeshift будут падать); безопаснее путь по умолчанию — отдельный подтом %s", BtrfsDir)
 	}
 	return m, true
 }
 
 func (p *Plan) checkDisk(fi detect.FSInfo) {
 	level, msg, _ := AssessDisk(fi, p.Options.Force)
-	p.add(level, "диск", "%s", msg)
+	p.add(level, diskCode(fi), "диск", "%s", msg)
+}
+
+// diskCode — машинный код проверки диска (условия как в AssessDisk;
+// уровень зависит от --force, код — нет).
+func diskCode(fi detect.FSInfo) string {
+	switch {
+	case onUSB(fi):
+		return "disk.usb"
+	case fi.Kind == detect.KindVirtual:
+		return "disk.virtual"
+	case fi.Kind == detect.KindHDD:
+		return "disk.hdd"
+	case len(fi.Disks) == 0 || fi.Kind == detect.KindUnknown:
+		return "disk.unknown"
+	default:
+		return "disk.ok"
+	}
 }
 
 var forbiddenDirs = []string{"/proc", "/sys", "/dev", "/run", "/tmp", "/var/tmp", "/boot"}
@@ -341,24 +360,24 @@ var forbiddenDirs = []string{"/proc", "/sys", "/dev", "/run", "/tmp", "/var/tmp"
 func (p *Plan) checkPath(f Facts) bool {
 	t := f.Target
 	if !filepath.IsAbs(t.Path) {
-		p.add(LevelFail, "путь", "--path должен быть абсолютным: %q", t.Requested)
+		p.add(LevelFail, "path.relative", "путь", "--path должен быть абсолютным: %q", t.Requested)
 		return false
 	}
 	for _, d := range forbiddenDirs {
 		if t.Path == d || strings.HasPrefix(t.Path, d+"/") {
-			p.add(LevelFail, "путь", "%s: в %s swapfile создавать нельзя (виртуальная ФС или очищается при загрузке)", t.Path, d)
+			p.add(LevelFail, "path.forbidden", "путь", "%s: в %s swapfile создавать нельзя (виртуальная ФС или очищается при загрузке)", t.Path, d)
 			return false
 		}
 	}
 	if t.ParentErr != nil {
-		p.add(LevelFail, "путь", "каталог %s недоступен: %v — создайте его или выберите другой путь", filepath.Dir(t.Path), t.ParentErr)
+		p.add(LevelFail, "path.parent", "путь", "каталог %s недоступен: %v — создайте его или выберите другой путь", filepath.Dir(t.Path), t.ParentErr)
 		return false
 	}
 	how := "указан --path"
 	if t.Defaulted {
 		how = "по умолчанию"
 	}
-	p.add(LevelInfo, "путь", "%s (%s)", t.Path, how)
+	p.add(LevelInfo, "path.selected", "путь", "%s (%s)", t.Path, how)
 	return true
 }
 
@@ -432,7 +451,7 @@ func choosePriority(f Facts) (prio int, note string, conflict bool) {
 func (p *Plan) planApply(f Facts) {
 	o := &p.Options
 	if m := f.Managed; m != nil {
-		p.add(LevelFail, "swap RamPlus", "уже создан: %s, %s. Изменить размер: ramplus swap resize --size N; удалить: ramplus swap remove",
+		p.add(LevelFail, "managed.exists", "swap RamPlus", "уже создан: %s, %s. Изменить размер: ramplus swap resize --size N; удалить: ramplus swap remove",
 			m.Path, FormatSize(m.SizeBytes))
 		return
 	}
@@ -446,29 +465,29 @@ func (p *Plan) planApply(f Facts) {
 	case len(others) > 0 && o.Existing == "":
 		o.Existing = ExistingKeep
 		p.ExistingDefaulted = true
-		p.add(LevelWarn, "существующий swap", "%s: флаг --existing не указан → выбран безопасный вариант keep (старый swap остаётся, новый добавляется с более высоким приоритетом). Заменить: --existing=replace",
+		p.add(LevelWarn, "existing.defaulted_keep", "существующий swap", "%s: флаг --existing не указан → выбран безопасный вариант keep (старый swap остаётся, новый добавляется с более высоким приоритетом). Заменить: --existing=replace",
 			swapList(others))
 	case len(others) > 0:
-		p.add(LevelInfo, "существующий swap", "%s: выбрано --existing=%s", swapList(others), o.Existing)
+		p.add(LevelInfo, "existing.selected", "существующий swap", "%s: выбрано --existing=%s", swapList(others), o.Existing)
 	case o.Existing == ExistingReplace:
-		p.add(LevelInfo, "существующий swap", "другого swap нет — заменять нечего")
+		p.add(LevelInfo, "existing.none", "существующий swap", "другого swap нет — заменять нечего")
 	}
 	replace := o.Existing == ExistingReplace && len(others) > 0
 	if o.DeleteOld && !replace {
-		p.add(LevelInfo, "--delete-old", "игнорируется: действует только вместе с --existing=replace")
+		p.add(LevelInfo, "delete_old.ignored", "--delete-old", "игнорируется: действует только вместе с --existing=replace")
 	}
 	if replace {
 		p.checkResume(f, "замена")
 		if f.FstabErr != nil {
-			p.add(LevelFail, "fstab", "не удалось прочитать %s: %v", FstabPath, f.FstabErr)
+			p.add(LevelFail, "fstab.unreadable", "fstab", "не удалось прочитать %s: %v", FstabPath, f.FstabErr)
 		}
 	}
 
 	prio, note, conflict := choosePriority(f)
 	if conflict {
-		p.add(LevelWarn, "приоритет", "новый swap получит приоритет %d — выше zram; zram перестанет использоваться первым", prio)
+		p.add(LevelWarn, "priority.above_zram", "приоритет", "новый swap получит приоритет %d — выше zram; zram перестанет использоваться первым", prio)
 	} else {
-		p.add(LevelInfo, "приоритет", "новый swap получит приоритет %d (%s)", prio, note)
+		p.add(LevelInfo, "priority.selected", "приоритет", "новый swap получит приоритет %d (%s)", prio, note)
 	}
 
 	if !pathOK || !fsOK {
@@ -483,7 +502,7 @@ func (p *Plan) planApply(f Facts) {
 	unitPath := filepath.Join(UnitDir, unit)
 	for _, ex := range []string{path, dir, unitPath} {
 		if ex != "" && f.Exists[ex] {
-			p.add(LevelFail, "файлы", "%s уже существует, но RamPlus его не создавал — удалите или переименуйте вручную", ex)
+			p.add(LevelFail, "files.foreign", "файлы", "%s уже существует, но RamPlus его не создавал — удалите или переименуйте вручную", ex)
 		}
 	}
 	if !sizeOK {
@@ -510,7 +529,7 @@ func (p *Plan) planApply(f Facts) {
 			p.Steps = append(p.Steps, Step{Kind: KindSwapoff, Path: old.Path, Priority: old.Priority, Size: old.SizeBytes})
 			entries := f.fstabEntriesFor(old.Path)
 			if len(entries) == 0 {
-				p.add(LevelWarn, "fstab", "%s не найден в %s: swapoff действует до перезагрузки, потом он может включиться снова (systemd-юнит или скрипт)", old.Path, FstabPath)
+				p.add(LevelWarn, "fstab.not_listed", "fstab", "%s не найден в %s: swapoff действует до перезагрузки, потом он может включиться снова (systemd-юнит или скрипт)", old.Path, FstabPath)
 			}
 			for _, e := range entries {
 				p.Steps = append(p.Steps, Step{Kind: KindFstabDisable, Path: FstabPath, Line: e.Line, Reload: true})
@@ -522,7 +541,7 @@ func (p *Plan) planApply(f Facts) {
 					// delete_swapfile сверяет его перед удалением.
 					deletes = append(deletes, Step{Kind: KindDeleteSwapfile, Path: old.Path, Size: f.Observed[old.Path].Size})
 				} else {
-					p.add(LevelInfo, "--delete-old", "%s — раздел, а не файл: не удаляется", old.Path)
+					p.add(LevelInfo, "delete_old.partition", "--delete-old", "%s — раздел, а не файл: не удаляется", old.Path)
 				}
 			}
 		}
@@ -537,14 +556,14 @@ func (p *Plan) planApply(f Facts) {
 
 func (p *Plan) checkResume(f Facts, what string) {
 	if r := ResumeParam(f.Cmdline); r != "" {
-		p.add(LevelWarn, "гибернация", "в /proc/cmdline задан resume=%s: %s swap может сломать гибернацию (проверьте resume= и initramfs)", r, what)
+		p.add(LevelWarn, "hibernation.resume", "гибернация", "в /proc/cmdline задан resume=%s: %s swap может сломать гибернацию (проверьте resume= и initramfs)", r, what)
 	}
 }
 
 func (p *Plan) requireManaged(f Facts) *Managed {
 	m := f.Managed
 	if m == nil {
-		p.add(LevelFail, "swap RamPlus", "RamPlus swap не найден — сначала: ramplus swap apply --size N")
+		p.add(LevelFail, "managed.missing", "swap RamPlus", "RamPlus swap не найден — сначала: ramplus swap apply --size N")
 	}
 	return m
 }
@@ -557,18 +576,18 @@ func (p *Plan) planResize(f Facts) {
 		return
 	}
 	if o.Size == m.SizeBytes {
-		p.add(LevelFail, "размер", "swap RamPlus уже %s", FormatSize(m.SizeBytes))
+		p.add(LevelFail, "size.unchanged", "размер", "swap RamPlus уже %s", FormatSize(m.SizeBytes))
 		return
 	}
-	p.add(LevelInfo, "размер", "%s → %s", FormatSize(m.SizeBytes), FormatSize(o.Size))
+	p.add(LevelInfo, "size.change", "размер", "%s → %s", FormatSize(m.SizeBytes), FormatSize(o.Size))
 	p.checkDisk(f.Target.FS)
 	if m.FSType == "btrfs" && (!f.HasBtrfs || !f.HasChattr) {
-		p.add(LevelFail, "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
+		p.add(LevelFail, "fs.btrfs_tools_missing", "ФС", "btrfs: нужны утилиты btrfs (btrfs-progs) и chattr (e2fsprogs)")
 	}
 	if _, active := f.swapByPath(m.Path); active {
 		p.Steps = append(p.Steps, Step{Kind: KindSwapoff, Path: m.Path, Priority: m.Priority, Size: m.SizeBytes})
 	} else {
-		p.add(LevelWarn, "swap RamPlus", "%s сейчас не активен", m.Path)
+		p.add(LevelWarn, "managed.inactive", "swap RamPlus", "%s сейчас не активен", m.Path)
 	}
 	if f.Exists[m.Path] {
 		p.Steps = append(p.Steps, Step{Kind: KindDeleteSwapfile, Path: m.Path, Size: m.SizeBytes, NoCOW: m.FSType == "btrfs"})
@@ -610,7 +629,7 @@ func (p *Plan) planRemove(f Facts) {
 		}
 	}
 	if remaining == 0 {
-		p.add(LevelWarn, "swap", "после удаления в системе не останется swap")
+		p.add(LevelWarn, "swap.none_left", "swap", "после удаления в системе не останется swap")
 	}
 	for _, op := range f.State.Operations {
 		if op.Status != journal.OpCommitted {
@@ -618,7 +637,7 @@ func (p *Plan) planRemove(f Facts) {
 		}
 		for _, a := range op.Applied {
 			if a.Step.Kind == KindFstabDisable {
-				p.add(LevelInfo, "старый swap", "строка %q отключена операцией %s и останется отключённой; вернуть: ramplus rollback (повторно, после отката этого remove)",
+				p.add(LevelInfo, "old_swap.disabled", "старый swap", "строка %q отключена операцией %s и останется отключённой; вернуть: ramplus rollback (повторно, после отката этого remove)",
 					strings.TrimSpace(a.Step.Line), op.ID)
 			}
 		}
@@ -648,7 +667,7 @@ func (p *Plan) diskCheck(f Facts) {
 		return
 	}
 	if fi.TotalBytes == nil || fi.AvailableBytes == nil {
-		p.add(LevelFail, "место", "не удалось узнать свободное место на %s", fi.MountPoint)
+		p.add(LevelFail, "disk_space.unknown", "место", "не удалось узнать свободное место на %s", fi.MountPoint)
 		return
 	}
 	total, avail := *fi.TotalBytes, *fi.AvailableBytes
@@ -658,11 +677,11 @@ func (p *Plan) diskCheck(f Facts) {
 		fi.MountPoint, FormatSize(avail), FormatSize(total), formatSigned(remaining), FormatSize(required), requiredFreeText())
 	switch {
 	case remaining >= int64(required):
-		p.add(LevelOK, "место", "%s", msg)
+		p.add(LevelOK, "disk_space.ok", "место", "%s", msg)
 	case p.Action == ActionRollback && p.Options.Force:
-		p.add(LevelWarn, "место", "%s — продолжаем из-за --force", msg)
+		p.add(LevelWarn, "disk_space.insufficient", "место", "%s — продолжаем из-за --force", msg)
 	default:
-		p.add(LevelFail, "место", "%s", msg)
+		p.add(LevelFail, "disk_space.insufficient", "место", "%s", msg)
 	}
 }
 
@@ -703,20 +722,20 @@ func (p *Plan) memoryCheck(f Facts) {
 			}
 			title := "память для swapoff " + s.Path
 			if d.used == 0 {
-				p.add(LevelOK, title, "%s не используется — swapoff безопасен", s.Path)
+				p.add(LevelOK, "swapoff_memory.unused", title, "%s не используется — swapoff безопасен", s.Path)
 				continue
 			}
 			if !haveMem {
-				p.add(LevelFail, title, "не удалось прочитать %s, а в %s занято %s", MeminfoPath, s.Path, FormatSize(d.used))
+				p.add(LevelFail, "swapoff_memory.unreadable", title, "не удалось прочитать %s, а в %s занято %s", MeminfoPath, s.Path, FormatSize(d.used))
 				continue
 			}
 			budget := memAvail + free
 			msg := fmt.Sprintf("нужно перенести %s; доступно RAM %s + свободно в остающемся swap %s (запас %s)",
 				FormatSize(d.used), FormatSize(memAvail), FormatSize(free), FormatSize(memReserve))
 			if d.used+memReserve > budget {
-				p.add(LevelFail, title, "%s — не хватает, swapoff может вызвать OOM", msg)
+				p.add(LevelFail, "swapoff_memory.insufficient", title, "%s — не хватает, swapoff может вызвать OOM", msg)
 			} else {
-				p.add(LevelOK, title, "%s", msg)
+				p.add(LevelOK, "swapoff_memory.ok", title, "%s", msg)
 			}
 			memAvail -= min(memAvail, d.used)
 		}

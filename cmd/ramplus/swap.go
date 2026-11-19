@@ -28,6 +28,7 @@ type swapFlags struct {
 	force     bool
 	yes       bool
 	dryRun    bool
+	json      bool
 }
 
 func (f *swapFlags) options(action swap.Action) (swap.Options, error) {
@@ -99,11 +100,12 @@ func newPlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return render.Plan(cmd.OutOrStdout(), newCore().SwapPlan(cmd.Context(), o), render.Options{Verbose: f.verbose})
+			return showPlan(cmd, newCore().SwapPlan(cmd.Context(), o), f.verbose, f.json)
 		},
 	}
 	addPlanFlags(cmd, &f, true, true)
 	addVerboseFlag(cmd, &f)
+	addJSONFlag(cmd, &f.json)
 	return cmd
 }
 
@@ -122,7 +124,13 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 			}
 			out := cmd.OutOrStdout()
 			if f.dryRun {
-				return render.Plan(out, newCore().SwapPlan(cmd.Context(), o), render.Options{Verbose: f.verbose})
+				return showPlan(cmd, newCore().SwapPlan(cmd.Context(), o), f.verbose, f.json)
+			}
+			if f.json {
+				if !f.yes {
+					return errJSONNeedsYes
+				}
+				return executeJSON(cmd, core.Request{Swap: &o}, confirmer(true, nil, nil))
 			}
 			err = execute(cmd, core.Request{Swap: &o}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
@@ -138,6 +146,7 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 	}
 	addExecFlags(cmd, &f)
 	addVerboseFlag(cmd, &f)
+	addJSONFlag(cmd, &f.json)
 	return cmd
 }
 

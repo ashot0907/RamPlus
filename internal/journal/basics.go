@@ -83,25 +83,25 @@ func (b Basics) ignore(op Operation) map[string]bool {
 // CommonChecks — проверки, общие для всех планов.
 func CommonChecks(p *plan.Plan, b Basics) {
 	if b.EUID == 0 {
-		p.Add(plan.LevelOK, "root", "запущено от root")
+		p.Add(plan.LevelOK, "root", "root", "запущено от root")
 	} else {
-		p.Add(plan.LevelInfo, "root", "план строится без root; для выполнения нужен sudo")
+		p.Add(plan.LevelInfo, "root", "root", "план строится без root; для выполнения нужен sudo")
 	}
 	if !b.Systemd {
-		p.Add(plan.LevelFail, "systemd", "systemd не обнаружен (%s): RamPlus настраивает swap через systemd .swap-юниты", sys.SystemdRunDir)
+		p.Add(plan.LevelFail, "systemd.missing", "systemd", "systemd не обнаружен (%s): RamPlus настраивает swap через systemd .swap-юниты", sys.SystemdRunDir)
 	}
 	if b.StateErr != nil {
-		p.Add(plan.LevelFail, "журнал", "не удалось прочитать %s: %v", StatePath, b.StateErr)
+		p.Add(plan.LevelFail, "journal.unreadable", "журнал", "не удалось прочитать %s: %v", StatePath, b.StateErr)
 	}
 	if r := b.Recovery; r != nil && p.Action != plan.ActionRollback {
 		msg := fmt.Sprintf("операция %s не завершена (процесс прервался)", r.OpID)
 		if r.Pending != nil {
 			msg += fmt.Sprintf(" на шаге «%s»: %s", r.Pending.Step.Describe(), r.Detail)
 		}
-		p.Add(plan.LevelFail, "журнал", "%s — сначала выполните: sudo ramplus rollback", msg)
+		p.Add(plan.LevelFail, "journal.interrupted", "журнал", "%s — сначала выполните: sudo ramplus rollback", msg)
 	}
 	if b.SwapsErr != nil {
-		p.Add(plan.LevelFail, "swap", "не удалось прочитать %s: %v", sys.SwapsPath, b.SwapsErr)
+		p.Add(plan.LevelFail, "swaps.unreadable", "swap", "не удалось прочитать %s: %v", sys.SwapsPath, b.SwapsErr)
 	}
 }
 
@@ -113,7 +113,7 @@ func PlanRollback(p *plan.Plan, b Basics) *Operation {
 	for i := len(st.Operations) - 1; i >= 0; i-- {
 		op := st.Operations[i]
 		if op.Status == OpRollbackFailed {
-			p.Add(plan.LevelFail, "rollback", "операция %s (%s) откатилась не полностью — нужна ручная проверка по %s (поле applied) и бэкапам в %s",
+			p.Add(plan.LevelFail, "rollback.partial", "rollback", "операция %s (%s) откатилась не полностью — нужна ручная проверка по %s (поле applied) и бэкапам в %s",
 				op.ID, op.Command, StatePath, BackupDir)
 			return nil
 		}
@@ -123,35 +123,35 @@ func PlanRollback(p *plan.Plan, b Basics) *Operation {
 	}
 	idx, ok := st.LastUndoable()
 	if !ok {
-		p.Add(plan.LevelFail, "rollback", "нечего откатывать: в %s нет выполненных операций", StatePath)
+		p.Add(plan.LevelFail, "rollback.nothing", "rollback", "нечего откатывать: в %s нет выполненных операций", StatePath)
 		return nil
 	}
 	op := st.Operations[idx]
 	p.Effects.Target = &plan.Target{Index: idx, ID: op.ID}
-	p.Add(plan.LevelInfo, "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
+	p.Add(plan.LevelInfo, "rollback.target", "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
 
 	// Состояние системы должно совпадать с результатом операции по журналу.
 	if len(b.RollbackDiff) > 0 {
-		p.Add(plan.LevelFail, "состояние", "состояние системы не совпадает с журналом, нужна ручная проверка (ничего не изменено):\n      - %s",
+		p.Add(plan.LevelFail, "rollback.state_mismatch", "состояние", "состояние системы не совпадает с журналом, нужна ручная проверка (ничего не изменено):\n      - %s",
 			strings.Join(b.RollbackDiff, "\n      - "))
 		return &op
 	}
-	p.Add(plan.LevelOK, "состояние", "система в состоянии, записанном в журнале после операции %s", op.ID)
+	p.Add(plan.LevelOK, "rollback.state_ok", "состояние", "система в состоянии, записанном в журнале после операции %s", op.ID)
 
 	if op.Status == OpInProgress {
-		p.Add(plan.LevelWarn, "rollback", "операция была прервана посреди выполнения — откатываются записанные в журнал шаги")
+		p.Add(plan.LevelWarn, "rollback.interrupted", "rollback", "операция была прервана посреди выполнения — откатываются записанные в журнал шаги")
 		if r := b.Recovery; r != nil && r.OpID == op.ID && r.Pending != nil {
 			step := r.Pending.Step.Describe()
 			switch r.Verdict {
 			case VerdictPresent:
-				p.Add(plan.LevelInfo, "прерванный шаг", "«%s»: %s — будет откачен", step, r.Detail)
+				p.Add(plan.LevelInfo, "rollback.pending_undo", "прерванный шаг", "«%s»: %s — будет откачен", step, r.Detail)
 				for _, u := range r.Pending.Undo {
 					p.Steps = append(p.Steps, Recovered(u))
 				}
 			case VerdictAbsent:
-				p.Add(plan.LevelInfo, "прерванный шаг", "«%s»: %s — откатывать нечего", step, r.Detail)
+				p.Add(plan.LevelInfo, "rollback.pending_absent", "прерванный шаг", "«%s»: %s — откатывать нечего", step, r.Detail)
 			default:
-				p.Add(plan.LevelFail, "прерванный шаг", "«%s»: %s — RamPlus не будет это трогать, нужна ручная проверка", step, r.Detail)
+				p.Add(plan.LevelFail, "rollback.pending_mismatch", "прерванный шаг", "«%s»: %s — RamPlus не будет это трогать, нужна ручная проверка", step, r.Detail)
 			}
 		}
 	}

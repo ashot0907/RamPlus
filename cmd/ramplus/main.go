@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -42,7 +43,9 @@ func newRootCmd() *cobra.Command {
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "ramplus:", err)
+		if !errors.Is(err, errSilent) {
+			fmt.Fprintln(os.Stderr, "ramplus:", err)
+		}
 		os.Exit(1)
 	}
 }

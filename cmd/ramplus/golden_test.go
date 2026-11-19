@@ -248,3 +248,20 @@ func TestGoldenStatus(t *testing.T) {
 	s.run("status", "--json")
 	s.check("status")
 }
+
+// --json: план и итог выполнения как данные (схема для API демона).
+func TestGoldenJSON(t *testing.T) {
+	w := fakesys.New().WithOldSwap(0).WithKernelParams(false)
+	s := newSession(t, w)
+	s.run("swap", "plan", "--size", "4G", "--json")
+	s.run("swap", "apply", "--size", "4G", "--json")
+	s.run("swap", "apply", "--size", "4G", "--json", "--yes")
+	s.run("swap", "resize", "--size", "4G", "--json", "--yes")
+	s.run("profile", "plan", "zswap-lz4", "--json")
+	s.run("profile", "apply", "zswap-lz4", "--json", "--yes")
+	s.run("profile", "apply", "zswap-lz4", "--json", "--yes", "--experimental")
+	s.run("rollback", "--dry-run", "--json")
+	s.run("rollback", "--json", "--yes")
+	s.run("profile", "reset", "--dry-run", "--json")
+	s.check("json")
+}

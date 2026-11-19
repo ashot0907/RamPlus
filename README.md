@@ -110,6 +110,21 @@ ramplus swap check-clean                           # нет ли следов Ra
 
 Интеграционный тест (только в одноразовой VM): `sudo RAMPLUS_VM_TEST=1 scripts/vm-test.sh ./ramplus`.
 
+### JSON
+
+`--json` есть у `swap plan/apply/resize/remove`, `rollback`,
+`profile plan/apply/reset` — та же схема, что у будущего API демона:
+
+- план (`plan`, `--dry-run --json`): `schema_version`, `action`, `command`,
+  `blocked`, `choices`, `checks` (у каждой проверки стабильный машинный
+  `code`, например `fs.unsupported`, `disk.usb`, `rollback.nothing`; тексты —
+  в `title`/`message`), `steps` (`kind` и параметры шага плюс `description`),
+  `summary`, `swap`/`profile`;
+- выполнение (`--json --yes`, подтверждения в JSON-режиме нет): `status`
+  (`done`, `nothing`, `blocked`, `cancelled`, `need_root`, `failed`,
+  `rollback_failed`, `error`), `operation_id`, `error`, `events` (шаги и
+  их откат) и `plan`. Код выхода 1, если статус не `done`/`nothing`.
+
 ## Профили
 
 ```sh

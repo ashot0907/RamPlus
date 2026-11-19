@@ -28,8 +28,11 @@ const (
 )
 
 // Check — результат preflight-проверки.
+// Code — стабильный машинный код («fs.unsupported», «rollback.nothing»),
+// не зависит от текста; Title и Message — человекочитаемые тексты.
 type Check struct {
 	Level   Level  `json:"level"`
+	Code    string `json:"code"`
 	Title   string `json:"title"`
 	Message string `json:"message"`
 }
@@ -182,9 +185,9 @@ func (p Plan) Failures() []Check {
 	return out
 }
 
-// Add добавляет проверку.
-func (p *Plan) Add(l Level, title, format string, a ...any) {
-	p.Checks = append(p.Checks, Check{Level: l, Title: title, Message: fmt.Sprintf(format, a...)})
+// Add добавляет проверку с машинным кодом code.
+func (p *Plan) Add(l Level, code, title, format string, a ...any) {
+	p.Checks = append(p.Checks, Check{Level: l, Code: code, Title: title, Message: fmt.Sprintf(format, a...)})
 }
 
 // HasKind — есть ли в плане шаг вида k.

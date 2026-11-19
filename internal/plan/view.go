@@ -66,11 +66,11 @@ type ManagedView struct {
 // ProfileView — план профиля.
 type ProfileView struct {
 	Name         string            `json:"name"`
-	Title        string            `json:"title"`
-	Description  string            `json:"description"`
-	Status       string            `json:"status"`
-	BaseStatus   string            `json:"base_status"`
-	Evidence     string            `json:"evidence"`
+	Title        string            `json:"title,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	Status       string            `json:"status,omitempty"`
+	BaseStatus   string            `json:"base_status,omitempty"`
+	Evidence     string            `json:"evidence,omitempty"`
 	Overrides    map[string]string `json:"overrides,omitempty"`
 	Experimental bool              `json:"experimental"`
 	Reset        bool              `json:"reset"`
@@ -80,7 +80,7 @@ type ProfileView struct {
 	Current       string `json:"current,omitempty"`
 	CurrentStatus string `json:"current_status,omitempty"`
 	// Тексты статусов для человека.
-	StatusText        string `json:"status_text"`
+	StatusText        string `json:"status_text,omitempty"`
 	CurrentStatusText string `json:"current_status_text,omitempty"`
 }
 

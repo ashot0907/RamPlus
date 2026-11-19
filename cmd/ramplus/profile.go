@@ -29,6 +29,7 @@ type profileFlags struct {
 	yes          bool
 	dryRun       bool
 	verbose      bool
+	json         bool
 }
 
 func (f *profileFlags) request(name string) (profile.ProfileRequest, error) {
@@ -120,6 +121,7 @@ func addProfileFlags(cmd *cobra.Command, f *profileFlags, exec bool) {
 	cmd.Flags().StringArrayVar(&f.set, "set", nil, "точечное изменение поверх профиля: ключ=значение (можно несколько раз)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "включить zswap даже при активном/установленном zram")
 	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "показать содержимое записываемых файлов")
+	addJSONFlag(cmd, &f.json)
 	if exec {
 		cmd.Flags().BoolVar(&f.experimental, "experimental", false, "подтвердить применение экспериментального профиля (для скриптов)")
 		cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "не спрашивать подтверждение")
@@ -138,7 +140,7 @@ func newProfilePlanCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return render.Plan(cmd.OutOrStdout(), newCore().ProfilePlan(cmd.Context(), r), render.Options{Verbose: f.verbose})
+			return showPlan(cmd, newCore().ProfilePlan(cmd.Context(), r), f.verbose, f.json)
 		},
 	}
 	addProfileFlags(cmd, &f, false)
@@ -161,7 +163,13 @@ func newProfileApplyCmd() *cobra.Command {
 			}
 			out := cmd.OutOrStdout()
 			if f.dryRun {
-				return render.Plan(out, newCore().ProfilePlan(cmd.Context(), r), render.Options{Verbose: f.verbose})
+				return showPlan(cmd, newCore().ProfilePlan(cmd.Context(), r), f.verbose, f.json)
+			}
+			if f.json {
+				if !f.yes {
+					return errJSONNeedsYes
+				}
+				return executeJSON(cmd, core.Request{Profile: &r}, profileConfirmer(true, f.experimental, nil, nil))
 			}
 			err = execute(cmd, core.Request{Profile: &r}, f.verbose, profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
@@ -183,7 +191,13 @@ func newProfileResetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			if f.dryRun {
-				return render.Plan(out, newCore().ProfileResetPlan(cmd.Context()), render.Options{Verbose: f.verbose})
+				return showPlan(cmd, newCore().ProfileResetPlan(cmd.Context()), f.verbose, f.json)
+			}
+			if f.json {
+				if !f.yes {
+					return errJSONNeedsYes
+				}
+				return executeJSON(cmd, core.Request{ProfileReset: true}, confirmer(true, nil, nil))
 			}
 			err := execute(cmd, core.Request{ProfileReset: true}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
@@ -195,6 +209,7 @@ func newProfileResetCmd() *cobra.Command {
 	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "не спрашивать подтверждение")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "только план")
 	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "подробно")
+	addJSONFlag(cmd, &f.json)
 	return cmd
 }
 

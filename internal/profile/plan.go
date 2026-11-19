@@ -33,7 +33,9 @@ type Plan struct {
 	BaselineCapture *Baseline
 }
 
-func (p *Plan) add(l plan.Level, title, format string, a ...any) { p.Plan.Add(l, title, format, a...) }
+func (p *Plan) add(l plan.Level, code, title, format string, a ...any) {
+	p.Plan.Add(l, code, title, format, a...)
+}
 
 // seal — разделы журнала, которые операция запишет при коммите.
 func (p *Plan) seal(f Facts) {
@@ -85,7 +87,7 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 
 	prof, ok := Get(req.Name)
 	if !ok {
-		p.add(plan.LevelFail, "профиль", "нет профиля %q; доступны: %s", req.Name, strings.Join(Names(), ", "))
+		p.add(plan.LevelFail, "profile.unknown", "профиль", "нет профиля %q; доступны: %s", req.Name, strings.Join(Names(), ", "))
 		p.ProfileAfter = f.Profile
 		p.seal(f)
 		return p
@@ -109,11 +111,11 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 
 	switch prof.Status {
 	case StatusExperimental:
-		p.add(plan.LevelWarn, "статус", "профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)")
+		p.add(plan.LevelWarn, "profile.experimental", "статус", "профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)")
 	case StatusStandard:
-		p.add(plan.LevelInfo, "статус", "стандарт Ubuntu: применение возвращает стоковые значения")
+		p.add(plan.LevelInfo, "profile.standard", "статус", "стандарт Ubuntu: применение возвращает стоковые значения")
 	case StatusVerified:
-		p.add(plan.LevelOK, "статус", "проверенный: %s", prof.Evidence)
+		p.add(plan.LevelOK, "profile.verified", "статус", "проверенный: %s", prof.Evidence)
 	}
 	if len(overrides) > 0 {
 		var parts []string
@@ -122,13 +124,13 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 				parts = append(parts, fmt.Sprintf("%s=%s (в профиле: %s)", k, v, orDash(prof.Params[k])))
 			}
 		}
-		p.add(plan.LevelInfo, "--set", "профиль изменён пользователем: %s", strings.Join(parts, ", "))
+		p.add(plan.LevelInfo, "profile.overrides", "--set", "профиль изменён пользователем: %s", strings.Join(parts, ", "))
 	}
 
 	skip := map[string]bool{}
 	zswapKeys := ZswapKeys(values)
 	if len(zswapKeys) > 0 && !pf.ZswapPresent {
-		p.add(plan.LevelFail, "zswap", "zswap нет в этом ядре (%s отсутствует), а профиль задаёт %s", ZswapParamDir, strings.Join(zswapKeys, ", "))
+		p.add(plan.LevelFail, "zswap.missing", "zswap", "zswap нет в этом ядре (%s отсутствует), а профиль задаёт %s", ZswapParamDir, strings.Join(zswapKeys, ", "))
 	}
 	for _, k := range zswapKeys {
 		if !pf.ZswapPresent {
@@ -140,16 +142,16 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 		}
 		skip[k] = true
 		if k == "zswap.zpool" && values[k] == "zsmalloc" {
-			p.add(plan.LevelInfo, "zswap.zpool", "параметра zpool нет в этом ядре: используется zsmalloc — пропускается")
+			p.add(plan.LevelInfo, "zswap.zpool_skipped", "zswap.zpool", "параметра zpool нет в этом ядре: используется zsmalloc — пропускается")
 		} else {
-			p.add(plan.LevelFail, k, "параметра нет в этом ядре — значение %s применить нельзя", values[k])
+			p.add(plan.LevelFail, "zswap.param_missing", k, "параметра нет в этом ядре — значение %s применить нельзя", values[k])
 		}
 	}
 	if c, ok := values["zswap.compressor"]; ok && pf.ZswapPresent && !pf.CompressorOK[c] {
-		p.add(plan.LevelFail, "компрессор", "%s недоступен в ядре: нет в %s и нет модуля crypto/%s.ko — выберите другой (--set zswap.compressor=...)", c, CryptoPath, c)
+		p.add(plan.LevelFail, "zswap.compressor_unavailable", "компрессор", "%s недоступен в ядре: нет в %s и нет модуля crypto/%s.ko — выберите другой (--set zswap.compressor=...)", c, CryptoPath, c)
 	}
 	if z, ok := values["zswap.zpool"]; ok && !skip["zswap.zpool"] && !pf.ZpoolOK[z] {
-		p.add(plan.LevelFail, "zpool", "аллокатор %s недоступен: не встроен, не загружен и нет модуля mm/%s.ko", z, z)
+		p.add(plan.LevelFail, "zswap.zpool_unavailable", "zpool", "аллокатор %s недоступен: не встроен, не загружен и нет модуля mm/%s.ko", z, z)
 	}
 	if values["zswap.enabled"] == "Y" && (pf.ZramActive || pf.ZramGenerator != "") {
 		why := "активен zram"
@@ -157,9 +159,9 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 			why = "установлен генератор zram (" + pf.ZramGenerator + ")"
 		}
 		if req.Force {
-			p.add(plan.LevelWarn, "zram", "%s: zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно) — продолжаем из-за --force", why)
+			p.add(plan.LevelWarn, "zswap.over_zram", "zram", "%s: zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно) — продолжаем из-за --force", why)
 		} else {
-			p.add(plan.LevelFail, "zram", "%s: zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно). Отключите zram или добавьте --force", why)
+			p.add(plan.LevelFail, "zswap.over_zram", "zram", "%s: zswap поверх zram бессмыслен (сжатые страницы сжимаются повторно). Отключите zram или добавьте --force", why)
 		}
 	}
 	if cl := cmdlineParams(f.Cmdline, "zswap."); len(cl) > 0 && len(zswapKeys) > 0 {
@@ -168,7 +170,7 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 			parts = append(parts, k+"="+v)
 		}
 		sort.Strings(parts)
-		p.add(plan.LevelWarn, "cmdline", "в /proc/cmdline задано %s: ядро применяет это при загрузке, затем %s перезаписывает значения профиля — действует профиль. Kernel cmdline и GRUB RamPlus не меняет; чтобы не путаться, уберите zswap.* из GRUB вручную",
+		p.add(plan.LevelWarn, "zswap.cmdline", "cmdline", "в /proc/cmdline задано %s: ядро применяет это при загрузке, затем %s перезаписывает значения профиля — действует профиль. Kernel cmdline и GRUB RamPlus не меняет; чтобы не путаться, уберите zswap.* из GRUB вручную",
 			strings.Join(parts, " "), ZswapUnitName)
 	}
 
@@ -199,11 +201,11 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 		}
 		for _, k := range SysctlKeys(sysctlVals) {
 			for _, o := range Overriders(order, k) {
-				p.add(plan.LevelWarn, "sysctl", "%s задаёт %s=%s и применяется после %s — при загрузке перебьёт значение профиля (%s). Уберите ключ из этого файла",
+				p.add(plan.LevelWarn, "sysctl.overridden", "sysctl", "%s задаёт %s=%s и применяется после %s — при загрузке перебьёт значение профиля (%s). Уберите ключ из этого файла",
 					o.Path, k, o.Values[k], SysctlFileName, sysctlVals[k])
 			}
 			if v, ok := cmdlineParams(f.Cmdline, "sysctl.")["sysctl."+k]; ok {
-				p.add(plan.LevelInfo, "cmdline", "sysctl.%s=%s в cmdline применяется ядром раньше, %s — позже: действует профиль", k, v, SysctlFileName)
+				p.add(plan.LevelInfo, "sysctl.cmdline", "cmdline", "sysctl.%s=%s в cmdline применяется ядром раньше, %s — позже: действует профиль", k, v, SysctlFileName)
 			}
 		}
 	}
@@ -252,7 +254,7 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 	p.unitSteps(pf, prof.Name, status, zswapVals, skip)
 
 	if len(p.Steps) == 0 && !p.Blocked() {
-		p.add(plan.LevelOK, "профиль", "система уже соответствует профилю %s — менять нечего", prof.Name)
+		p.add(plan.LevelOK, "profile.up_to_date", "профиль", "система уже соответствует профилю %s — менять нечего", prof.Name)
 	}
 
 	after := map[string]string{}
@@ -268,7 +270,7 @@ func BuildProfilePlan(pf Facts, req ProfileRequest) Plan {
 			base[k] = v
 		}
 		p.BaselineCapture = &Baseline{Values: base}
-		p.add(plan.LevelInfo, "исходные значения", "первый apply профиля: текущие значения системы сохраняются в %s для ramplus profile reset", journal.StatePath)
+		p.add(plan.LevelInfo, "profile.baseline_capture", "исходные значения", "первый apply профиля: текущие значения системы сохраняются в %s для ramplus profile reset", journal.StatePath)
 	}
 	p.summarizeProfile(pf)
 	p.seal(f)
@@ -326,16 +328,16 @@ func BuildProfileReset(pf Facts) Plan {
 	p.Profile = info
 	base := f.Baseline
 	if base == nil && pf.OurSysctl == nil && pf.OurUnit == nil {
-		p.add(plan.LevelFail, "reset", "профиль RamPlus не применялся — сбрасывать нечего")
+		p.add(plan.LevelFail, "reset.nothing", "reset", "профиль RamPlus не применялся — сбрасывать нечего")
 		p.Steps = []plan.Step{}
 		p.ProfileAfter = f.Profile
 		p.seal(f)
 		return p
 	}
 	if base == nil {
-		p.add(plan.LevelWarn, "reset", "исходные значения не сохранены в %s — удаляются только файлы RamPlus, runtime-значения не меняются", journal.StatePath)
+		p.add(plan.LevelWarn, "reset.no_baseline", "reset", "исходные значения не сохранены в %s — удаляются только файлы RamPlus, runtime-значения не меняются", journal.StatePath)
 	} else {
-		p.add(plan.LevelInfo, "reset", "возврат к значениям, снятым %s перед первым apply (операция %s)", base.CapturedAt.Local().Format("2006-01-02 15:04:05"), base.OpID)
+		p.add(plan.LevelInfo, "reset.baseline", "reset", "возврат к значениям, снятым %s перед первым apply (операция %s)", base.CapturedAt.Local().Format("2006-01-02 15:04:05"), base.OpID)
 		values := base.Values
 		for _, pr := range Params {
 			bv, ok := values[pr.Key]
