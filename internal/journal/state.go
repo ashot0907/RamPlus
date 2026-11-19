@@ -239,6 +239,22 @@ func (s State) LastUndoable() (int, bool) {
 	return -1, false
 }
 
+// Undoable — какие операции можно отменить повторными ramplus rollback
+// (по позиции в журнале). Выполненные и прерванные операции (кроме самих
+// rollback) — да, пока между ними и концом журнала нет операции с
+// неудавшимся откатом: на ней rollback останавливается (PlanRollback).
+func (s State) Undoable() []bool {
+	out := make([]bool, len(s.Operations))
+	for i := len(s.Operations) - 1; i >= 0; i-- {
+		op := s.Operations[i]
+		if op.Status == OpRollbackFailed {
+			break
+		}
+		out[i] = op.Status == OpInProgress || (op.Status == OpCommitted && op.Action != plan.ActionRollback)
+	}
+	return out
+}
+
 // Pending — незавершённая операция (процесс упал посреди apply).
 func (s State) Pending() *Operation {
 	for i := len(s.Operations) - 1; i >= 0; i-- {

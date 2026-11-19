@@ -2,10 +2,13 @@ package journal
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ashot0907/ramplus/internal/plan"
 )
 
 func readFixture(t *testing.T, name string) string {
@@ -71,5 +74,29 @@ func TestMigrateDuplicateIDs(t *testing.T) {
 	bad := bytes.Replace(b, []byte(`"20261117T113308Z#2"`), []byte(`"20261117T113307Z"`), 1)
 	if _, err := ParseState(bad); err == nil {
 		t.Error("v3 with duplicate IDs must fail")
+	}
+}
+
+func TestUndoable(t *testing.T) {
+	op := func(action plan.Action, status string) Operation {
+		return Operation{ID: string(action) + status, Action: action, Status: status}
+	}
+	tests := []struct {
+		name string
+		ops  []Operation
+		want []bool
+	}{
+		{"empty", nil, []bool{}},
+		{"stack", []Operation{op("apply", OpCommitted), op("resize", OpRolledBack), op(plan.ActionRollback, OpCommitted), op("remove", OpFailed)},
+			[]bool{true, false, false, false}},
+		{"interrupted", []Operation{op("apply", OpCommitted), op("profile-apply", OpInProgress)}, []bool{true, true}},
+		{"barrier", []Operation{op("apply", OpCommitted), op("resize", OpRollbackFailed), op("profile-apply", OpCommitted)},
+			[]bool{false, false, true}},
+	}
+	for _, tt := range tests {
+		got := State{Operations: tt.ops}.Undoable()
+		if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			t.Errorf("%s: %v, want %v", tt.name, got, tt.want)
+		}
 	}
 }

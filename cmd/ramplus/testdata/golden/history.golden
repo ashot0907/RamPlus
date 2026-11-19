@@ -1,0 +1,302 @@
+$ ramplus history
+Журнал /var/lib/ramplus/state.json пуст: RamPlus ничего не менял.
+
+$ ramplus swap apply --size 4G --yes
+План: создание swapfile
+Команда: ramplus swap apply --size 4G
+
+Сейчас
+  swap        нет
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 4.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 296.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 0 B → 4.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 4G
+
+Выполнение (операция <OPID>)
+  [1/7] создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [2/7] chmod 600 /ramplus.swapfile ... ok
+  [3/7] mkswap /ramplus.swapfile ... ok
+  [4/7] swapon /ramplus.swapfile (приоритет 10) ... ok
+  [5/7] записать /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/7] systemctl daemon-reload ... ok
+  [7/7] systemctl enable ramplus.swapfile.swap ... ok
+Готово.
+
+$ ramplus profile apply zswap-lz4 --experimental --yes
+План: профиль zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+Команда: ramplus profile apply zswap-lz4 --experimental
+Профиль: zswap + lz4. zswap включён: lz4, zsmalloc, пул до 20% RAM; sysctl как в default.
+Evidence: нет (результата scripts/bench.sh на реальном SSD нет)
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         ядро по умолчанию
+  zswap.compressor  lzo     →  lz4       ядро по умолчанию
+  zswap.zpool       —          zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+   3. записать /etc/sysctl.d/99-ramplus.conf
+   4. записать /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  сразу (runtime): изменится параметров: 2
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  удаляется: —
+  kernel cmdline и GRUB: не меняются
+
+Результат: план выполним. Применить: sudo ramplus profile apply zswap-lz4 --experimental
+
+Выполнение (операция <OPID>)
+  [1/6] zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor) ... ok
+  [2/6] zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled) ... ok
+  [3/6] записать /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/6] записать /etc/systemd/system/ramplus-zswap.service ... ok
+  [5/6] systemctl daemon-reload ... ok
+  [6/6] systemctl enable ramplus-zswap.service ... ok
+Готово.
+
+$ ramplus swap resize --size 6G --yes
+План: изменение размера swapfile
+Команда: ramplus swap resize --size 6G
+
+Сейчас
+  swap        /ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [info] размер: 4.0 GiB → 6.0 GiB
+  [ok]   диск: NVMe (nvme)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 298.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /ramplus.swapfile
+   2. удалить файл /ramplus.swapfile (4.0 GiB)
+   3. создать /ramplus.swapfile, 6.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (приоритет 10)
+
+Итог
+  swap: 4.0 GiB → 6.0 GiB
+  создаётся: —
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus swap resize --size 6G
+
+Выполнение (операция <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] удалить файл /ramplus.swapfile (4.0 GiB) ... ok
+  [3/6] создать /ramplus.swapfile, 6.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (приоритет 10) ... ok
+Готово.
+
+$ ramplus rollback --yes
+План: откат последней операции
+Команда: ramplus rollback
+
+Сейчас
+  swap        /ramplus.swapfile  file  6.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 6.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [info] rollback: отменяется операция <OPID> от 2026-11-16 12:00:47: ramplus swap resize --size 6G
+  [ok]   состояние: система в состоянии, записанном в журнале после операции <OPID>
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /ramplus.swapfile
+   2. удалить файл /ramplus.swapfile (6.0 GiB)
+   3. создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (приоритет 10)
+
+Итог
+  swap: 6.0 GiB → 4.0 GiB
+  создаётся: —
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus rollback
+
+Выполнение (операция <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] удалить файл /ramplus.swapfile (6.0 GiB) ... ok
+  [3/6] создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (приоритет 10) ... ok
+Готово.
+
+$ ramplus swap remove --yes
+План: удаление swapfile
+Команда: ramplus swap remove
+
+Сейчас
+  swap        /ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [warn] swap: после удаления в системе не останется swap
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /ramplus.swapfile
+   2. systemctl disable ramplus.swapfile.swap
+   3. удалить /etc/systemd/system/ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. удалить файл /ramplus.swapfile (4.0 GiB)
+
+Итог
+  swap: 4.0 GiB → 0 B
+  создаётся: —
+  отключается: /ramplus.swapfile
+  удаляется: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus swap remove
+
+Выполнение (операция <OPID>)
+  [1/5] swapoff /ramplus.swapfile ... ОШИБКА: запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json
+  откат [1/1] swapon /ramplus.swapfile (приоритет 10) ... ok
+error: шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; выполненные шаги откачены, система в исходном состоянии
+
+$ ramplus history
+Журнал: /var/lib/ramplus/state.json (операций: 5)
+
+  ID                                 ВРЕМЯ                СТАТУС            ОТКАТ      КОМАНДА
+  <OPID>  2026-11-16 12:00:01  выполнена         да         ramplus swap apply --size 4G
+  <OPID>  2026-11-16 12:00:26  выполнена         следующий  ramplus profile apply zswap-lz4 --experimental
+  <OPID>  2026-11-16 12:00:47  откачена          —          ramplus swap resize --size 6G
+  <OPID>  2026-11-16 12:00:09  выполнена         —          ramplus rollback (отменяет <OPID>)
+  <OPID>  2026-11-16 12:00:31  ошибка, откачена  —          ramplus swap remove
+
+<OPID>: шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; выполненные шаги откачены, система в исходном состоянии
+
+ОТКАТ: «следующий» — эту операцию отменит ramplus rollback; «да» — повторные rollback дойдут до неё.
+
+$ ramplus history --json
+{
+  "schema_version": 1,
+  "journal": "/var/lib/ramplus/state.json",
+  "journal_version": 3,
+  "operations": [
+    {
+      "id": "<OPID>",
+      "action": "apply",
+      "command": "ramplus swap apply --size 4G",
+      "status": "committed",
+      "started_at": "2026-11-16T12:00:01Z",
+      "finished_at": "2026-11-16T12:00:24Z",
+      "steps": 7,
+      "undoable": true,
+      "rollback_next": false
+    },
+    {
+      "id": "<OPID>",
+      "action": "profile-apply",
+      "command": "ramplus profile apply zswap-lz4 --experimental",
+      "status": "committed",
+      "started_at": "2026-11-16T12:00:26Z",
+      "finished_at": "2026-11-16T12:00:45Z",
+      "steps": 6,
+      "undoable": true,
+      "rollback_next": true
+    },
+    {
+      "id": "<OPID>",
+      "action": "resize",
+      "command": "ramplus swap resize --size 6G",
+      "status": "rolled_back",
+      "started_at": "2026-11-16T12:00:47Z",
+      "finished_at": "2026-11-16T12:00:07Z",
+      "steps": 6,
+      "undoable": false,
+      "rollback_next": false
+    },
+    {
+      "id": "<OPID>",
+      "action": "rollback",
+      "command": "ramplus rollback",
+      "status": "committed",
+      "target": "<OPID>",
+      "started_at": "2026-11-16T12:00:09Z",
+      "finished_at": "2026-11-16T12:00:29Z",
+      "steps": 6,
+      "undoable": false,
+      "rollback_next": false
+    },
+    {
+      "id": "<OPID>",
+      "action": "remove",
+      "command": "ramplus swap remove",
+      "status": "failed",
+      "started_at": "2026-11-16T12:00:31Z",
+      "finished_at": "2026-11-16T12:00:37Z",
+      "steps": 0,
+      "error": "шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; выполненные шаги откачены, система в исходном состоянии",
+      "undoable": false,
+      "rollback_next": false
+    }
+  ]
+}
+

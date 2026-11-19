@@ -70,6 +70,7 @@ sudo ramplus swap apply --size 12G --existing=replace [--delete-old]
 sudo ramplus swap resize --size 16G
 sudo ramplus swap remove
 sudo ramplus rollback                              # отменить последнюю операцию; повторный вызов идёт дальше назад
+ramplus history [--json]                           # операции из журнала: статус, что отменит следующий rollback
 ramplus swap check-clean                           # нет ли следов RamPlus (код 1 — есть)
 ```
 
@@ -113,7 +114,7 @@ ramplus swap check-clean                           # нет ли следов Ra
 ### JSON
 
 `--json` есть у `swap plan/apply/resize/remove`, `rollback`,
-`profile plan/apply/reset` — та же схема, что у будущего API демона:
+`profile plan/apply/reset` и `history` — та же схема, что у будущего API демона:
 
 - план (`plan`, `--dry-run --json`): `schema_version`, `id`, `fingerprint`, `action`, `command`,
   `blocked`, `choices`, `checks` (у каждой проверки стабильный машинный

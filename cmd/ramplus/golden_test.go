@@ -273,3 +273,19 @@ func TestGoldenJSON(t *testing.T) {
 	s.run("profile", "reset", "--dry-run", "--json")
 	s.check("json")
 }
+
+func TestGoldenHistory(t *testing.T) {
+	w := fakesys.New().WithKernelParams(false)
+	s := newSession(t, w)
+	s.run("history")
+	s.run("swap", "apply", "--size", "4G", "--yes")
+	s.run("profile", "apply", "zswap-lz4", "--experimental", "--yes")
+	s.run("swap", "resize", "--size", "6G", "--yes")
+	s.run("rollback", "--yes")
+	w.FailAt = w.Mutations + 5
+	s.run("swap", "remove", "--yes")
+	w.FailAt = 0
+	s.run("history")
+	s.run("history", "--json")
+	s.check("history")
+}
