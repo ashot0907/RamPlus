@@ -15,7 +15,8 @@
 #
 # Падение в любом сценарии: журнал теста копируется в state.json.vmtest-failed-
 # <время>, демон останавливается (дождавшись операции), ручные изменения
-# возвращаются, все операции теста откатываются через CLI, демон удаляется,
+# возвращаются, операции теста откатываются через CLI по одной — только пока
+# система не в исходном состоянии (check-clean и параметры как в начале), демон удаляется,
 # /swap.img и fstab — как были. Если check-clean после этого чистый, журнал
 # прошлых прогонов возвращается на место.
 #
@@ -55,6 +56,7 @@ DIRTY_UNIT=0         # A4: swap выключен вручную, юнит ещё
 DIRTY_ZSWAP=0        # D5: параметры zswap испорчены вручную
 DIRTY_SWAPPINESS=""  # D6: исходное значение swappiness до ручной записи
 FAILED_STATE=""
+INITIAL_PARAMS=""
 # STARTED — тест начал менять систему: журнал с этого момента содержит только
 # операции теста, и при падении их можно откатывать. До этого (например,
 # «VM не чистая») trap ничего не откатывает — это чужие операции.
@@ -147,14 +149,37 @@ assert_same_file() {
 	echo "ok: ${3:-} (байт в байт)"
 }
 
+ZP=/sys/module/zswap/parameters
+PROFILE_FILES=(/etc/sysctl.d/99-ramplus.conf /etc/systemd/system/ramplus-zswap.service)
+
+# params — текущие значения параметров профиля (путь=значение).
+params() {
+	local f
+	for f in "$ZP"/enabled "$ZP"/compressor "$ZP"/zpool "$ZP"/max_pool_percent "$ZP"/shrinker_enabled \
+		/proc/sys/vm/swappiness /proc/sys/vm/page-cluster /proc/sys/vm/watermark_scale_factor /proc/sys/vm/vfs_cache_pressure; do
+		if [[ -r $f ]]; then
+			printf '%s=%s\n' "$f" "$(<"$f")"
+		fi
+	done
+}
+
 rp() {
 	echo "+ ramplus $*"
 	"$BIN" "$@"
 }
 
+# system_clean — RamPlus ничего не держит (check-clean: нет managed swap,
+# активного профиля, незавершённых операций, файлов и юнитов RamPlus) и
+# параметры zswap/vm.* равны снятым в начале теста.
+system_clean() {
+	"$BIN" swap check-clean >/dev/null 2>&1 || return 1
+	[[ -z $INITIAL_PARAMS || $(params) == "$INITIAL_PARAMS" ]]
+}
+
 # restore_after_failure — вернуть VM в исходное состояние после падения в
-# любом сценарии: демон остановить, ручные изменения вернуть, все операции
-# теста откатить через CLI (журнал теста содержит только их), демон удалить.
+# любом сценарии: демон остановить, ручные изменения вернуть, операции теста
+# откатывать через CLI по одной, пока система не чистая (журнал теста
+# содержит только их; перед каждым откатом — system_clean), демон удалить.
 restore_after_failure() {
 	echo
 	echo "=== Возврат VM в исходное состояние"
@@ -173,7 +198,16 @@ restore_after_failure() {
 	fi
 	local i
 	for ((i = 0; i < 30; i++)); do
-		"$BIN" history --json 2>/dev/null | grep -q '"rollback_next": true' || break
+		# Система уже в исходном состоянии (например, упали после D8 reset) —
+		# откаты не нужны: они заново применяли бы и снимали профили.
+		if system_clean; then
+			echo "система в исходном состоянии — откаты не нужны"
+			break
+		fi
+		if ! "$BIN" history --json 2>/dev/null | grep -q '"rollback_next": true'; then
+			echo "откатывать нечего, но система не в исходном состоянии — разбирать вручную"
+			break
+		fi
 		if ! "$BIN" rollback --yes; then
 			echo "rollback отказал — остаток разбирать вручную"
 			break
@@ -259,6 +293,7 @@ if ((!GROUPS_PREEXIST)); then
 	PURGE=(PURGE=1) # группы создаст make install этого теста — он их и удалит
 fi
 A_START_SWAPS=$(swaps)
+INITIAL_PARAMS=$(params) # значения zswap/vm.* в начале теста (D и очистка)
 STARTED=1
 
 ########################################################################
@@ -382,20 +417,6 @@ else
 fi
 
 ########################################################################
-ZP=/sys/module/zswap/parameters
-PROFILE_FILES=(/etc/sysctl.d/99-ramplus.conf /etc/systemd/system/ramplus-zswap.service)
-
-# params — текущие значения параметров профиля (путь=значение).
-params() {
-	local f
-	for f in "$ZP"/enabled "$ZP"/compressor "$ZP"/zpool "$ZP"/max_pool_percent "$ZP"/shrinker_enabled \
-		/proc/sys/vm/swappiness /proc/sys/vm/page-cluster /proc/sys/vm/watermark_scale_factor /proc/sys/vm/vfs_cache_pressure; do
-		if [[ -r $f ]]; then
-			printf '%s=%s\n' "$f" "$(<"$f")"
-		fi
-	done
-}
-
 assert_param() {
 	local f=${1:-} want=${2:-} got=""
 	got=$(<"$f")
@@ -411,9 +432,9 @@ assert_no_profile_files() {
 	echo "ok: файлов профиля нет"
 }
 
-step "D0. исходные значения"
-INITIAL_PARAMS=$(params)
+step "D0. исходные значения (сняты в начале теста)"
 echo "$INITIAL_PARAMS"
+assert_eq "$(params)" "$INITIAL_PARAMS" "сценарии A–C не изменили параметры"
 assert_no_profile_files
 
 step "D1. plan без root ничего не меняет"
@@ -489,7 +510,9 @@ api() {
 	if [[ -n $data ]]; then
 		args+=(-H 'Content-Type: application/json' -d "$data")
 	fi
-	out=$("${as[@]}" curl "${args[@]}" "http://localhost$path")
+	local rc=0
+	out=$("${as[@]}" curl "${args[@]}" "http://localhost$path") || rc=$?
+	((rc == 0)) || die "curl $method $path: код $rc (не удалось подключиться или передать запрос)"
 	CODE=${out##*$'\n'}
 	BODY=${out%$'\n'*}
 }
@@ -562,14 +585,28 @@ assert_state "$SWAPFILE" 0 "$BEFORE"
 step "E5. права"
 before
 NOGROUP=$(id -gn nobody)
+nobody=(setpriv --reuid=nobody --regid="$NOGROUP" --clear-groups)
+reader=(setpriv --reuid=nobody --regid="$NOGROUP" --groups=ramplus)
 # Без групп nobody не проходит права каталога/сокета (0750/0660 root:ramplus):
 # до HTTP дело не доходит (403 auth.forbidden за SO_PEERCRED — в go test).
-if err=$(setpriv --reuid=nobody --regid="$NOGROUP" --clear-groups \
-	curl -sS --unix-socket "$SOCK" http://localhost/v1/status 2>&1); then
-	die "nobody без групп получил доступ к демону:\n$err"
+# curl любую ошибку подключения к unix-сокету сообщает кодом 7 и текстом не
+# различает причину, поэтому причина доказывается отдельно: сокет есть,
+# права каталога те, nobody не может в него войти, а член ramplus — может.
+[[ -S $SOCK ]] || die "нет сокета $SOCK"
+[[ $(stat -c '%a %U %G' "$(dirname "$SOCK")") == "750 root ramplus" ]] ||
+	die "права $(dirname "$SOCK"): $(stat -c '%a %U %G' "$(dirname "$SOCK")")"
+rc=0
+"${nobody[@]}" curl -sS --unix-socket "$SOCK" http://localhost/v1/status >/dev/null 2>&1 || rc=$?
+[[ $rc == 7 ]] || die "nobody: curl должен не подключиться (код 7), получен код $rc"
+if "${nobody[@]}" test -x "$(dirname "$SOCK")"; then
+	die "nobody без групп может войти в $(dirname "$SOCK") — причина отказа не права"
 fi
-grep -qi 'permission denied' <<<"$err" || die "nobody: ожидался отказ в доступе к сокету: $err"
-reader=(setpriv --reuid=nobody --regid="$NOGROUP" --groups=ramplus)
+if "${nobody[@]}" stat "$SOCK" >/dev/null 2>&1; then
+	die "nobody без групп видит $SOCK — причина отказа не права"
+fi
+"${reader[@]}" test -x "$(dirname "$SOCK")" || die "член ramplus не может войти в $(dirname "$SOCK")"
+"${reader[@]}" test -w "$SOCK" || die "член ramplus не может писать в $SOCK"
+echo "ok: nobody без групп не доходит до сокета из-за прав (curl код 7, каталог закрыт), член ramplus доходит"
 api "${reader[@]}" -- GET /v1/status
 expect_code 200 "status от члена ramplus"
 api "${reader[@]}" -- POST /v1/plan/swap '{"action": "apply", "size": "4G", "existing": "keep"}'
