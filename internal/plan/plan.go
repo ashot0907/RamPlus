@@ -160,6 +160,11 @@ type Effects struct {
 
 // Plan — что будет сделано и почему.
 type Plan struct {
+	// ID — идентификатор построенного плана (задаёт core; по нему Apply).
+	ID string `json:"id,omitempty"`
+	// Fingerprint — отпечаток фактов, на которых построен план (Seal).
+	Fingerprint string `json:"fingerprint"`
+
 	Action  Action   `json:"action"`
 	Command string   `json:"command"`
 	Choices []Choice `json:"choices"`

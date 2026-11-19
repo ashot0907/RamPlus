@@ -259,3 +259,28 @@ func (pf Facts) SourceOf(key string) string {
 	}
 	return "ядро по умолчанию"
 }
+
+// fingerprintPart — часть отпечатка плана от фактов профиля: текущие
+// значения параметров, файлы sysctl и их порядок, наши файлы и юнит,
+// доступность компрессоров/аллокаторов, zram, cmdline, активные swap.
+func (f Facts) fingerprintPart() any {
+	swaps := make([]string, 0, len(f.Swaps))
+	for _, s := range f.Swaps {
+		swaps = append(swaps, s.Path)
+	}
+	return struct {
+		Swaps         []string
+		Cmdline       string
+		Values        map[string]string
+		ZswapPresent  bool
+		SysctlFiles   []ConfFile
+		OurSysctl     *string
+		OurUnit       *string
+		UnitEnabled   bool
+		CompressorOK  map[string]bool
+		ZpoolOK       map[string]bool
+		ZramActive    bool
+		ZramGenerator string
+	}{swaps, f.Cmdline, f.Values, f.ZswapPresent, f.SysctlFiles, f.OurSysctl, f.OurUnit, f.UnitEnabled,
+		f.CompressorOK, f.ZpoolOK, f.ZramActive, f.ZramGenerator}
+}

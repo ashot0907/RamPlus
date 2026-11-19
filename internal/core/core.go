@@ -22,6 +22,8 @@ type Core struct {
 	Sys sys.System
 	// Collect — снимок памяти для Status (по умолчанию monitor.Collect).
 	Collect func() monitor.Status
+
+	plans planStore
 }
 
 // New — сервис над системой s.
@@ -35,49 +37,82 @@ type Request struct {
 	Rollback     bool
 }
 
-// Plan строит план операции (только чтение, root не нужен).
+// Plan строит план операции (только чтение, root не нужен) и запоминает
+// его: выполнить — Apply(p.ID).
 func (c *Core) Plan(ctx context.Context, r Request) *plan.Plan {
+	p := c.build(ctx, r)
+	p.ID = c.plans.put(r, p.Fingerprint, c.Sys.Now())
+	return p
+}
+
+// build строит план без запоминания.
+func (c *Core) build(ctx context.Context, r Request) *plan.Plan {
 	switch {
 	case r.Swap != nil:
-		return c.SwapPlan(ctx, *r.Swap)
+		return c.swapPlan(ctx, *r.Swap)
 	case r.Profile != nil:
-		return c.ProfilePlan(ctx, *r.Profile)
+		p := profile.PlanProfile(ctx, c.Sys, *r.Profile)
+		return &p.Plan
 	case r.ProfileReset:
-		return c.ProfileResetPlan(ctx)
+		p := profile.PlanProfileReset(ctx, c.Sys)
+		return &p.Plan
 	default:
-		return c.RollbackPlan(ctx)
+		return c.swapPlan(ctx, swap.Options{Action: plan.ActionRollback})
 	}
 }
 
 // SwapPlan — план apply/resize/remove swap.
 func (c *Core) SwapPlan(ctx context.Context, o swap.Options) *plan.Plan {
-	p := swap.BuildPlan(swap.Gather(ctx, c.Sys, o.Path), o)
-	return &p.Plan
+	return c.Plan(ctx, Request{Swap: &o})
 }
 
 // ProfilePlan — план применения профиля.
 func (c *Core) ProfilePlan(ctx context.Context, r profile.ProfileRequest) *plan.Plan {
-	p := profile.PlanProfile(ctx, c.Sys, r)
-	return &p.Plan
+	return c.Plan(ctx, Request{Profile: &r})
 }
 
 // ProfileResetPlan — план сброса профиля.
 func (c *Core) ProfileResetPlan(ctx context.Context) *plan.Plan {
-	p := profile.PlanProfileReset(ctx, c.Sys)
-	return &p.Plan
+	return c.Plan(ctx, Request{ProfileReset: true})
 }
 
 // RollbackPlan — план отката последней операции (общий стек).
 func (c *Core) RollbackPlan(ctx context.Context) *plan.Plan {
-	p := swap.BuildPlan(swap.Gather(ctx, c.Sys, ""), swap.Options{Action: plan.ActionRollback})
+	return c.Plan(ctx, Request{Rollback: true})
+}
+
+func (c *Core) swapPlan(ctx context.Context, o swap.Options) *plan.Plan {
+	p := swap.BuildPlan(swap.Gather(ctx, c.Sys, o.Path), o)
 	return &p.Plan
 }
 
-// Run — CLI: под блокировкой построить план, показать, подтвердить и
-// выполнить (h.Render и h.Confirm задаёт вызывающий).
+// Run — CLI: построить план и сразу выполнить его через Apply (с той же
+// проверкой отпечатка, что у демона). h.Render и h.Confirm задаёт
+// вызывающий.
 func (c *Core) Run(ctx context.Context, r Request, h journal.Hooks) (*plan.Plan, error) {
+	return c.apply(ctx, c.Plan(ctx, r).ID, h)
+}
+
+// Apply выполняет ранее построенный план planID: под блокировкой заново
+// собирает факты и строит план; если отпечаток изменился — отказ
+// (ErrPlanStale), ничего не меняется. План выполняется не больше одного
+// раза: после Apply его ID недействителен.
+func (c *Core) Apply(ctx context.Context, planID string, h journal.Hooks) Result {
+	return c.result(h, func(h journal.Hooks) (*plan.Plan, error) { return c.apply(ctx, planID, h) })
+}
+
+func (c *Core) apply(ctx context.Context, planID string, h journal.Hooks) (*plan.Plan, error) {
+	sp, ok := c.plans.take(planID, c.Sys.Now())
+	if !ok {
+		return nil, fmt.Errorf("%w: %q", ErrPlanNotFound, planID)
+	}
 	return journal.Execute(ctx, c.Sys, func(ctx context.Context) (*plan.Plan, error) {
-		return c.Plan(ctx, r), nil
+		p := c.build(ctx, sp.req)
+		p.ID = planID
+		if p.Fingerprint != sp.fingerprint {
+			return p, ErrPlanStale
+		}
+		return p, nil
 	}, h)
 }
 

@@ -18,6 +18,8 @@ const (
 	ResultBlocked        ResultStatus = "blocked"         // план заблокирован проверками, ничего не изменено
 	ResultCancelled      ResultStatus = "cancelled"       // не подтверждено, ничего не изменено
 	ResultNeedRoot       ResultStatus = "need_root"       // нужны права root, ничего не изменено
+	ResultStale          ResultStatus = "stale"           // система изменилась после построения плана, ничего не изменено
+	ResultUnknownPlan    ResultStatus = "unknown_plan"    // нет плана с таким ID (не строился, истёк или уже выполнен)
 	ResultFailed         ResultStatus = "failed"          // шаг упал, выполненные шаги откачены
 	ResultRollbackFailed ResultStatus = "rollback_failed" // шаг упал и откат не удался — ручная проверка
 	ResultError          ResultStatus = "error"           // прочая ошибка
@@ -47,6 +49,11 @@ func (r Result) OK() bool { return r.Status == ResultDone || r.Status == ResultN
 // Execute — Run с итогом в виде данных: хуки h вызываются как обычно,
 // дополнительно собираются ID операции и события шагов.
 func (c *Core) Execute(ctx context.Context, r Request, h journal.Hooks) Result {
+	return c.result(h, func(h journal.Hooks) (*plan.Plan, error) { return c.Run(ctx, r, h) })
+}
+
+// result выполняет run с хуками, собирающими итог.
+func (c *Core) result(h journal.Hooks, run func(journal.Hooks) (*plan.Plan, error)) Result {
 	res := Result{Events: []EventView{}}
 	started, progress := h.Started, h.Progress
 	h.Started = func(id string) {
@@ -65,7 +72,7 @@ func (c *Core) Execute(ctx context.Context, r Request, h journal.Hooks) Result {
 			progress(ev)
 		}
 	}
-	p, err := c.Run(ctx, r, h)
+	p, err := run(h)
 	res.Plan = p
 	res.Status = statusOf(p, err)
 	if err != nil {
@@ -87,6 +94,10 @@ func statusOf(p *plan.Plan, err error) ResultStatus {
 		return ResultBlocked
 	case errors.Is(err, journal.ErrCancelled):
 		return ResultCancelled
+	case errors.Is(err, ErrPlanStale):
+		return ResultStale
+	case errors.Is(err, ErrPlanNotFound):
+		return ResultUnknownPlan
 	case errors.As(err, &se) && len(se.RollbackErrors) > 0:
 		return ResultRollbackFailed
 	case errors.As(err, &se):

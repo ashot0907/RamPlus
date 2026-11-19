@@ -24,6 +24,12 @@ var update = flag.Bool("update", false, "перезаписать эталоны
 // opID — ID операции (наносекунды + случайный суффикс): нормализуется.
 var opID = regexp.MustCompile(`\d{8}T\d{6}\.\d{9}Z-[0-9a-f]{6}(\.\d+)?`)
 
+// planID и отпечаток плана (зависит от ID операций в журнале) — тоже.
+var (
+	planID      = regexp.MustCompile(`"id": "[0-9a-f]{16}"`)
+	fingerprint = regexp.MustCompile(`"fingerprint": "[0-9a-f]{32}"`)
+)
+
 type session struct {
 	t   *testing.T
 	w   *fakesys.World
@@ -83,6 +89,8 @@ func (s *session) run(args ...string) {
 func (s *session) check(name string) {
 	s.t.Helper()
 	got := opID.ReplaceAllString(s.out.String(), "<OPID>")
+	got = planID.ReplaceAllString(got, `"id": "<PLANID>"`)
+	got = fingerprint.ReplaceAllString(got, `"fingerprint": "<FP>"`)
 	path := filepath.Join("testdata", "golden", name+".golden")
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

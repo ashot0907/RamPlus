@@ -230,3 +230,61 @@ func (f Facts) fstabEntriesFor(path string) []FstabEntry {
 
 // IsOurPath — путь swap RamPlus (из журнала или путь по умолчанию).
 func (f Facts) IsOurPath(path string) bool { return f.isOurPath(path) }
+
+// fingerprintPart — часть отпечатка плана от фактов swap: активные swap
+// (без занятости — она меняется постоянно; на план она влияет через
+// вердикт проверки swapoff), ФС под путём и свободное место (с точностью
+// до GiB), fstab, cmdline, файлы и юниты RamPlus.
+func (f Facts) fingerprintPart() any {
+	type swapRow struct {
+		Path, Type string
+		Size       uint64
+		Priority   int
+	}
+	type fsPart struct {
+		FSType, Source, MountPoint, Kind string
+		ReadOnly                         bool
+		TotalBytes                       *uint64
+		AvailGiB                         *uint64
+		Err                              string
+	}
+	fsOf := func(fi detect.FSInfo) fsPart {
+		p := fsPart{FSType: fi.FSType, Source: fi.Source, MountPoint: fi.MountPoint, Kind: fi.Kind, ReadOnly: fi.ReadOnly, TotalBytes: fi.TotalBytes}
+		if fi.AvailableBytes != nil {
+			g := *fi.AvailableBytes / GiB
+			p.AvailGiB = &g
+		}
+		if fi.Error != nil {
+			p.Err = fi.Error.Detail
+		}
+		return p
+	}
+	part := struct {
+		Managed       *Managed
+		TargetPath    string
+		TargetErr     string
+		Target        fsPart
+		Swaps         []swapRow
+		Cmdline       string
+		Fstab         string
+		FstabErr      string
+		FstabResolved map[string]string
+		Tools         [3]bool
+		Exists        map[string]bool
+		Units         []string
+		Observed      map[string]ObservedFile
+	}{Managed: f.Managed, TargetPath: f.Target.Path, TargetErr: errText(f.Target.ParentErr), Target: fsOf(f.Target.FS),
+		Cmdline: f.Cmdline, Fstab: f.Fstab, FstabErr: errText(f.FstabErr), FstabResolved: f.FstabResolved,
+		Tools: [3]bool{f.HasBtrfs, f.HasMkswapfile, f.HasChattr}, Exists: f.Exists, Units: f.Units, Observed: f.Observed}
+	for _, s := range f.Swaps {
+		part.Swaps = append(part.Swaps, swapRow{s.Path, s.Type, s.SizeBytes, s.Priority})
+	}
+	return part
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}

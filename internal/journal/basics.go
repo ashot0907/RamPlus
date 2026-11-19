@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -78,6 +79,36 @@ func (b Basics) ignore(op Operation) map[string]bool {
 		ignore[r.Pending.Step.Path] = true
 	}
 	return ignore
+}
+
+// FingerprintPart — часть отпечатка плана от журнала и общих фактов:
+// версия формата, операции и их статусы, разделы, незавершённая операция.
+func (b Basics) FingerprintPart() any {
+	type op struct{ ID, Status string }
+	part := struct {
+		Version              int
+		EUID                 int
+		Systemd              bool
+		StateErr             string
+		Ops                  []op
+		Managed, Profile, Bl json.RawMessage
+		Recovery             *Recovery
+		RollbackDiff         []string
+		SwapsErr             string
+	}{Version: StateVersion, EUID: b.EUID, Systemd: b.Systemd, StateErr: errText(b.StateErr),
+		Managed: b.State.Managed, Profile: b.State.Profile, Bl: b.State.Baseline,
+		Recovery: b.Recovery, RollbackDiff: b.RollbackDiff, SwapsErr: errText(b.SwapsErr)}
+	for _, o := range b.State.Operations {
+		part.Ops = append(part.Ops, op{o.ID, string(o.Status)})
+	}
+	return part
+}
+
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // CommonChecks — проверки, общие для всех планов.

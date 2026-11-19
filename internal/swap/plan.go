@@ -116,6 +116,7 @@ func BuildPlan(f Facts, o Options) Plan {
 	if o.Action == ActionApply {
 		p.Choices = applyChoices(f, o, p)
 	}
+	p.Plan.Seal(f.Basics.FingerprintPart(), f.fingerprintPart())
 	return p
 }
 

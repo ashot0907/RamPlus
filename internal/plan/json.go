@@ -19,6 +19,8 @@ func ViewOf(s Step) StepView { return StepView{Step: s, Description: s.Describe(
 // публичной схемы (schema_version).
 type planJSON struct {
 	SchemaVersion int          `json:"schema_version"`
+	ID            string       `json:"id,omitempty"`
+	Fingerprint   string       `json:"fingerprint"`
 	Action        Action       `json:"action"`
 	Command       string       `json:"command"`
 	Blocked       bool         `json:"blocked"`
@@ -36,6 +38,8 @@ type planJSON struct {
 func (p Plan) MarshalJSON() ([]byte, error) {
 	j := planJSON{
 		SchemaVersion: SchemaVersion,
+		ID:            p.ID,
+		Fingerprint:   p.Fingerprint,
 		Action:        p.Action,
 		Command:       p.Command,
 		Blocked:       p.Blocked(),

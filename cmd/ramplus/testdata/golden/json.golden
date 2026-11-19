@@ -1,6 +1,8 @@
 $ ramplus swap plan --size 4G --json
 {
   "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
   "action": "apply",
   "command": "ramplus swap apply --size 4G --existing=keep",
   "blocked": false,
@@ -267,6 +269,8 @@ $ ramplus swap apply --size 4G --json --yes
   ],
   "plan": {
     "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
     "action": "apply",
     "command": "ramplus swap apply --size 4G --existing=keep",
     "blocked": false,
@@ -448,6 +452,8 @@ $ ramplus swap resize --size 4G --json --yes
   "events": [],
   "plan": {
     "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
     "action": "resize",
     "command": "ramplus swap resize --size 4G",
     "blocked": true,
@@ -519,6 +525,8 @@ error: silent failure
 $ ramplus profile plan zswap-lz4 --json
 {
   "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
   "action": "profile-apply",
   "command": "ramplus profile apply zswap-lz4",
   "blocked": false,
@@ -689,6 +697,8 @@ $ ramplus profile apply zswap-lz4 --json --yes
   "events": [],
   "plan": {
     "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
     "action": "profile-apply",
     "command": "ramplus profile apply zswap-lz4",
     "blocked": false,
@@ -934,6 +944,8 @@ $ ramplus profile apply zswap-lz4 --json --yes --experimental
   ],
   "plan": {
     "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
     "action": "profile-apply",
     "command": "ramplus profile apply zswap-lz4 --experimental",
     "blocked": false,
@@ -1101,6 +1113,8 @@ $ ramplus profile apply zswap-lz4 --json --yes --experimental
 $ ramplus rollback --dry-run --json
 {
   "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
   "action": "rollback",
   "command": "ramplus rollback",
   "blocked": false,
@@ -1295,6 +1309,8 @@ $ ramplus rollback --json --yes
   ],
   "plan": {
     "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
     "action": "rollback",
     "command": "ramplus rollback",
     "blocked": false,
@@ -1415,6 +1431,8 @@ $ ramplus rollback --json --yes
 $ ramplus profile reset --dry-run --json
 {
   "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
   "action": "profile-reset",
   "command": "ramplus profile reset",
   "blocked": true,

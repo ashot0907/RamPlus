@@ -115,15 +115,25 @@ ramplus swap check-clean                           # нет ли следов Ra
 `--json` есть у `swap plan/apply/resize/remove`, `rollback`,
 `profile plan/apply/reset` — та же схема, что у будущего API демона:
 
-- план (`plan`, `--dry-run --json`): `schema_version`, `action`, `command`,
+- план (`plan`, `--dry-run --json`): `schema_version`, `id`, `fingerprint`, `action`, `command`,
   `blocked`, `choices`, `checks` (у каждой проверки стабильный машинный
   `code`, например `fs.unsupported`, `disk.usb`, `rollback.nothing`; тексты —
   в `title`/`message`), `steps` (`kind` и параметры шага плюс `description`),
   `summary`, `swap`/`profile`;
 - выполнение (`--json --yes`, подтверждения в JSON-режиме нет): `status`
-  (`done`, `nothing`, `blocked`, `cancelled`, `need_root`, `failed`,
-  `rollback_failed`, `error`), `operation_id`, `error`, `events` (шаги и
-  их откат) и `plan`. Код выхода 1, если статус не `done`/`nothing`.
+  (`done`, `nothing`, `blocked`, `cancelled`, `need_root`, `stale`,
+  `unknown_plan`, `failed`, `rollback_failed`, `error`), `operation_id`,
+  `error`, `events` (шаги и их откат) и `plan`. Код выхода 1, если статус
+  не `done`/`nothing`.
+
+`fingerprint` — отпечаток фактов, на которых построен план: активные swap,
+ФС и свободное место (с точностью до GiB), fstab, значения параметров
+zswap/sysctl, журнал (версия, операции и их статусы), а также решение
+плана (шаги и вердикты проверок). Выполнение по ID плана (`core.Apply`,
+для демона) заново собирает факты под блокировкой и отказывается со
+статусом `stale`, если отпечаток изменился: «система изменилась с момента
+построения плана, постройте план заново». CLI строит план и сразу
+выполняет его тем же путём.
 
 ## Профили
 

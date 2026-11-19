@@ -53,6 +53,7 @@ func (p *Plan) seal(f Facts) {
 			p.Profile.CurrentStatusText = StatusText(f.Profile.Status)
 		}
 	}
+	p.Plan.Seal(f.Basics.FingerprintPart(), f.fingerprintPart())
 }
 
 func profileCommand(req ProfileRequest, reset bool) string {
