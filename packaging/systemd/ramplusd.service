@@ -1,0 +1,77 @@
+# ramplusd — демон RamPlus: HTTP/JSON API на unix-сокете /run/ramplus/ramplusd.sock
+# (TCP не слушает). Чтение — группа ramplus, изменения — ramplus-admin.
+#
+# Установка: make build && sudo make install && sudo systemctl enable --now ramplusd
+[Unit]
+Description=RamPlus daemon (virtual memory management API)
+Documentation=https://github.com/ashot0907/ramplus
+After=local-fs.target systemd-tmpfiles-setup.service
+
+[Service]
+Type=exec
+ExecStart=@BINDIR@/ramplusd
+# root: swapon/swapoff, /etc/systemd, /etc/sysctl.d, /proc/sys, /sys/module/zswap,
+# /var/lib/ramplus. HTTP-сервера с root нет — это отдельный ramplus-web (позже).
+User=root
+Restart=on-failure
+RestartSec=2s
+# Демон нужен именно при нехватке памяти: OOM killer выбирает его последним.
+OOMScoreAdjust=-900
+# Мягкий лимит Go-кучи (демон держит память mlockall-ом — она не должна расти).
+Environment=GOMEMLIMIT=64MiB
+# SIGTERM получает только демон: он дожидается текущей операции, а её
+# дочерние процессы (mkswap, systemctl) не прерываются посреди шага.
+KillMode=mixed
+# Операция может идти долго (запись нулями без fallocate). Журнал write-ahead
+# защищает и от SIGKILL, но доделать шаг лучше.
+TimeoutStopSec=15min
+
+# --- Защита: включено ---
+# Запрет повышения привилегий через setuid/file caps у дочерних процессов.
+NoNewPrivileges=yes
+# Свой /tmp: swapfile в /tmp RamPlus и так не создаёт (очищается при загрузке).
+PrivateTmp=yes
+# /home только для чтения: демону он не нужен. Следствие: swapfile в /home
+# через демон создать нельзя (через CLI — можно).
+ProtectHome=read-only
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+SystemCallArchitectures=native
+# Go не создаёт W+X-страниц; дочерние утилиты — тоже.
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+# cgroups демон пока не трогает (systemctl говорит с PID 1 по D-Bus).
+# Пересмотреть, когда появится вытеснение фоновых сервисов.
+ProtectControlGroups=yes
+# Сеть не нужна: только unix-сокеты (свой API, D-Bus для systemctl).
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+
+# --- Защита: НЕ включено, и почему ---
+# ProtectSystem=strict|full — /etc (юниты, fstab, sysctl.d) и / (swapfile)
+#   станут только для чтения. ProtectSystem=yes делает read-only /usr и /boot:
+#   swapfile в /usr (редко, но законно) сломается.
+# ProtectKernelTunables — /proc/sys и /sys только для чтения: ломает vm.* и
+#   параметры zswap в /sys/module/zswap/parameters.
+# ProtectKernelModules — скрывает /usr/lib/modules: профиль не увидит модули
+#   компрессоров/zpool и откажет в доступном lz4/zstd.
+# PrivateDevices — скрывает /dev/sdX: swapoff/swapon swap-раздела при
+#   --existing=replace и откат.
+# ProtectProc=invisible — права клиента проверяются по /proc/<pid>/status
+#   (дополнительные группы).
+# PrivateNetwork — не нужен поверх RestrictAddressFamilies/IPAddressDeny и
+#   рискован для D-Bus.
+# CapabilityBoundingSet — демон делает администрирование (swapon: CAP_SYS_ADMIN,
+#   chown сокета, mlockall: CAP_IPC_LOCK, запись в чужие файлы); точный список
+#   — после прогона всех сценариев в VM.
+# SystemCallFilter — легко сломать редкие пути (swapon, ioctl chattr/btrfs,
+#   fallocate); вернуться после прогона в VM.
+# UMask=0077 — файлы шагов создаются с явными правами через umask: юниты и
+#   sysctl.d стали бы 0600.
+
+[Install]
+WantedBy=multi-user.target

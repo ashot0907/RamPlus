@@ -692,7 +692,7 @@ $ ramplus profile plan zswap-lz4 --json
 
 $ ramplus profile apply zswap-lz4 --json --yes
 {
-  "status": "error",
+  "status": "experimental_not_confirmed",
   "error": "профиль экспериментальный (не подтверждён бенчмарком на SSD): для скриптов добавьте --experimental",
   "events": [],
   "plan": {

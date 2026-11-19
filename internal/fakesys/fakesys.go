@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -84,7 +85,15 @@ type World struct {
 	Mutations           int
 	Mounts              map[string]Mount
 	Log                 []string
+	// OnMutation вызывается перед каждым изменяющим вызовом (тесты
+	// параллельной работы: остановить операцию посреди шагов).
+	OnMutation func(op string)
+	// Locked — блокировка журнала занята (Lock возвращает ErrLocked).
+	Locked bool
 }
+
+// lockMu — защищает World.Locked (Lock вызывается из разных горутин).
+var lockMu sync.Mutex
 
 // New — чистая система: ext4 на NVMe, 500 GiB, 300 GiB свободно, RAM 16 GiB
 // (8 доступно), systemd, root.
@@ -217,6 +226,9 @@ func (w *World) DescribeFS(path string) detect.FSInfo {
 }
 
 func (w *World) mutate(op string) error {
+	if w.OnMutation != nil {
+		w.OnMutation(op)
+	}
 	w.Mutations++
 	w.Log = append(w.Log, op)
 	if w.FailAt != 0 && w.Mutations == w.FailAt {
@@ -560,7 +572,20 @@ func (f *FS) WriteZeros(name string, size uint64) error {
 	return nil
 }
 
-func (f *FS) Lock(string) (func() error, error) { return func() error { return nil }, nil }
+func (f *FS) Lock(name string) (func() error, error) {
+	lockMu.Lock()
+	defer lockMu.Unlock()
+	if f.w.Locked {
+		return nil, fmt.Errorf("%w (%s)", sys.ErrLocked, name)
+	}
+	f.w.Locked = true
+	return func() error {
+		lockMu.Lock()
+		defer lockMu.Unlock()
+		f.w.Locked = false
+		return nil
+	}, nil
+}
 
 // --- Executor ---
 

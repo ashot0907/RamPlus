@@ -31,7 +31,7 @@ func TestCleanProblems(t *testing.T) {
 	}{
 		{"managed", func(w *fakeWorld) { loadState(t, w, "state/v1-committed.json") }, "управляет swap /ramplus.swap"},
 		{"pending", func(w *fakeWorld) {
-			st := State{Operations: []Operation{{ID: "x", Action: ActionApply, Status: OpInProgress, Command: "ramplus swap apply"}}}
+			st := State{Operations: []journalOp{{ID: "x", Action: ActionApply, Status: OpInProgress, Command: "ramplus swap apply"}}}
 			b, _ := st.Marshal()
 			w.Files[StateDir] = &fakeFile{Dir: true}
 			w.Files[StatePath] = &fakeFile{Data: string(b)}
@@ -110,7 +110,7 @@ func TestRollbackV1Apply(t *testing.T) {
 func TestAnnotateStatus(t *testing.T) {
 	w := newWorld(t)
 	st := State{Managed: swap.EncodeManaged(&swap.Managed{Path: "/custom/ramplus.swapfile"}),
-		Operations: []Operation{{ID: "1", Action: ActionApply, Status: OpInProgress}}}
+		Operations: []journalOp{{ID: "1", Action: ActionApply, Status: OpInProgress}}}
 	b, _ := st.Marshal()
 	w.Files[StateDir] = &fakeFile{Dir: true}
 	w.Files[StatePath] = &fakeFile{Data: string(b)}

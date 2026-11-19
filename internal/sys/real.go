@@ -149,7 +149,7 @@ func (OSFS) Lock(name string) (func() error, error) {
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, fmt.Errorf("другой экземпляр ramplus уже выполняет операцию (%s)", name)
+			return nil, fmt.Errorf("%w (%s)", ErrLocked, name)
 		}
 		return nil, err
 	}

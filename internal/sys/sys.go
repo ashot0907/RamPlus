@@ -25,6 +25,10 @@ const (
 // ErrFallocateUnsupported — ФС не поддерживает fallocate.
 var ErrFallocateUnsupported = errors.New("fallocate not supported")
 
+// ErrLocked — блокировка занята: другой процесс RamPlus (CLI или демон)
+// уже выполняет операцию.
+var ErrLocked = errors.New("другой экземпляр ramplus уже выполняет операцию")
+
 // FS — операции с файлами. Реализация по умолчанию — OSFS.
 type FS interface {
 	ReadFile(name string) ([]byte, error)

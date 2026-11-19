@@ -23,6 +23,11 @@
 #   D. профиль zswap-lz4: plan → apply --experimental → status → «перезагрузка»
 #      (ручная порча значений + restart ramplus-zswap.service) → дрейф →
 #      rollback → apply + default --set → reset = значения как в начале
+#   E. демон: make install → systemctl start ramplusd → API status → plan swap
+#      4G → apply → ждать /operations/{id} → swap 4G → plan rollback → apply →
+#      чисто; права: nobody без групп не доходит до сокета, член ramplus
+#      строит план, но apply → 403; make uninstall — следов нет.
+#      Нужны curl и собранный ./ramplusd (make build).
 set -euo pipefail
 
 BIN=${1:-./ramplus}
@@ -33,6 +38,9 @@ STATE=/var/lib/ramplus/state.json
 OLD=""            # существующий swap для сценариев B/C
 CREATED_OLD=0     # /swap.img создан этим скриптом
 SAVED_STATE=""    # журнал прошлых прогонов, отложенный на время теста
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+INSTALLED=0       # make install выполнен этим скриптом (сценарий E)
+SOCK=/run/ramplus/ramplusd.sock
 WORK=$(mktemp -d /tmp/ramplus-vm-test.XXXXXX)
 FSTAB_ORIG="$WORK/fstab.orig"
 
@@ -49,6 +57,8 @@ if command -v systemd-detect-virt >/dev/null; then
 	[[ $virt != none ]] || die "похоже, это не VM (systemd-detect-virt: none)"
 fi
 [[ -x $BIN ]] || die "нет бинарника $BIN (make build)"
+[[ -x $REPO/ramplusd ]] || die "нет $REPO/ramplusd (make build)"
+command -v curl >/dev/null || die "нужен curl (сценарий E)"
 
 # Активный swap: NAME SIZE(байты) PRIO. Колонки задаются через --show=...
 # (у swapon нет опции --output: она молча игнорируется).
@@ -120,6 +130,9 @@ cleanup() {
 		echo "Тест упал. Состояние для разбора:"
 		swapon --show || true
 		head -60 "$STATE" 2>/dev/null || true
+	fi
+	if ((INSTALLED)); then
+		make -s -C "$REPO" uninstall >/dev/null 2>&1 || true
 	fi
 	if [[ -n $SAVED_STATE ]]; then
 		if ((rc == 0)); then
@@ -358,5 +371,126 @@ assert_eq "$(params)" "$INITIAL_PARAMS" "значения как в начале
 assert_no_profile_files
 rp profile reset --yes | grep -q 'Нечего делать' || die "повторный reset должен быть пустым"
 "$BIN" swap check-clean || die "после reset остались следы"
+
+########################################################################
+# api [AS...] -- METHOD PATH [BODY]: запрос к демону; тело ответа — в $BODY,
+# код — в $CODE. AS — префикс запуска от другого пользователя (setpriv ...).
+api() {
+	local as=()
+	while [[ $1 != -- ]]; do
+		as+=("$1")
+		shift
+	done
+	shift
+	local method=$1 path=$2 data=${3:-} out
+	local args=(-sS --unix-socket "$SOCK" -X "$method" -w '\n%{http_code}')
+	if [[ -n $data ]]; then
+		args+=(-H 'Content-Type: application/json' -d "$data")
+	fi
+	out=$("${as[@]}" curl "${args[@]}" "http://localhost$path")
+	CODE=${out##*$'\n'}
+	BODY=${out%$'\n'*}
+}
+
+# field NAME — первое значение "NAME": "..." в $BODY.
+field() { sed -n "s/.*\"$1\": \"\([^\"]*\)\".*/\1/p" <<<"$BODY" | head -1; }
+
+expect_code() {
+	[[ $CODE == "$1" ]] || die "$2: ожидался HTTP $1, получен $CODE:\n$BODY"
+}
+
+# wait_op ID — ждать завершения операции демона, проверить status=done.
+wait_op() {
+	local i
+	for ((i = 0; i < 600; i++)); do
+		api -- GET "/v1/operations/$1"
+		expect_code 200 "операция $1"
+		if grep -q '"running": false' <<<"$BODY"; then
+			[[ $(field status) == "done" ]] || die "операция $1 не выполнена:\n$BODY"
+			return
+		fi
+		sleep 0.5
+	done
+	die "операция $1 не завершилась за 5 минут"
+}
+
+# apply_plan — POST /v1/apply по plan_id из $BODY, ждать завершения.
+apply_plan() {
+	local id
+	id=$(field id)
+	[[ -n $id ]] || die "в ответе нет id плана:\n$BODY"
+	api -- POST /v1/apply "{\"plan_id\": \"$id\"}"
+	expect_code 202 "apply $id"
+	wait_op "$(field operation_id)"
+}
+
+step "E1. make install, systemctl start ramplusd"
+make -s -C "$REPO" install
+INSTALLED=1
+systemctl start ramplusd
+for ((i = 0; i < 50; i++)); do
+	[[ -S $SOCK ]] && break
+	sleep 0.2
+done
+[[ -S $SOCK ]] || die "демон не создал $SOCK:\n$(journalctl -u ramplusd -n 30 --no-pager)"
+[[ $(stat -c '%a %U %G' "$SOCK") == "660 root ramplus" ]] || die "права сокета: $(stat -c '%a %U %G' "$SOCK")"
+rp daemon status
+
+step "E2. status через API"
+api -- GET /v1/status
+expect_code 200 "status"
+grep -q '"memory"' <<<"$BODY" || die "status без memory:\n$BODY"
+
+step "E3. plan swap 4G → apply → swap 4G"
+api -- POST /v1/plan/swap '{"action": "apply", "size": "4G", "existing": "keep"}'
+expect_code 200 "plan swap"
+apply_plan
+assert_state "$SWAPFILE" 4 "$INITIAL_NS"
+
+step "E4. plan rollback → apply → чисто"
+api -- POST /v1/plan/rollback
+expect_code 200 "plan rollback"
+grep -q '"domain": "swap"' <<<"$BODY" || die "rollback отменяет не swap:\n$BODY"
+apply_plan
+assert_state "$SWAPFILE" 0 "$INITIAL_NS"
+"$BIN" swap check-clean || die "после rollback через демон остались следы"
+
+step "E5. права"
+NOGROUP=$(id -gn nobody)
+# Без групп nobody не проходит права каталога/сокета (0750/0660 root:ramplus):
+# до HTTP дело не доходит (403 auth.forbidden за SO_PEERCRED — в go test).
+if err=$(setpriv --reuid=nobody --regid="$NOGROUP" --clear-groups \
+	curl -sS --unix-socket "$SOCK" http://localhost/v1/status 2>&1); then
+	die "nobody без групп получил доступ к демону:\n$err"
+fi
+grep -qi 'permission denied' <<<"$err" || die "nobody: ожидался отказ в доступе к сокету: $err"
+reader=(setpriv --reuid=nobody --regid="$NOGROUP" --groups=ramplus)
+api "${reader[@]}" -- GET /v1/status
+expect_code 200 "status от члена ramplus"
+api "${reader[@]}" -- POST /v1/plan/swap '{"action": "apply", "size": "4G", "existing": "keep"}'
+expect_code 200 "plan от члена ramplus"
+id=$(field id)
+api "${reader[@]}" -- POST /v1/apply "{\"plan_id\": \"$id\"}"
+expect_code 403 "apply от члена ramplus (не ramplus-admin)"
+[[ $(field code) == auth.forbidden ]] || die "код отказа: $BODY"
+journalctl -u ramplusd --no-pager -n 50 | grep -q 'auth.forbidden' || die "отказ не записан в журнал демона"
+assert_state "$SWAPFILE" 0 "$INITIAL_NS"
+
+step "E6. make uninstall — следов нет"
+make -s -C "$REPO" uninstall
+INSTALLED=0
+for f in /usr/local/bin/ramplusd /usr/local/bin/ramplus /usr/local/lib/systemd/system/ramplusd.service \
+	/usr/local/lib/sysusers.d/ramplus.conf /usr/local/lib/tmpfiles.d/ramplus.conf /run/ramplus; do
+	[[ ! -e $f ]] || die "после uninstall остался $f"
+done
+for g in ramplus ramplus-admin; do
+	if getent group "$g" >/dev/null; then
+		die "после uninstall осталась группа $g"
+	fi
+done
+if pgrep -x ramplusd >/dev/null; then
+	die "после uninstall работает ramplusd"
+fi
+"$BIN" swap check-clean || die "после uninstall остались следы"
 
 printf '\nВСЕ СЦЕНАРИИ ПРОЙДЕНЫ\n'

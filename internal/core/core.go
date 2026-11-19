@@ -24,6 +24,7 @@ type Core struct {
 	Collect func() monitor.Status
 
 	plans planStore
+	ops   opRegistry
 }
 
 // New — сервис над системой s.
@@ -102,9 +103,9 @@ func (c *Core) Apply(ctx context.Context, planID string, h journal.Hooks) Result
 }
 
 func (c *Core) apply(ctx context.Context, planID string, h journal.Hooks) (*plan.Plan, error) {
-	sp, ok := c.plans.take(planID, c.Sys.Now())
-	if !ok {
-		return nil, fmt.Errorf("%w: %q", ErrPlanNotFound, planID)
+	sp, err := c.plans.take(planID, c.Sys.Now())
+	if err != nil {
+		return nil, fmt.Errorf("%w (%q)", err, planID)
 	}
 	return journal.Execute(ctx, c.Sys, func(ctx context.Context) (*plan.Plan, error) {
 		p := c.build(ctx, sp.req)

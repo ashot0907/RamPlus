@@ -20,7 +20,7 @@ import (
 )
 
 // ErrExperimentalNotConfirmed — экспериментальный профиль без подтверждения.
-var ErrExperimentalNotConfirmed = errors.New("профиль экспериментальный (не подтверждён бенчмарком на SSD): для скриптов добавьте --experimental")
+var ErrExperimentalNotConfirmed = core.ErrExperimentalNotConfirmed
 
 type profileFlags struct {
 	set          []string

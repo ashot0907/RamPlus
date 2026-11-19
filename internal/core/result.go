@@ -6,23 +6,41 @@ import (
 
 	"github.com/ashot0907/ramplus/internal/journal"
 	"github.com/ashot0907/ramplus/internal/plan"
+	"github.com/ashot0907/ramplus/internal/sys"
 )
+
+// ErrExperimentalNotConfirmed — экспериментальный профиль без явного
+// подтверждения.
+var ErrExperimentalNotConfirmed = errors.New("профиль экспериментальный (не подтверждён бенчмарком на SSD): для скриптов добавьте --experimental")
+
+// ConfirmExperimental — проверка перед выполнением: экспериментальный
+// профиль применяется только с явным подтверждением.
+func ConfirmExperimental(p *plan.Plan, confirmed bool) error {
+	if p.Profile != nil && p.Profile.Experimental && !confirmed {
+		return ErrExperimentalNotConfirmed
+	}
+	return nil
+}
 
 // ResultStatus — итог выполнения операции (стабильный машинный код).
 type ResultStatus string
 
 // Итоги выполнения.
 const (
-	ResultDone           ResultStatus = "done"            // операция зафиксирована
-	ResultNothing        ResultStatus = "nothing"         // шагов нет, система уже в нужном состоянии
-	ResultBlocked        ResultStatus = "blocked"         // план заблокирован проверками, ничего не изменено
-	ResultCancelled      ResultStatus = "cancelled"       // не подтверждено, ничего не изменено
-	ResultNeedRoot       ResultStatus = "need_root"       // нужны права root, ничего не изменено
-	ResultStale          ResultStatus = "stale"           // система изменилась после построения плана, ничего не изменено
-	ResultUnknownPlan    ResultStatus = "unknown_plan"    // нет плана с таким ID (не строился, истёк или уже выполнен)
-	ResultFailed         ResultStatus = "failed"          // шаг упал, выполненные шаги откачены
-	ResultRollbackFailed ResultStatus = "rollback_failed" // шаг упал и откат не удался — ручная проверка
-	ResultError          ResultStatus = "error"           // прочая ошибка
+	ResultDone           ResultStatus = "done"                       // операция зафиксирована
+	ResultNothing        ResultStatus = "nothing"                    // шагов нет, система уже в нужном состоянии
+	ResultBlocked        ResultStatus = "blocked"                    // план заблокирован проверками, ничего не изменено
+	ResultCancelled      ResultStatus = "cancelled"                  // не подтверждено, ничего не изменено
+	ResultNeedRoot       ResultStatus = "need_root"                  // нужны права root, ничего не изменено
+	ResultStale          ResultStatus = "stale"                      // система изменилась после построения плана, ничего не изменено
+	ResultUnknownPlan    ResultStatus = "unknown_plan"               // нет плана с таким ID (не строился или истёк)
+	ResultPlanUsed       ResultStatus = "plan_used"                  // план уже выполнялся
+	ResultLocked         ResultStatus = "locked"                     // блокировку держит другой процесс RamPlus, ничего не изменено
+	ResultBusy           ResultStatus = "busy"                       // демон уже выполняет операцию, ничего не изменено
+	ResultNotConfirmed   ResultStatus = "experimental_not_confirmed" // экспериментальный профиль без подтверждения
+	ResultFailed         ResultStatus = "failed"                     // шаг упал, выполненные шаги откачены
+	ResultRollbackFailed ResultStatus = "rollback_failed"            // шаг упал и откат не удался — ручная проверка
+	ResultError          ResultStatus = "error"                      // прочая ошибка
 )
 
 // EventView — выполненный (или откаченный) шаг в JSON.
@@ -63,11 +81,7 @@ func (c *Core) result(h journal.Hooks, run func(journal.Hooks) (*plan.Plan, erro
 		}
 	}
 	h.Progress = func(ev journal.Event) {
-		v := EventView{Undo: ev.Undo, Index: ev.Index, Total: ev.Total, Step: plan.ViewOf(ev.Step)}
-		if ev.Err != nil {
-			v.Error = ev.Err.Error()
-		}
-		res.Events = append(res.Events, v)
+		res.Events = append(res.Events, eventView(ev))
 		if progress != nil {
 			progress(ev)
 		}
@@ -98,6 +112,14 @@ func statusOf(p *plan.Plan, err error) ResultStatus {
 		return ResultStale
 	case errors.Is(err, ErrPlanNotFound):
 		return ResultUnknownPlan
+	case errors.Is(err, ErrPlanUsed):
+		return ResultPlanUsed
+	case errors.Is(err, sys.ErrLocked):
+		return ResultLocked
+	case errors.Is(err, ErrBusy):
+		return ResultBusy
+	case errors.Is(err, ErrExperimentalNotConfirmed):
+		return ResultNotConfirmed
 	case errors.As(err, &se) && len(se.RollbackErrors) > 0:
 		return ResultRollbackFailed
 	case errors.As(err, &se):

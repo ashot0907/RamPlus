@@ -11,7 +11,8 @@ import (
 // Ошибки Apply по ID плана.
 var (
 	ErrPlanStale    = errors.New("система изменилась с момента построения плана, постройте план заново")
-	ErrPlanNotFound = errors.New("план не найден (не строился, истёк или уже выполнен) — постройте план заново")
+	ErrPlanNotFound = errors.New("план не найден (не строился или истёк) — постройте план заново")
+	ErrPlanUsed     = errors.New("план уже выполнялся — постройте план заново")
 )
 
 // Сколько и как долго хранятся построенные планы.
@@ -24,6 +25,7 @@ type storedPlan struct {
 	req         Request
 	fingerprint string
 	at          time.Time
+	used        bool // Apply уже забрал план (запись остаётся до истечения — для ErrPlanUsed)
 }
 
 // planStore — построенные, но ещё не выполненные планы (для демона: plan
@@ -52,21 +54,20 @@ func (s *planStore) put(r Request, fingerprint string, now time.Time) string {
 }
 
 // take забирает план: выполнить его можно только один раз.
-func (s *planStore) take(id string, now time.Time) (storedPlan, bool) {
+func (s *planStore) take(id string, now time.Time) (storedPlan, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.expire(now)
 	p, ok := s.plans[id]
-	if ok {
-		delete(s.plans, id)
-		for i, o := range s.order {
-			if o == id {
-				s.order = append(s.order[:i], s.order[i+1:]...)
-				break
-			}
-		}
+	switch {
+	case !ok:
+		return p, ErrPlanNotFound
+	case p.used:
+		return p, ErrPlanUsed
 	}
-	return p, ok
+	p.used = true
+	s.plans[id] = p
+	return p, nil
 }
 
 func (s *planStore) expire(now time.Time) {

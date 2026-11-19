@@ -8,7 +8,7 @@ Open-source инструмент для Linux (десктоп и серверы)
 
 ## Компоненты
 - ramplus — CLI
-- ramplusd — root-демон, вся логика, API через unix socket (позже)
+- ramplusd — root-демон: HTTP/JSON API через unix socket, тонкая оболочка над internal/core
 - ramplus-web — HTTP-сервер без root, отдаёт фронтенд и
   проксирует запросы к демону (позже)
 
@@ -33,9 +33,9 @@ Open-source инструмент для Linux (десктоп и серверы)
 - internal/fakesys — фейковая система для тестов
 - internal/detect — железо, диски, FS
 - internal/monitor — /proc/meminfo, /proc/swaps, PSI, zswap
-- internal/api — API демона (позже)
+- internal/api — API демона: unix socket, SO_PEERCRED, хендлеры, SSE, клиент
 - web/ — React-фронтенд
-- packaging/ — systemd, polkit
+- packaging/ — systemd-юнит демона, sysusers.d, tmpfiles.d (позже polkit)
 - scripts/ — нагрузочные тесты
 
 ## Безопасность

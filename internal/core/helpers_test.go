@@ -26,7 +26,7 @@ type (
 	ProfileRow     = plan.ProfileRow
 	AppliedProfile = profile.AppliedProfile
 	State          = journal.State
-	Operation      = journal.Operation
+	journalOp      = journal.Operation
 	Level          = plan.Level
 	fakeWorld      = fakesys.World
 	fakeFile       = fakesys.File

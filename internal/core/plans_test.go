@@ -79,7 +79,7 @@ func TestApplyByID(t *testing.T) {
 		t.Fatalf("apply: %+v", res)
 	}
 	// План выполняется один раз.
-	if res := c.Apply(ctx, p.ID, h); res.Status != ResultUnknownPlan || !errors.Is(errorOf(res), ErrPlanNotFound) {
+	if res := c.Apply(ctx, p.ID, h); res.Status != ResultPlanUsed || !errors.Is(errorOf(res), ErrPlanUsed) {
 		t.Errorf("second apply: %+v", res)
 	}
 	if res := c.Apply(ctx, "nope", h); res.Status != ResultUnknownPlan {
@@ -135,8 +135,8 @@ func TestRunUsesApply(t *testing.T) {
 	if err != nil || p.ID == "" {
 		t.Fatalf("run: %v %+v", err, p)
 	}
-	if _, ok := c.plans.take(p.ID, w.Now()); ok {
-		t.Error("plan must be consumed by Run")
+	if _, err := c.plans.take(p.ID, w.Now()); !errors.Is(err, ErrPlanUsed) {
+		t.Errorf("plan must be consumed by Run: %v", err)
 	}
 }
 
@@ -147,12 +147,12 @@ func TestPlanStoreLimits(t *testing.T) {
 	for i := 0; i < maxStoredPlans; i++ {
 		s.put(Request{}, "b", now)
 	}
-	if _, ok := s.take(first, now); ok {
-		t.Error("oldest plan must be evicted")
+	if _, err := s.take(first, now); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("oldest plan must be evicted: %v", err)
 	}
 	id := s.put(Request{}, "c", now)
-	if _, ok := s.take(id, now.Add(planTTL+time.Second)); ok {
-		t.Error("expired plan must be dropped")
+	if _, err := s.take(id, now.Add(planTTL+time.Second)); !errors.Is(err, ErrPlanNotFound) {
+		t.Errorf("expired plan must be dropped: %v", err)
 	}
 	if len(s.plans) != len(s.order) {
 		t.Errorf("store inconsistent: %d vs %d", len(s.plans), len(s.order))
@@ -163,6 +163,8 @@ func errorOf(r Result) error {
 	switch r.Status {
 	case ResultUnknownPlan:
 		return ErrPlanNotFound
+	case ResultPlanUsed:
+		return ErrPlanUsed
 	case ResultStale:
 		return ErrPlanStale
 	}

@@ -4,15 +4,16 @@ Open-source инструмент для Linux (десктоп и серверы)
 виртуальной памятью: swapfile на SSD, zswap, zram, профили, мониторинг
 давления на память. Управление через CLI, позже — через веб-интерфейс.
 
-> Статус: ранняя разработка. Есть `ramplus status` (только чтение) и
-> управление swapfile: `ramplus swap plan|apply|resize|remove`, `ramplus rollback`.
+> Статус: ранняя разработка. Есть `ramplus status` (только чтение),
+> управление swapfile (`ramplus swap plan|apply|resize|remove`), профили,
+> `ramplus rollback`, `ramplus history` и демон `ramplusd` с API на unix-сокете.
 
 ## Сборка
 
 Нужен Go (актуальная стабильная версия), только Linux.
 
 ```sh
-make build   # собирает ./ramplus
+make build   # собирает ./ramplus и ./ramplusd
 make test    # go test ./...
 make lint    # gofmt + go vet
 ```
@@ -188,6 +189,63 @@ sudo ramplus rollback                              # общий стек со sw
   профиль и дрейф, если значения поменяли вручную; в JSON это поля
   `profile` и `drift`.
 
+## Демон ramplusd
+
+HTTP/JSON API поверх unix-сокета `/run/ramplus/ramplusd.sock` (TCP не
+слушает). Демон — тонкая оболочка над тем же `internal/core`, что и CLI.
+CLI пока работает напрямую (через sudo); оба можно запускать одновременно:
+журнал и блокировка `/run/lock/ramplus.lock` не дают операциям пересечься
+(вторая получает отказ, журнал целый).
+
+```sh
+make build && sudo make install              # бинарники в /usr/local/bin, юнит, sysusers.d, tmpfiles.d
+sudo systemctl enable --now ramplusd
+sudo usermod -aG ramplus $USER               # чтение: status, history, plan
+sudo usermod -aG ramplus,ramplus-admin $USER # и изменения: apply
+ramplus daemon status                        # доступен ли демон, совпадает ли версия с CLI
+curl --unix-socket /run/ramplus/ramplusd.sock http://localhost/v1/status
+sudo make uninstall                          # журнал /var/lib/ramplus остаётся
+```
+
+Права проверяются по SO_PEERCRED (uid/gid/pid от ядра, дополнительные
+группы — из `/proc/<pid>/status`). Сокет `0660 root:ramplus`, каталог
+`0750 root:ramplus`: без группы `ramplus` до сокета не добраться. Чтение —
+root или `ramplus` (или `ramplus-admin`), изменения — root или
+`ramplus-admin`; отказ — `403 auth.forbidden` и запись в журнал демона
+(uid, gid, что запрашивалось). `/v1/health` доступен всем, кто дошёл до
+сокета.
+
+| эндпоинт | |
+|---|---|
+| `GET /v1/health` | версия, uptime |
+| `GET /v1/status` | то же, что `status --json` |
+| `GET /v1/status/stream` | SSE: снимок раз в секунду и пики |
+| `GET /v1/history` | то же, что `history --json` |
+| `POST /v1/plan/swap` | `{action: apply\|resize\|remove, size: "4G", existing, delete_old, path, force}` |
+| `POST /v1/plan/profile` | `{name, set: {"vm.swappiness": "80"}, experimental, force}` |
+| `POST /v1/plan/profile-reset`, `POST /v1/plan/rollback` | тело не нужно (`rollback`: `{force}`) |
+| `POST /v1/apply` | `{plan_id, confirm_experimental}` → `202 {operation_id}` |
+| `GET /v1/operations/{id}` | статус операции, шаги, итог |
+| `GET /v1/operations/{id}/events` | SSE: шаги по мере выполнения (`step`), итог (`result`) |
+
+Apply асинхронный. Синхронно проверяется всё, что может отказать без
+изменений: план найден и не выполнялся, блокировка свободна, отпечаток не
+изменился, проверки пройдены, экспериментальный профиль подтверждён. Только
+после записи операции в журнал приходит `202`, а шаги идут в фоне.
+Одновременно выполняется одна операция. Планы и операции хранятся в памяти
+демона: после перезапуска старый `plan_id` — `plan.not_found`.
+
+Ошибки — `{code, message}`: `auth.forbidden` (403), `plan.not_found` (404),
+`plan.used`, `plan.stale`, `op.busy`, `op.locked` (409), `plan.blocked`,
+`profile.experimental_not_confirmed` (422), `request.invalid` (400),
+`request.too_large` (413, лимит 64 KiB), `op.not_found` (404).
+
+Надёжность: `mlockall` (демон нужен как раз при нехватке памяти и не
+должен уходить в swap), `GOMEMLIMIT=64MiB`, `OOMScoreAdjust=-900`. По
+SIGTERM демон закрывает потоки, дожидается текущей операции и выходит;
+логи (key=value) идут в journald. Выбор защит systemd с объяснением — в
+комментариях [packaging/systemd/ramplusd.service](packaging/systemd/ramplusd.service).
+
 ## Бенчмарк
 
 `scripts/bench.sh` сравнивает no-swap, swap и три конфигурации zswap на
@@ -201,8 +259,10 @@ sudo ramplus rollback                              # общий стек со sw
 
 ```
 cmd/ramplus        CLI — тонкая оболочка над internal/core
+cmd/ramplusd       демон — тонкая оболочка над internal/core (через internal/api)
 cmd/ramplus-probe  нагрузка, latency-probe, сэмплер и отчёт для bench.sh
-internal/core      сервисный слой: статус, планы, выполнение (CLI сейчас, демон и веб потом)
+internal/core      сервисный слой: статус, планы, выполнение, операции демона
+internal/api       API демона: unix-сокет, SO_PEERCRED, хендлеры, SSE, клиент
 internal/plan      модель плана — данные (JSON): проверки, выбор, шаги, итог
 internal/journal   журнал state.json, write-ahead, стек отката, сверка состояния
 internal/swap      swap: факты, планировщик, шаги
@@ -212,6 +272,7 @@ internal/sys       интерфейсы FS/Executor/Kernel и реальные �
 internal/fakesys   фейковая система для тестов
 internal/detect    система, диски, ФС
 internal/monitor   meminfo, swaps, zswap, zram, PSI, vm sysctl
+packaging/         systemd-юнит, sysusers.d, tmpfiles.d
 scripts/           интеграционный тест для VM, бенчмарк
 ```
 
