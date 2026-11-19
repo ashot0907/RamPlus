@@ -13,6 +13,15 @@
 # нет — check-clean проходит), журнал откладывается в state.json.vmtest-<время>
 # и возвращается в конце успешного прогона.
 #
+# Падение в любом сценарии: журнал теста копируется в state.json.vmtest-failed-
+# <время>, демон останавливается (дождавшись операции), ручные изменения
+# возвращаются, все операции теста откатываются через CLI, демон удаляется,
+# /swap.img и fstab — как были. Если check-clean после этого чистый, журнал
+# прошлых прогонов возвращается на место.
+#
+# Ожидаемый «остальной swap» снимается непосредственно перед каждым
+# изменяющим шагом (before), а не один раз в начале.
+#
 # Сценарии:
 #   A. apply 4G → status → юнит поднимает swap → resize 6G → remove →
 #      rollback (6G) → rollback (4G) → rollback (ничего) = исходное состояние
@@ -40,6 +49,16 @@ CREATED_OLD=0     # /swap.img создан этим скриптом
 SAVED_STATE=""    # журнал прошлых прогонов, отложенный на время теста
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 INSTALLED=0       # make install выполнен этим скриптом (сценарий E)
+GROUPS_PREEXIST=0 # группы ramplus/ramplus-admin были до теста (не удалять)
+# Ручные изменения вне журнала, которые надо вернуть при падении:
+DIRTY_UNIT=0         # A4: swap выключен вручную, юнит ещё не поднял его
+DIRTY_ZSWAP=0        # D5: параметры zswap испорчены вручную
+DIRTY_SWAPPINESS=""  # D6: исходное значение swappiness до ручной записи
+FAILED_STATE=""
+# STARTED — тест начал менять систему: журнал с этого момента содержит только
+# операции теста, и при падении их можно откатывать. До этого (например,
+# «VM не чистая») trap ничего не откатывает — это чужие операции.
+STARTED=0
 SOCK=/run/ramplus/ramplusd.sock
 WORK=$(mktemp -d /tmp/ramplus-vm-test.XXXXXX)
 FSTAB_ORIG="$WORK/fstab.orig"
@@ -94,8 +113,18 @@ assert_no_swap() {
 # swap ядро может назначить заново).
 names_sizes() { swaps | awk '{print $1, $2}'; }
 
-# assert_state PATH GIB — swap RamPlus PATH активен с размером GIB (0 —
-# выключен и файла нет), весь остальной swap — как BASE (имена и размеры).
+# others — активный swap, кроме swap RamPlus (имена и размеры).
+others() { names_sizes | awk -v p="$SWAPFILE" '$1 != p'; }
+
+# before — снимок «остального swap» непосредственно перед изменяющим шагом
+# (а не один раз в начале: сценарии B/C создают и возвращают /swap.img).
+before() { BEFORE=$(others); }
+
+# without SNAPSHOT PATH — снимок без PATH (replace выключает старый swap).
+without() { awk -v p="${2:-}" '$1 != p' <<<"${1:-}"; }
+
+# assert_state PATH GIB EXPECTED — swap RamPlus PATH активен с размером GIB
+# (0 — выключен и файла нет), весь остальной swap — EXPECTED (имена и размеры).
 assert_state() {
 	local path=${1:-} gib=${2:-0} base=${3:-}
 	if ((gib > 0)); then
@@ -123,31 +152,82 @@ rp() {
 	"$BIN" "$@"
 }
 
+# restore_after_failure — вернуть VM в исходное состояние после падения в
+# любом сценарии: демон остановить, ручные изменения вернуть, все операции
+# теста откатить через CLI (журнал теста содержит только их), демон удалить.
+restore_after_failure() {
+	echo
+	echo "=== Возврат VM в исходное состояние"
+	if ((INSTALLED)); then
+		# systemd дожидается текущей операции демона (graceful stop).
+		systemctl stop ramplusd 2>/dev/null || true
+	fi
+	if ((DIRTY_UNIT)); then
+		systemctl start "$UNIT" || true
+	fi
+	if ((DIRTY_ZSWAP)); then
+		systemctl restart ramplus-zswap.service || true
+	fi
+	if [[ -n $DIRTY_SWAPPINESS ]]; then
+		echo "$DIRTY_SWAPPINESS" >/proc/sys/vm/swappiness || true
+	fi
+	local i
+	for ((i = 0; i < 30; i++)); do
+		"$BIN" history --json 2>/dev/null | grep -q '"rollback_next": true' || break
+		if ! "$BIN" rollback --yes; then
+			echo "rollback отказал — остаток разбирать вручную"
+			break
+		fi
+	done
+	if ((INSTALLED)); then
+		if ! make -s -C "$REPO" uninstall "${PURGE[@]}"; then
+			echo "uninstall отказал (RamPlus ещё управляет системой) — удаляем демон, следы оставляем для разбора"
+			make -s -C "$REPO" uninstall FORCE=1 "${PURGE[@]}" || true
+		fi
+		INSTALLED=0
+	fi
+}
+
 cleanup() {
 	local rc=$?
-	if ((rc != 0)); then
+	trap - EXIT
+	if ((rc != 0 && STARTED)); then
 		echo
 		echo "Тест упал. Состояние для разбора:"
 		swapon --show || true
-		head -60 "$STATE" 2>/dev/null || true
-	fi
-	if ((INSTALLED)); then
-		make -s -C "$REPO" uninstall >/dev/null 2>&1 || true
-	fi
-	if [[ -n $SAVED_STATE ]]; then
-		if ((rc == 0)); then
-			mv -f "$SAVED_STATE" "$STATE"
-			echo "журнал прошлых операций возвращён на место: $STATE"
-		else
-			# Журнал теста описывает то, что осталось в системе после падения, —
-			# он нужен для разбора и rollback; старый не подменяем.
-			echo "журнал прошлых операций остался в $SAVED_STATE (верните его вручную после разбора)"
+		if [[ -f $STATE ]]; then
+			FAILED_STATE="$STATE.vmtest-failed-$(date +%Y%m%dT%H%M%S)"
+			cp -p "$STATE" "$FAILED_STATE"
+			echo "журнал теста сохранён: $FAILED_STATE"
 		fi
+		restore_after_failure
 	fi
 	if ((CREATED_OLD)); then
 		swapoff /swap.img 2>/dev/null || true
 		rm -f /swap.img
 		cp -p "$FSTAB_ORIG" /etc/fstab
+	fi
+	local clean=0
+	if "$BIN" swap check-clean >/dev/null 2>&1; then
+		clean=1
+	fi
+	if ((rc != 0 && STARTED)); then
+		if ((clean)); then
+			echo "VM в исходном состоянии (check-clean)"
+		else
+			echo "ВНИМАНИЕ: VM не вернулась в исходное состояние:"
+			"$BIN" swap check-clean || true
+		fi
+	fi
+	if [[ -n $SAVED_STATE ]]; then
+		if ((clean)) || ((!STARTED)); then
+			mv -f "$SAVED_STATE" "$STATE"
+			echo "журнал прошлых операций возвращён на место: $STATE"
+		else
+			# Журнал теста описывает то, что осталось в системе, — он нужен для
+			# разбора и rollback; старый не подменяем.
+			echo "журнал прошлых операций остался в $SAVED_STATE (верните его вручную после разбора)"
+		fi
 	fi
 	rm -rf "$WORK"
 	exit "$rc"
@@ -171,8 +251,15 @@ if "$BIN" history --json | grep -q '"id":'; then
 	echo "тест начинается с пустого журнала (в конце журнал вернётся на место)"
 fi
 cp -p /etc/fstab "$FSTAB_ORIG"
-INITIAL_SWAPS=$(swaps)
-INITIAL_NS=$(names_sizes)
+if getent group ramplus >/dev/null || getent group ramplus-admin >/dev/null; then
+	GROUPS_PREEXIST=1
+fi
+PURGE=()
+if ((!GROUPS_PREEXIST)); then
+	PURGE=(PURGE=1) # группы создаст make install этого теста — он их и удалит
+fi
+A_START_SWAPS=$(swaps)
+STARTED=1
 
 ########################################################################
 step "A1. plan без root ничего не меняет"
@@ -182,11 +269,12 @@ if id nobody >/dev/null 2>&1; then
 	chmod 755 "$WORK"
 	setpriv --reuid=nobody --regid="$(id -g nobody)" --clear-groups "$WORK/ramplus" swap plan --size 4G >/dev/null
 fi
-assert_eq "$(swaps)" "$INITIAL_SWAPS" "plan не изменил swap"
+assert_eq "$(swaps)" "$A_START_SWAPS" "plan не изменил swap"
 
 step "A2. apply 4G"
+before
 rp swap apply --size 4G --existing=keep --yes
-assert_state "$SWAPFILE" 4 "$INITIAL_NS"
+assert_state "$SWAPFILE" 4 "$BEFORE"
 [[ $(stat -c %a "$SWAPFILE") == 600 ]] || die "права $SWAPFILE не 600"
 systemctl is-enabled "$UNIT" >/dev/null || die "$UNIT не enabled"
 if grep -q ramplus /etc/fstab; then
@@ -198,30 +286,38 @@ rp status --json | grep -q '"managed": true' || die "status --json: нет manag
 rp status | sed -n '/Swap-устройства/,/^$/p'
 
 step "A4. systemd-юнит сам поднимает swap (как после перезагрузки)"
+before
+DIRTY_UNIT=1
 swapoff "$SWAPFILE"
 systemctl start "$UNIT"
-assert_state "$SWAPFILE" 4 "$INITIAL_NS"
+DIRTY_UNIT=0
+assert_state "$SWAPFILE" 4 "$BEFORE"
 
 step "A5. resize 6G"
+before
 rp swap resize --size 6G --yes
-assert_state "$SWAPFILE" 6 "$INITIAL_NS"
+assert_state "$SWAPFILE" 6 "$BEFORE"
 
 step "A6. remove"
+before
 rp swap remove --yes
-assert_state "$SWAPFILE" 0 "$INITIAL_NS"
+assert_state "$SWAPFILE" 0 "$BEFORE"
 [[ ! -e $SWAPFILE && ! -e /etc/systemd/system/$UNIT ]] || die "remove оставил файлы"
 
 step "A7. rollback (отмена remove → 6G)"
+before
 rp rollback --yes
-assert_state "$SWAPFILE" 6 "$INITIAL_NS"
+assert_state "$SWAPFILE" 6 "$BEFORE"
 systemctl is-enabled "$UNIT" >/dev/null || die "$UNIT не восстановлен"
 
 step "A8. rollback (отмена resize → 4G), rollback (отмена apply)"
+before
 rp rollback --yes
-assert_state "$SWAPFILE" 4 "$INITIAL_NS"
+assert_state "$SWAPFILE" 4 "$BEFORE"
+before
 rp rollback --yes
-assert_state "$SWAPFILE" 0 "$INITIAL_NS"
-assert_eq "$(swaps)" "$INITIAL_SWAPS" "swap как в начале"
+assert_state "$SWAPFILE" 0 "$BEFORE"
+assert_eq "$(swaps)" "$A_START_SWAPS" "swap как в начале сценария A"
 assert_same_file "$FSTAB_ORIG" /etc/fstab "fstab как в начале"
 "$BIN" swap check-clean || die "после полного rollback остались следы"
 if rp rollback --yes; then
@@ -243,17 +339,17 @@ if [[ -z $OLD ]]; then
 	OLD=/swap.img
 fi
 echo "существующий swap: $OLD"
-BASE_NS=$(names_sizes)
-OLD_NS=$(names_sizes | awk -v p="$OLD" '$1 != p')
 cp -p /etc/fstab "$WORK/fstab.before-replace"
 
 step "B1. plan без --existing: по умолчанию keep, сказано явно"
 rp swap plan --size 4G | grep -q 'по умолчанию — флаг не указан' || die "plan не сообщил о выборе по умолчанию"
 
 step "B2. apply --existing=replace"
+before
+REPLACE_BEFORE=$BEFORE # rollback replace возвращает ровно это
 rp swap apply --size 4G --existing=replace --yes
 assert_no_swap "$OLD"
-assert_state "$SWAPFILE" 4 "$OLD_NS"
+assert_state "$SWAPFILE" 4 "$(without "$BEFORE" "$OLD")"
 if grep -q "$OLD" "$WORK/fstab.before-replace"; then
 	grep -q "^# disabled by ramplus: $OLD" /etc/fstab || die "строка $OLD не закомментирована"
 	compgen -G '/var/lib/ramplus/backups/*etc_fstab' >/dev/null || die "нет бэкапа fstab"
@@ -262,7 +358,7 @@ fi
 
 step "B3. rollback: старый swap активен, fstab байт в байт"
 rp rollback --yes
-assert_state "$SWAPFILE" 0 "$BASE_NS"
+assert_state "$SWAPFILE" 0 "$REPLACE_BEFORE"
 assert_same_file "$WORK/fstab.before-replace" /etc/fstab "fstab как до replace"
 
 ########################################################################
@@ -270,14 +366,16 @@ if [[ -f $OLD ]]; then
 	OLD_SIZE=$(stat -c %s "$OLD")
 
 	step "C1. apply --existing=replace --delete-old"
+	before
+	REPLACE_BEFORE=$BEFORE
 	rp swap apply --size 4G --existing=replace --delete-old --yes
 	[[ ! -e $OLD ]] || die "$OLD не удалён"
-	assert_state "$SWAPFILE" 4 "$OLD_NS"
+	assert_state "$SWAPFILE" 4 "$(without "$BEFORE" "$OLD")"
 
 	step "C2. rollback пересоздаёт $OLD"
 	rp rollback --yes
 	[[ $(stat -c %s "$OLD") == "$OLD_SIZE" ]] || die "$OLD пересоздан с другим размером"
-	assert_state "$SWAPFILE" 0 "$BASE_NS"
+	assert_state "$SWAPFILE" 0 "$REPLACE_BEFORE"
 	assert_same_file "$WORK/fstab.before-replace" /etc/fstab "fstab как до replace"
 else
 	step "C. пропущен: $OLD — раздел, а не файл"
@@ -344,18 +442,22 @@ rp status --json | grep -q '"name": "zswap-lz4"' || die "status --json: нет �
 rp status | sed -n '/Профиль RamPlus/,/^$/p'
 
 step "D5. «перезагрузка»: значения испорчены вручную, юнит их возвращает"
+DIRTY_ZSWAP=1
 echo N >"$ZP/enabled"
 echo lzo >"$ZP/compressor"
 systemctl restart ramplus-zswap.service
+DIRTY_ZSWAP=0
 assert_param "$ZP/enabled" Y
 assert_param "$ZP/compressor" lz4
 
 step "D6. дрейф: ручная запись swappiness → status предупреждает"
 SWAPPINESS=$(</proc/sys/vm/swappiness)
+DIRTY_SWAPPINESS=$SWAPPINESS
 echo 133 >/proc/sys/vm/swappiness
 rp status --json | grep -q '"key": "vm.swappiness"' || die "status --json: нет дрейфа vm.swappiness"
 rp status | grep -q 'значения изменены вручную' || die "status не предупредил о дрейфе"
 echo "$SWAPPINESS" >/proc/sys/vm/swappiness
+DIRTY_SWAPPINESS=""
 
 step "D7. rollback: значения как в начале, файлов нет"
 rp rollback --yes
@@ -442,20 +544,23 @@ expect_code 200 "status"
 grep -q '"memory"' <<<"$BODY" || die "status без memory:\n$BODY"
 
 step "E3. plan swap 4G → apply → swap 4G"
+before
 api -- POST /v1/plan/swap '{"action": "apply", "size": "4G", "existing": "keep"}'
 expect_code 200 "plan swap"
 apply_plan
-assert_state "$SWAPFILE" 4 "$INITIAL_NS"
+assert_state "$SWAPFILE" 4 "$BEFORE"
 
 step "E4. plan rollback → apply → чисто"
+before
 api -- POST /v1/plan/rollback
 expect_code 200 "plan rollback"
 grep -q '"domain": "swap"' <<<"$BODY" || die "rollback отменяет не swap:\n$BODY"
 apply_plan
-assert_state "$SWAPFILE" 0 "$INITIAL_NS"
+assert_state "$SWAPFILE" 0 "$BEFORE"
 "$BIN" swap check-clean || die "после rollback через демон остались следы"
 
 step "E5. права"
+before
 NOGROUP=$(id -gn nobody)
 # Без групп nobody не проходит права каталога/сокета (0750/0660 root:ramplus):
 # до HTTP дело не доходит (403 auth.forbidden за SO_PEERCRED — в go test).
@@ -474,20 +579,22 @@ api "${reader[@]}" -- POST /v1/apply "{\"plan_id\": \"$id\"}"
 expect_code 403 "apply от члена ramplus (не ramplus-admin)"
 [[ $(field code) == auth.forbidden ]] || die "код отказа: $BODY"
 journalctl -u ramplusd --no-pager -n 50 | grep -q 'auth.forbidden' || die "отказ не записан в журнал демона"
-assert_state "$SWAPFILE" 0 "$INITIAL_NS"
+assert_state "$SWAPFILE" 0 "$BEFORE"
 
 step "E6. make uninstall — следов нет"
-make -s -C "$REPO" uninstall
+make -s -C "$REPO" uninstall "${PURGE[@]}"
 INSTALLED=0
 for f in /usr/local/bin/ramplusd /usr/local/bin/ramplus /usr/local/lib/systemd/system/ramplusd.service \
 	/usr/local/lib/sysusers.d/ramplus.conf /usr/local/lib/tmpfiles.d/ramplus.conf /run/ramplus; do
 	[[ ! -e $f ]] || die "после uninstall остался $f"
 done
-for g in ramplus ramplus-admin; do
-	if getent group "$g" >/dev/null; then
-		die "после uninstall осталась группа $g"
-	fi
-done
+if ((!GROUPS_PREEXIST)); then
+	for g in ramplus ramplus-admin; do
+		if getent group "$g" >/dev/null; then
+			die "после uninstall PURGE=1 осталась группа $g"
+		fi
+	done
+fi
 if pgrep -x ramplusd >/dev/null; then
 	die "после uninstall работает ramplusd"
 fi

@@ -67,6 +67,7 @@ func newHarness(t *testing.T, w *fakesys.World) *harness {
 	t.Helper()
 	c := core.New(w.System())
 	c.Collect = fixtureStatus
+	c.Daemon = true
 	srv := New(c, "test-1.0", Policy{ReadGID: u32(gidRamplus), AdminGID: u32(gidAdmin)}, nil)
 	srv.StatusInterval = 10 * time.Millisecond
 	// Короткий путь: у unix-сокета ограничение ~108 байт.
@@ -565,5 +566,54 @@ func waitStreams(t *testing.T, s *Server) {
 	}
 	if n := s.Streams(); n != 0 {
 		t.Fatalf("%d SSE streams still open after client disconnect", n)
+	}
+}
+
+// ProtectHome=read-only: swapfile в /home через демон — план блокируется
+// заранее, а не падает на шаге создания файла. CLI тот же путь может.
+func TestDaemonPathNotWritable(t *testing.T) {
+	w := fakesys.New()
+	w.Files["/home"] = &fakesys.File{Dir: true, Mode: 0o755}
+	w.Files["/home/user"] = &fakesys.File{Dir: true, Mode: 0o755}
+	w.ReadOnly = []string{"/home"}
+	before := w.Snap()
+	h := newHarness(t, w)
+
+	req := SwapPlanRequest{Action: "apply", Size: 4 << 30, Path: "/home/user/ramplus.swapfile"}
+	p := h.plan("admin", "/v1/plan/swap", req)
+	var found *plan.Check
+	for i, c := range p.Checks {
+		if c.Code == "path.not_writable_by_daemon" {
+			found = &p.Checks[i]
+		}
+	}
+	if found == nil || found.Level != plan.LevelFail || !p.Blocked() {
+		t.Fatalf("want path.not_writable_by_daemon: %+v", p.Checks)
+	}
+	for _, want := range []string{"/home/user", "через веб-интерфейс/демон этот путь недоступен", "используйте CLI"} {
+		if !strings.Contains(found.Message, want) {
+			t.Errorf("message %q lacks %q", found.Message, want)
+		}
+	}
+	if r := h.apply("admin", p.ID, false); r.code != 422 || r.errCode(t) != "plan.blocked" {
+		t.Errorf("apply: %d %s", r.code, r.body)
+	}
+	if d := before.Diff(w.Snap()); d != "" {
+		t.Errorf("system changed:\n%s", d)
+	}
+	// Путь по умолчанию (/) демону доступен.
+	if p := h.plan("admin", "/v1/plan/swap", SwapPlanRequest{Action: "apply", Size: 4 << 30}); p.Blocked() {
+		t.Errorf("default path blocked: %+v", p.Failures())
+	}
+	// CLI (не демон) такой проверки не делает.
+	cli := core.New(w.System())
+	cp := cli.SwapPlan(context.Background(), swapOpts4GAt("/home/user/ramplus.swapfile"))
+	for _, c := range cp.Checks {
+		if c.Code == "path.not_writable_by_daemon" {
+			t.Errorf("CLI must not get the daemon check: %+v", c)
+		}
+	}
+	if cp.Blocked() {
+		t.Errorf("CLI plan blocked: %+v", cp.Failures())
 	}
 }

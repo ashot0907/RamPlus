@@ -1,0 +1,178 @@
+$ ramplus swap apply --size 4G --yes
+План: создание swapfile
+Команда: ramplus swap apply --size 4G
+
+Сейчас
+  swap        нет
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 4.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 296.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 0 B → 4.0 GiB
+  создаётся: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus swap apply --size 4G
+
+Выполнение (операция <OPID>)
+  [1/7] создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [2/7] chmod 600 /ramplus.swapfile ... ok
+  [3/7] mkswap /ramplus.swapfile ... ok
+  [4/7] swapon /ramplus.swapfile (приоритет 10) ... ok
+  [5/7] записать /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/7] systemctl daemon-reload ... ok
+  [7/7] systemctl enable ramplus.swapfile.swap ... ok
+Готово.
+
+$ ramplus swap check-clean
+- найдены следы RamPlus без записи в журнале: /ramplus.swapfile, юнит ramplus.swapfile.swap — sudo ramplus swap remove --orphan
+- активен swap RamPlus /ramplus.swapfile
+- есть юнит RamPlus /etc/systemd/system/ramplus.swapfile.swap
+- существует /ramplus.swapfile
+error: найдены следы RamPlus: 4
+
+$ ramplus swap apply --size 4G --dry-run
+План: создание swapfile
+Команда: ramplus swap apply --size 4G
+
+Сейчас
+  swap        /ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 4.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] приоритет: новый swap получит приоритет 10 (других swap нет)
+  [FAIL] файлы: /ramplus.swapfile — след RamPlus без записи в журнале: сначала sudo ramplus swap remove --orphan
+  [FAIL] файлы: /etc/systemd/system/ramplus.swapfile.swap — след RamPlus без записи в журнале: сначала sudo ramplus swap remove --orphan
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 296.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+
+Шаги
+   1. создать /ramplus.swapfile, 4.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 4.0 GiB → 4.0 GiB
+  создаётся: /ramplus.swapfile
+  отключается: —
+  удаляется: —
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 2. Ничего не изменено.
+
+$ ramplus swap remove --orphan --dry-run
+План: удаление swapfile
+Команда: ramplus swap remove --orphan
+
+Сейчас
+  swap        /ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] следы: /ramplus.swapfile, юнит ramplus.swapfile.swap (активен, приоритет 10, 4.0 GiB, сигнатура SWAPSPACE2, юнит с маркером RamPlus) — нет в журнале /var/lib/ramplus/state.json
+  [warn] swap: после удаления в системе не останется swap
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /ramplus.swapfile
+   2. systemctl disable ramplus.swapfile.swap
+   3. удалить /etc/systemd/system/ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. удалить файл /ramplus.swapfile (4.0 GiB)
+
+Итог
+  swap: 4.0 GiB → 0 B
+  создаётся: —
+  отключается: /ramplus.swapfile
+  удаляется: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus swap remove --orphan
+
+$ ramplus swap remove --orphan --yes
+План: удаление swapfile
+Команда: ramplus swap remove --orphan
+
+Сейчас
+  swap        /ramplus.swapfile  file  4.0 GiB  занято 0 B  приоритет 10  
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [info] следы: /ramplus.swapfile, юнит ramplus.swapfile.swap (активен, приоритет 10, 4.0 GiB, сигнатура SWAPSPACE2, юнит с маркером RamPlus) — нет в журнале /var/lib/ramplus/state.json
+  [warn] swap: после удаления в системе не останется swap
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. swapoff /ramplus.swapfile
+   2. systemctl disable ramplus.swapfile.swap
+   3. удалить /etc/systemd/system/ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. удалить файл /ramplus.swapfile (4.0 GiB)
+
+Итог
+  swap: 4.0 GiB → 0 B
+  создаётся: —
+  отключается: /ramplus.swapfile
+  удаляется: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus swap remove --orphan
+
+Выполнение (операция <OPID>)
+  [1/5] swapoff /ramplus.swapfile ... ok
+  [2/5] systemctl disable ramplus.swapfile.swap ... ok
+  [3/5] удалить /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [4/5] systemctl daemon-reload ... ok
+  [5/5] удалить файл /ramplus.swapfile (4.0 GiB) ... ok
+Готово.
+
+$ ramplus swap check-clean
+чисто: следов RamPlus нет
+

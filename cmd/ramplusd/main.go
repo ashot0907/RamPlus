@@ -63,6 +63,7 @@ func run() int {
 
 	pol := api.Policy{ReadGID: lookupGroup(log, *readGroup), AdminGID: lookupGroup(log, *adminGroup)}
 	c := core.New(sys.DefaultSystem())
+	c.Daemon = true
 	srv := api.New(c, version, pol, log)
 
 	l, err := api.Listen(*socket, pol.ReadGID)

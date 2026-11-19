@@ -136,3 +136,9 @@ func TestListen(t *testing.T) {
 		t.Error("regular file must not be replaced")
 	}
 }
+
+func swapOpts4GAt(path string) swap.Options {
+	o := swapOpts()
+	o.Path = path
+	return o
+}

@@ -73,10 +73,20 @@ sudo ramplus swap remove
 sudo ramplus rollback                              # отменить последнюю операцию; повторный вызов идёт дальше назад
 ramplus history [--json]                           # операции из журнала: статус, что отменит следующий rollback
 ramplus swap check-clean                           # нет ли следов RamPlus (код 1 — есть)
+sudo ramplus swap remove --orphan                  # убрать следы RamPlus без записи в журнале
 ```
 
 У `apply`, `resize`, `remove` и `rollback` есть `--dry-run` (только план) и
 `--yes` (без вопроса, для скриптов).
+
+Следы без записи в журнале (журнал удалён или потерян, а swapfile и юнит
+остались) `check-clean` показывает отдельно: «найдены следы RamPlus без
+записи в журнале». `swap remove --orphan` убирает их с планом и
+подтверждением, как остальные команды, и только после проверки маркеров:
+`# Managed by RamPlus` в юните, сигнатура `SWAPSPACE2` в файле, путь RamPlus
+по умолчанию или из `What=` юнита с маркером. Если что-то не сходится, план
+блокируется проверкой `orphan.not_ours`. Операция записывается в журнал и
+откатывается `rollback`.
 
 `rollback` показывает, что именно отменяется. Если операции больше суток —
 `[warn] rollback.old` с датой и «N дней назад»; если она другого типа, чем
@@ -206,6 +216,17 @@ ramplus daemon status                        # доступен ли демон,
 curl --unix-socket /run/ramplus/ramplusd.sock http://localhost/v1/status
 sudo make uninstall                          # журнал /var/lib/ramplus остаётся
 ```
+
+`make uninstall` сначала проверяет `ramplus swap check-clean`. Если RamPlus
+ещё управляет swap или профилем, удаление отменяется с подсказкой: сначала
+`swap remove` / `profile reset` (следы без журнала — `swap remove --orphan`);
+`FORCE=1` — удалить всё равно. Затем демон останавливается и отключается.
+Группы `ramplus` и `ramplus-admin` удаляются только с `PURGE=1`.
+
+Пути, в которые демон не может писать (из-за `ProtectHome=read-only` это
+`/home`), блокируют план через демон проверкой
+`path.not_writable_by_daemon`: «через веб-интерфейс/демон этот путь
+недоступен, используйте CLI». Так операция не падает на шаге создания файла.
 
 Права проверяются по SO_PEERCRED (uid/gid/pid от ядра, дополнительные
 группы — из `/proc/<pid>/status`). Сокет `0660 root:ramplus`, каталог

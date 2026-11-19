@@ -57,13 +57,37 @@ install:
 	fi
 
 # Журнал /var/lib/ramplus не удаляется: rollback возможен и после переустановки.
+# Отказ, если RamPlus ещё управляет swap/профилем (или есть следы без журнала):
+# сначала swap remove / profile reset / swap remove --orphan; FORCE=1 — всё равно.
+# Группы ramplus и ramplus-admin удаляются только с PURGE=1.
 uninstall:
-	@if [ -z "$(DESTDIR)" ]; then systemctl disable --now ramplusd.service 2>/dev/null || true; fi
+	@if [ -z "$(DESTDIR)" ] && [ "$(FORCE)" != 1 ]; then \
+		rp=$(BINDIR)/$(BINARY); [ -x $$rp ] || rp=./$(BINARY); \
+		if [ -x $$rp ] && ! $$rp swap check-clean; then \
+			echo; \
+			echo "uninstall отменён: RamPlus ещё управляет системой (см. выше)."; \
+			echo "Сначала: sudo ramplus swap remove и/или sudo ramplus profile reset"; \
+			echo "(следы без записи в журнале: sudo ramplus swap remove --orphan)."; \
+			echo "Удалить всё равно, оставив swap/профиль как есть: sudo make uninstall FORCE=1"; \
+			exit 1; \
+		fi; \
+	fi
+	@if [ -z "$(DESTDIR)" ] && systemctl cat ramplusd.service >/dev/null 2>&1; then \
+		systemctl stop ramplusd.service; \
+		systemctl disable ramplusd.service; \
+		if systemctl is-active --quiet ramplusd.service; then echo "ramplusd не остановился"; exit 1; fi; \
+		echo "ramplusd остановлен и отключён"; \
+	fi
 	rm -f $(DESTDIR)$(BINDIR)/$(BINARY) $(DESTDIR)$(BINDIR)/$(DAEMON)
 	rm -f $(DESTDIR)$(UNITDIR)/ramplusd.service
 	rm -f $(DESTDIR)$(SYSUSERSDIR)/ramplus.conf $(DESTDIR)$(TMPFILESDIR)/ramplus.conf
 	@if [ -z "$(DESTDIR)" ]; then \
 		systemctl daemon-reload; \
 		rm -rf /run/ramplus; \
-		for g in ramplus-admin ramplus; do if getent group $$g >/dev/null; then groupdel $$g; fi; done; \
+		if [ "$(PURGE)" = 1 ]; then \
+			echo "PURGE=1: удаляются группы ramplus и ramplus-admin — их участники теряют членство"; \
+			for g in ramplus-admin ramplus; do if getent group $$g >/dev/null; then groupdel $$g && echo "группа $$g удалена"; fi; done; \
+		else \
+			echo "группы ramplus и ramplus-admin оставлены (удалить: sudo make uninstall PURGE=1)"; \
+		fi; \
 	fi

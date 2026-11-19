@@ -29,10 +29,11 @@ type swapFlags struct {
 	yes       bool
 	dryRun    bool
 	json      bool
+	orphan    bool
 }
 
 func (f *swapFlags) options(action swap.Action) (swap.Options, error) {
-	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force, Path: f.path}
+	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force, Path: f.path, Orphan: f.orphan}
 	if f.size != "" {
 		size, err := swap.ParseSize(f.size)
 		if err != nil {
@@ -143,6 +144,9 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 		addPlanFlags(cmd, &f, withSize, withExisting)
 	} else {
 		cmd.Flags().BoolVar(&f.force, "force", false, "продолжить несмотря на предупреждения")
+	}
+	if action == swap.ActionRemove {
+		cmd.Flags().BoolVar(&f.orphan, "orphan", false, "убрать следы RamPlus без записи в журнале (swapfile, юнит) — с проверкой маркеров")
 	}
 	addExecFlags(cmd, &f)
 	addVerboseFlag(cmd, &f)

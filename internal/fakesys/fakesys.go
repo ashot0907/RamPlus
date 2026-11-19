@@ -90,6 +90,9 @@ type World struct {
 	OnMutation func(op string)
 	// Locked — блокировка журнала занята (Lock возвращает ErrLocked).
 	Locked bool
+	// ReadOnly — каталоги, смонтированные только для чтения (как /home у
+	// демона с ProtectHome=read-only).
+	ReadOnly []string
 }
 
 // lockMu — защищает World.Locked (Lock вызывается из разных горутин).
@@ -569,6 +572,18 @@ func (f *FS) WriteZeros(name string, size uint64) error {
 		return notExist("zeros", name)
 	}
 	file.Size = size
+	return nil
+}
+
+func (f *FS) Writable(path string) error {
+	for _, ro := range f.w.ReadOnly {
+		if path == ro || strings.HasPrefix(path, ro+"/") {
+			return &fs.PathError{Op: "access", Path: path, Err: syscall.EROFS}
+		}
+	}
+	if _, ok := f.w.Files[path]; !ok && path != "/" {
+		return notExist("access", path)
+	}
 	return nil
 }
 

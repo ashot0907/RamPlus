@@ -138,6 +138,13 @@ func (OSFS) WriteZeros(name string, size uint64) error {
 	return f.Sync()
 }
 
+func (OSFS) Writable(path string) error {
+	if err := unix.Access(path, unix.W_OK); err != nil {
+		return &os.PathError{Op: "access", Path: path, Err: err}
+	}
+	return nil
+}
+
 func (OSFS) Lock(name string) (func() error, error) {
 	if err := os.MkdirAll(filepath.Dir(name), 0o755); err != nil {
 		return nil, err

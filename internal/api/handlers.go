@@ -42,6 +42,7 @@ type SwapPlanRequest struct {
 	DeleteOld bool        `json:"delete_old"`
 	Path      string      `json:"path"`
 	Force     bool        `json:"force"`
+	Orphan    bool        `json:"orphan"` // remove: следы RamPlus без записи в журнале
 }
 
 // ProfilePlanRequest — POST /v1/plan/profile.
@@ -218,7 +219,7 @@ func (s *Server) planSwap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	o := swap.Options{Action: req.Action, Size: uint64(req.Size), Existing: swap.ExistingMode(req.Existing),
-		DeleteOld: req.DeleteOld, Path: req.Path, Force: req.Force}
+		DeleteOld: req.DeleteOld, Path: req.Path, Force: req.Force, Orphan: req.Orphan}
 	writeJSON(w, http.StatusOK, s.Core.SwapPlan(r.Context(), o))
 }
 

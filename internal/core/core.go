@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -22,6 +23,9 @@ type Core struct {
 	Sys sys.System
 	// Collect — снимок памяти для Status (по умолчанию monitor.Collect).
 	Collect func() monitor.Status
+	// Daemon — core работает в демоне: пути, недоступные демону на запись
+	// (ProtectHome=read-only и т.п.), блокируют план заранее.
+	Daemon bool
 
 	plans planStore
 	ops   opRegistry
@@ -48,6 +52,14 @@ func (c *Core) Plan(ctx context.Context, r Request) *plan.Plan {
 
 // build строит план без запоминания.
 func (c *Core) build(ctx context.Context, r Request) *plan.Plan {
+	p := c.buildDomain(ctx, r)
+	if c.Daemon {
+		c.daemonPaths(p)
+	}
+	return p
+}
+
+func (c *Core) buildDomain(ctx context.Context, r Request) *plan.Plan {
 	switch {
 	case r.Swap != nil:
 		return c.swapPlan(ctx, *r.Swap)
@@ -188,6 +200,14 @@ func CleanProblems(f swap.Facts, s sys.System) []string {
 	if m := f.Managed; m != nil {
 		out = append(out, fmt.Sprintf("RamPlus управляет swap %s (%s)", m.Path, journal.StatePath))
 	}
+	if len(f.Orphans) > 0 {
+		labels := make([]string, len(f.Orphans))
+		for i, o := range f.Orphans {
+			labels[i] = o.Label()
+		}
+		out = append(out, fmt.Sprintf("найдены следы RamPlus без записи в журнале: %s — sudo ramplus swap remove --orphan",
+			strings.Join(labels, "; ")))
+	}
 	if p := profile.ProfileOf(f.State); p != nil {
 		out = append(out, fmt.Sprintf("применён профиль RamPlus %s — ramplus profile reset", p.Name))
 	}
@@ -228,4 +248,42 @@ func CleanProblems(f swap.Facts, s sys.System) []string {
 // ProfileFacts — факты профилей (для profile list/current).
 func (c *Core) ProfileFacts(ctx context.Context) profile.Facts {
 	return profile.Gather(ctx, c.Sys, nil)
+}
+
+// noPathWrite — шаги, которым не нужна запись в каталог Path (swapon/off,
+// systemctl, значения в /proc/sys и /sys — они у демона доступны).
+var noPathWrite = map[plan.StepKind]bool{
+	swap.KindSwapon: true, swap.KindSwapoff: true, plan.KindSystemctl: true, profile.KindSetValue: true,
+}
+
+// daemonPaths — каталоги, в которые план пишет, должны быть доступны
+// демону на запись: иначе шаг упал бы посреди операции. Блокирует план
+// проверкой path.not_writable_by_daemon.
+func (c *Core) daemonPaths(p *plan.Plan) {
+	seen := map[string]bool{}
+	var bad []string
+	for _, s := range p.Steps {
+		if s.Path == "" || noPathWrite[s.Kind] {
+			continue
+		}
+		dir := filepath.Dir(s.Path)
+		for dir != "/" {
+			if _, err := c.Sys.FS.Stat(dir); err == nil {
+				break
+			}
+			dir = filepath.Dir(dir) // каталог создаст сам план — проверяем ближайший существующий
+		}
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if err := c.Sys.FS.Writable(dir); err != nil {
+			bad = append(bad, dir)
+			p.Add(plan.LevelFail, "path.not_writable_by_daemon", "путь",
+				"%s: через веб-интерфейс/демон этот путь недоступен (%v), используйте CLI: sudo %s", dir, err, p.Command)
+		}
+	}
+	if len(bad) > 0 {
+		p.Fingerprint = plan.Fingerprint(p.Fingerprint, bad)
+	}
 }

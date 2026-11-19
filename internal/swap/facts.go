@@ -54,6 +54,8 @@ type Facts struct {
 	Units []string
 	// Observed — что сейчас лежит по путям активных swap-файлов.
 	Observed map[string]ObservedFile
+	// Orphans — следы swap RamPlus без записи в журнале.
+	Orphans []Orphan
 }
 
 // ObservedFile — фактическое состояние пути.
@@ -140,6 +142,7 @@ func Gather(ctx context.Context, sys system.System, requested string) Facts {
 	}
 
 	f.Units, _ = sys.FS.Glob(filepath.Join(system.UnitDir, "*ramplus*.swap"))
+	f.findOrphans(sys)
 
 	f.Observed = map[string]ObservedFile{}
 	observe := func(path string, content bool) {
@@ -273,7 +276,8 @@ func (f Facts) fingerprintPart() any {
 		Exists        map[string]bool
 		Units         []string
 		Observed      map[string]ObservedFile
-	}{Managed: f.Managed, TargetPath: f.Target.Path, TargetErr: errText(f.Target.ParentErr), Target: fsOf(f.Target.FS),
+		Orphans       []Orphan
+	}{Orphans: f.Orphans, Managed: f.Managed, TargetPath: f.Target.Path, TargetErr: errText(f.Target.ParentErr), Target: fsOf(f.Target.FS),
 		Cmdline: f.Cmdline, Fstab: f.Fstab, FstabErr: errText(f.FstabErr), FstabResolved: f.FstabResolved,
 		Tools: [3]bool{f.HasBtrfs, f.HasMkswapfile, f.HasChattr}, Exists: f.Exists, Units: f.Units, Observed: f.Observed}
 	for _, s := range f.Swaps {

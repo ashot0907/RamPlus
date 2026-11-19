@@ -35,6 +35,8 @@ type Options struct {
 	Existing  ExistingMode `json:"existing,omitempty"` // "" — не указан
 	DeleteOld bool         `json:"delete_old,omitempty"`
 	Force     bool         `json:"force,omitempty"`
+	// Orphan — remove: убрать следы RamPlus без записи в журнале.
+	Orphan bool `json:"orphan,omitempty"`
 }
 
 // Command — командная строка, соответствующая опциям.
@@ -56,6 +58,9 @@ func (o Options) Command() string {
 	}
 	if o.DeleteOld {
 		b.WriteString(" --delete-old")
+	}
+	if o.Orphan && o.Action == ActionRemove {
+		b.WriteString(" --orphan")
 	}
 	if o.Force {
 		b.WriteString(" --force")
@@ -130,7 +135,11 @@ func buildPlan(f Facts, o Options) Plan {
 	case ActionResize:
 		p.planResize(f)
 	case ActionRemove:
-		p.planRemove(f)
+		if o.Orphan {
+			p.planOrphan(f)
+		} else {
+			p.planRemove(f)
+		}
 	case ActionRollback:
 		journal.PlanRollback(&p.Plan, f.Basics)
 	default:
@@ -503,6 +512,10 @@ func (p *Plan) planApply(f Facts) {
 	unitPath := filepath.Join(UnitDir, unit)
 	for _, ex := range []string{path, dir, unitPath} {
 		if ex != "" && f.Exists[ex] {
+			if f.isOrphan(ex) {
+				p.add(LevelFail, "files.orphan", "файлы", "%s — след RamPlus без записи в журнале: сначала sudo ramplus swap remove --orphan", ex)
+				continue
+			}
 			p.add(LevelFail, "files.foreign", "файлы", "%s уже существует, но RamPlus его не создавал — удалите или переименуйте вручную", ex)
 		}
 	}

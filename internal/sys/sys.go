@@ -56,6 +56,9 @@ type FS interface {
 	Glob(pattern string) ([]string, error)
 	// Lock берёт эксклюзивную блокировку (flock) без ожидания.
 	Lock(name string) (unlock func() error, err error)
+	// Writable — может ли процесс писать в path (access W_OK): EROFS на
+	// смонтированном только для чтения (в т.ч. ProtectHome= у демона).
+	Writable(path string) error
 }
 
 // Executor запускает внешние команды (mkswap, systemctl, btrfs, chattr).

@@ -309,3 +309,17 @@ func TestGoldenRollbackContext(t *testing.T) {
 	s.run("rollback", "--dry-run", "--json")
 	s.check("rollback_context")
 }
+
+// Журнал удалён вручную, swapfile и юнит RamPlus остались.
+func TestGoldenOrphan(t *testing.T) {
+	w := fakesys.New()
+	s := newSession(t, w)
+	s.run("swap", "apply", "--size", "4G", "--yes")
+	delete(w.Files, journal.StatePath)
+	s.run("swap", "check-clean")
+	s.run("swap", "apply", "--size", "4G", "--dry-run")
+	s.run("swap", "remove", "--orphan", "--dry-run")
+	s.run("swap", "remove", "--orphan", "--yes")
+	s.run("swap", "check-clean")
+	s.check("orphan")
+}
