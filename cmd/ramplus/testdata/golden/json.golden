@@ -1228,6 +1228,14 @@ $ ramplus rollback --dry-run --json
     },
     "apply_command": "ramplus rollback",
     "title": "откат последней операции"
+  },
+  "rollback": {
+    "operation_id": "<OPID>",
+    "action": "profile-apply",
+    "domain": "profile",
+    "command": "ramplus profile apply zswap-lz4 --experimental",
+    "started_at": "2026-11-16T12:00:28Z",
+    "age_seconds": 20
   }
 }
 
@@ -1424,6 +1432,14 @@ $ ramplus rollback --json --yes
       },
       "apply_command": "ramplus rollback",
       "title": "откат последней операции"
+    },
+    "rollback": {
+      "operation_id": "<OPID>",
+      "action": "profile-apply",
+      "domain": "profile",
+      "command": "ramplus profile apply zswap-lz4 --experimental",
+      "started_at": "2026-11-16T12:00:28Z",
+      "age_seconds": 21
     }
   }
 }

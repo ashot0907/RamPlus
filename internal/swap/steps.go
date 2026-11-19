@@ -196,6 +196,9 @@ func recreateSwapfile(path string, size uint64, nocow bool) []Step {
 }
 
 func init() {
+	plan.RegisterAction(ActionApply, plan.ActionInfo{Domain: plan.DomainSwap, Title: "создание swap"})
+	plan.RegisterAction(ActionResize, plan.ActionInfo{Domain: plan.DomainSwap, Title: "изменение размера swap"})
+	plan.RegisterAction(ActionRemove, plan.ActionInfo{Domain: plan.DomainSwap, Title: "удаление swap"})
 	createSwapfileVerify := func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
 		s := a.Step
 		st, err := e.Sys.FS.Stat(s.Path)

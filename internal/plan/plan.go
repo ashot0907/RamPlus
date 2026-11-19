@@ -173,7 +173,9 @@ type Plan struct {
 	Summary
 	Swap    *SwapView    `json:"swap,omitempty"`
 	Profile *ProfileView `json:"profile,omitempty"`
-	Effects Effects      `json:"-"`
+	// Rollback — что отменяет план rollback.
+	Rollback *RollbackView `json:"rollback,omitempty"`
+	Effects  Effects       `json:"-"`
 }
 
 // Blocked — есть проваленные проверки.

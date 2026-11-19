@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"strings"
+	"time"
 
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/sys"
@@ -32,6 +33,9 @@ type Basics struct {
 	RollbackDiff []string
 	// SwapsErr — не удалось прочитать /proc/swaps (заполняет домен).
 	SwapsErr error
+	// Now — время сбора фактов (возраст отменяемой операции). В отпечаток
+	// плана не входит.
+	Now time.Time
 }
 
 // LoadState читает журнал; нет файла — пустое состояние.
@@ -48,7 +52,7 @@ func LoadState(s sys.System) (State, error) {
 
 // GatherBasics собирает общие факты. Только чтение.
 func GatherBasics(s sys.System) Basics {
-	b := Basics{EUID: s.Kernel.Geteuid()}
+	b := Basics{EUID: s.Kernel.Geteuid(), Now: s.Now()}
 	b.State, b.StateErr = LoadState(s)
 	if b.StateErr != nil {
 		b.State = State{}
@@ -160,6 +164,7 @@ func PlanRollback(p *plan.Plan, b Basics) *Operation {
 	op := st.Operations[idx]
 	p.Effects.Target = &plan.Target{Index: idx, ID: op.ID}
 	p.Add(plan.LevelInfo, "rollback.target", "rollback", "отменяется операция %s от %s: %s", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), op.Command)
+	rollbackContext(p, st, op, b.Now)
 
 	// Состояние системы должно совпадать с результатом операции по журналу.
 	if len(b.RollbackDiff) > 0 {
@@ -190,4 +195,45 @@ func PlanRollback(p *plan.Plan, b Basics) *Operation {
 	p.Effects.Managed = op.ManagedBefore
 	p.Effects.Profile = op.ProfileBefore
 	return &op
+}
+
+// rollbackOldAfter — с какого возраста отменяемая операция «старая».
+const rollbackOldAfter = 24 * time.Hour
+
+var opStatusPast = map[string]string{
+	OpCommitted:      "выполнена",
+	OpRolledBack:     "уже отменена",
+	OpFailed:         "завершилась ошибкой",
+	OpInProgress:     "прервана",
+	OpRollbackFailed: "откатилась не полностью",
+}
+
+// rollbackContext — что именно откатывается, если это неочевидно:
+// операция старше суток или другого домена, чем последняя операция
+// пользователя.
+func rollbackContext(p *plan.Plan, st State, op Operation, now time.Time) {
+	info := plan.InfoOf(op.Action)
+	age := max(now.Sub(op.StartedAt), 0)
+	p.Rollback = &plan.RollbackView{OperationID: op.ID, Action: op.Action, Domain: info.Domain,
+		Command: op.Command, StartedAt: op.StartedAt, AgeSeconds: int64(age / time.Second)}
+	what := fmt.Sprintf("«%s» от %s (%s)", info.Title, plan.HumanDate(op.StartedAt), plan.HumanAge(age))
+	if age > rollbackOldAfter {
+		p.Add(plan.LevelWarn, "rollback.old", "rollback", "отменяемой операции больше суток: %s — %s", what, op.Command)
+	}
+	var last *Operation
+	for i := len(st.Operations) - 1; i >= 0; i-- {
+		if st.Operations[i].Action != plan.ActionRollback {
+			last = &st.Operations[i]
+			break
+		}
+	}
+	if last == nil || last.ID == op.ID {
+		return
+	}
+	lastDomain := plan.InfoOf(last.Action).Domain
+	if info.Domain == "" || lastDomain == "" || lastDomain == info.Domain {
+		return
+	}
+	p.Add(plan.LevelWarn, "rollback.other_domain", "rollback", "будет отменена операция %s, а не %s (последняя операция — %s — %s)",
+		what, plan.DomainNoun[lastDomain], last.Command, opStatusPast[last.Status])
 }

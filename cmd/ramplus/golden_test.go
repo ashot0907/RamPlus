@@ -289,3 +289,23 @@ func TestGoldenHistory(t *testing.T) {
 	s.run("history", "--json")
 	s.check("history")
 }
+
+// Rollback, когда неочевидно, что откатывается: последней была swap-операция
+// (уже отменена), а rollback дойдёт до профиля двухдневной давности.
+func TestGoldenRollbackContext(t *testing.T) {
+	w := fakesys.New().WithKernelParams(false)
+	s := newSession(t, w)
+	s.run("profile", "apply", "zswap-lz4", "--experimental", "--yes")
+	st, err := journal.ParseState([]byte(w.Files[journal.StatePath].Data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Operations[0].StartedAt = time.Date(2026, 11, 14, 9, 30, 0, 0, time.UTC)
+	b, _ := st.Marshal()
+	w.Files[journal.StatePath].Data = string(b)
+	s.run("swap", "apply", "--size", "4G", "--yes")
+	s.run("rollback", "--yes")
+	s.run("rollback", "--dry-run")
+	s.run("rollback", "--dry-run", "--json")
+	s.check("rollback_context")
+}

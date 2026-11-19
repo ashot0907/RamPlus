@@ -24,6 +24,8 @@ func prevValue(a journal.Applied) (string, bool) {
 }
 
 func init() {
+	plan.RegisterAction(ActionProfileApply, plan.ActionInfo{Domain: plan.DomainProfile, Title: "применение профиля"})
+	plan.RegisterAction(ActionProfileReset, plan.ActionInfo{Domain: plan.DomainProfile, Title: "сброс профиля"})
 	journal.Register(KindSetValue, journal.Handler{
 		Describe: func(s plan.Step) string {
 			if k := KeyForPath(s.Path); k != "" {

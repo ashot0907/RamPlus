@@ -9,6 +9,10 @@
 #   make build
 #   sudo RAMPLUS_VM_TEST=1 scripts/vm-test.sh ./ramplus
 #
+# Изоляция: если в журнале есть операции прошлых прогонов (следов в системе
+# нет — check-clean проходит), журнал откладывается в state.json.vmtest-<время>
+# и возвращается в конце успешного прогона.
+#
 # Сценарии:
 #   A. apply 4G → status → юнит поднимает swap → resize 6G → remove →
 #      rollback (6G) → rollback (4G) → rollback (ничего) = исходное состояние
@@ -28,6 +32,7 @@ UNIT=ramplus.swapfile.swap
 STATE=/var/lib/ramplus/state.json
 OLD=""            # существующий swap для сценариев B/C
 CREATED_OLD=0     # /swap.img создан этим скриптом
+SAVED_STATE=""    # журнал прошлых прогонов, отложенный на время теста
 WORK=$(mktemp -d /tmp/ramplus-vm-test.XXXXXX)
 FSTAB_ORIG="$WORK/fstab.orig"
 
@@ -116,6 +121,16 @@ cleanup() {
 		swapon --show || true
 		head -60 "$STATE" 2>/dev/null || true
 	fi
+	if [[ -n $SAVED_STATE ]]; then
+		if ((rc == 0)); then
+			mv -f "$SAVED_STATE" "$STATE"
+			echo "журнал прошлых операций возвращён на место: $STATE"
+		else
+			# Журнал теста описывает то, что осталось в системе после падения, —
+			# он нужен для разбора и rollback; старый не подменяем.
+			echo "журнал прошлых операций остался в $SAVED_STATE (верните его вручную после разбора)"
+		fi
+	fi
 	if ((CREATED_OLD)); then
 		swapoff /swap.img 2>/dev/null || true
 		rm -f /swap.img
@@ -132,6 +147,16 @@ if ! clean_report=$("$BIN" swap check-clean 2>&1); then
 	die "VM не чистая:\n$clean_report"
 fi
 echo "$clean_report"
+
+# Изоляция от прошлых прогонов: незавершённых следов нет, но в журнале
+# могут остаться неотменённые операции (например, profile reset), и
+# «лишний rollback» дошёл бы до них. Журнал откладывается на время теста.
+if "$BIN" history --json | grep -q '"id":'; then
+	SAVED_STATE="$STATE.vmtest-$(date +%Y%m%dT%H%M%S)"
+	mv "$STATE" "$SAVED_STATE"
+	echo "в журнале есть операции прошлых прогонов: $STATE перемещён в $SAVED_STATE,"
+	echo "тест начинается с пустого журнала (в конце журнал вернётся на место)"
+fi
 cp -p /etc/fstab "$FSTAB_ORIG"
 INITIAL_SWAPS=$(swaps)
 INITIAL_NS=$(names_sizes)

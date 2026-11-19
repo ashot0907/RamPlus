@@ -18,18 +18,19 @@ func ViewOf(s Step) StepView { return StepView{Step: s, Description: s.Describe(
 // planJSON — JSON-представление плана. Порядок и имена полей — часть
 // публичной схемы (schema_version).
 type planJSON struct {
-	SchemaVersion int          `json:"schema_version"`
-	ID            string       `json:"id,omitempty"`
-	Fingerprint   string       `json:"fingerprint"`
-	Action        Action       `json:"action"`
-	Command       string       `json:"command"`
-	Blocked       bool         `json:"blocked"`
-	Choices       []Choice     `json:"choices"`
-	Checks        []Check      `json:"checks"`
-	Steps         []StepView   `json:"steps"`
-	Summary       Summary      `json:"summary"`
-	Swap          *SwapView    `json:"swap,omitempty"`
-	Profile       *ProfileView `json:"profile,omitempty"`
+	SchemaVersion int           `json:"schema_version"`
+	ID            string        `json:"id,omitempty"`
+	Fingerprint   string        `json:"fingerprint"`
+	Action        Action        `json:"action"`
+	Command       string        `json:"command"`
+	Blocked       bool          `json:"blocked"`
+	Choices       []Choice      `json:"choices"`
+	Checks        []Check       `json:"checks"`
+	Steps         []StepView    `json:"steps"`
+	Summary       Summary       `json:"summary"`
+	Swap          *SwapView     `json:"swap,omitempty"`
+	Profile       *ProfileView  `json:"profile,omitempty"`
+	Rollback      *RollbackView `json:"rollback,omitempty"`
 }
 
 // MarshalJSON — план как данные: стабильные коды проверок и шагов, тексты
@@ -49,6 +50,7 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 		Summary:       p.Summary,
 		Swap:          p.Swap,
 		Profile:       p.Profile,
+		Rollback:      p.Rollback,
 	}
 	if p.Profile != nil && p.Profile.Rows == nil {
 		v := *p.Profile
