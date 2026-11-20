@@ -7,7 +7,7 @@
 # Включить: sudo ramplus init && sudo systemctl enable --now ramplusd ramplus-web
 [Unit]
 Description=RamPlus web interface
-Documentation=https://github.com/ashot0907/ramplus
+Documentation=https://github.com/ashot0907/RamPlus
 After=network.target ramplusd.service
 Wants=ramplusd.service
 

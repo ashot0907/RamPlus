@@ -4,7 +4,7 @@
 # Установка: make build && sudo make install && sudo systemctl enable --now ramplusd
 [Unit]
 Description=RamPlus daemon (virtual memory management API)
-Documentation=https://github.com/ashot0907/ramplus
+Documentation=https://github.com/ashot0907/RamPlus
 After=local-fs.target systemd-tmpfiles-setup.service
 
 [Service]

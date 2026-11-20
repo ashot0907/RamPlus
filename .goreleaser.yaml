@@ -62,7 +62,7 @@ nfpms:
     formats: [deb]
     bindir: /usr/bin
     vendor: RamPlus
-    homepage: https://github.com/ashot0907/ramplus
+    homepage: https://github.com/ashot0907/RamPlus
     maintainer: RamPlus maintainers <ashot0907@users.noreply.github.com>
     license: Apache-2.0
     section: admin
@@ -113,7 +113,7 @@ changelog:
 release:
   github:
     owner: ashot0907
-    name: ramplus
+    name: RamPlus
   # v1.2.3-alpha.1 / -beta / -rc → marked as a prerelease.
   prerelease: auto
   footer: |

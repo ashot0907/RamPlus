@@ -158,7 +158,7 @@ func ZswapUnitContent(name, status string, values map[string]string, skip map[st
 	b.WriteString(header("Пишет параметры zswap при загрузке (kernel cmdline не меняется).", name, status))
 	b.WriteString("[Unit]\n")
 	fmt.Fprintf(&b, "Description=RamPlus zswap parameters (profile %s)\n", name)
-	b.WriteString("Documentation=https://github.com/ashot0907/ramplus\n")
+	b.WriteString("Documentation=https://github.com/ashot0907/RamPlus\n")
 	b.WriteString("DefaultDependencies=no\n")
 	b.WriteString("After=local-fs.target systemd-modules-load.service\n")
 	b.WriteString("Before=swap.target\n")

@@ -100,7 +100,7 @@ func UnitContent(path string, priority int) string {
 	return unitHeader +
 		"[Unit]\n" +
 		"Description=RamPlus swapfile " + path + "\n" +
-		"Documentation=https://github.com/ashot0907/ramplus\n" +
+		"Documentation=https://github.com/ashot0907/RamPlus\n" +
 		"\n" +
 		"[Swap]\n" +
 		"What=" + path + "\n" +

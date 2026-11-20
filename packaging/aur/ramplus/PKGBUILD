@@ -11,7 +11,7 @@ pkgver=${_ver//-/}
 pkgrel=1
 pkgdesc="Virtual memory manager: SSD swapfile, zswap, memory pressure monitoring, rollback"
 arch=('x86_64' 'aarch64')
-url="https://github.com/ashot0907/ramplus"
+url="https://github.com/ashot0907/RamPlus"
 license=('Apache-2.0')
 depends=('glibc' 'systemd')
 makedepends=('go' 'nodejs' 'npm')
@@ -19,10 +19,12 @@ conflicts=('ramplus-bin')
 install=ramplus.install
 options=('!debug')
 source=("$pkgname-$_ver.tar.gz::$url/archive/refs/tags/v$_ver.tar.gz")
-sha256sums=('SKIP') # replace before publishing: sha256sum of the tag tarball
+# GitHub names the top directory after the repository (RamPlus), not pkgname.
+_srcdir="RamPlus-$_ver"
+sha256sums=('8bc1d42e1113c49713a37459b8af14d741316b69f00a01734a5b4f3d3cb708cc')
 
 prepare() {
-	cd "$pkgname-$_ver"
+	cd "$_srcdir"
 	export GOPATH="$srcdir/gopath"
 	go mod download
 	cd web
@@ -30,7 +32,7 @@ prepare() {
 }
 
 build() {
-	cd "$pkgname-$_ver"
+	cd "$_srcdir"
 	(cd web && npm run build)
 	export GOPATH="$srcdir/gopath"
 	# Arch Go package guidelines: PIE + external linker with the system
@@ -47,13 +49,13 @@ build() {
 }
 
 check() {
-	cd "$pkgname-$_ver"
+	cd "$_srcdir"
 	export GOPATH="$srcdir/gopath"
 	go test ./...
 }
 
 package() {
-	cd "$pkgname-$_ver"
+	cd "$_srcdir"
 	install -Dm755 build/ramplus build/ramplusd build/ramplus-web -t "$pkgdir/usr/bin/"
 	install -d "$pkgdir/usr/lib/systemd/system"
 	for u in ramplusd ramplus-web; do

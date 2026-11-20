@@ -60,7 +60,7 @@
             "path": "/etc/systemd/system/ramplus.swap.swap",
             "mode": 420,
             "reload": true,
-            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swap\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swap\nPriority=10\n\n[Install]\nWantedBy=swap.target\n"
+            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swap\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swap\nPriority=10\n\n[Install]\nWantedBy=swap.target\n"
           },
           "undo": [
             {

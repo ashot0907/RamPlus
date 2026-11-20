@@ -1,0 +1,20 @@
+pkgbase = ramplus-bin
+	pkgdesc = Virtual memory manager: SSD swapfile, zswap, memory pressure monitoring, rollback
+	pkgver = 0.2.0alpha.3
+	pkgrel = 1
+	url = https://github.com/ashot0907/RamPlus
+	install = ramplus.install
+	arch = x86_64
+	arch = aarch64
+	license = Apache-2.0
+	depends = systemd
+	provides = ramplus
+	conflicts = ramplus
+	options = !strip
+	options = !debug
+	source_x86_64 = https://github.com/ashot0907/RamPlus/releases/download/v0.2.0-alpha.3/ramplus_0.2.0-alpha.3_linux_amd64.tar.gz
+	sha256sums_x86_64 = 5c709d814b8e875660353ebd9a400e61b3fb1e51a6644bb4c39f1ed0f34f89d3
+	source_aarch64 = https://github.com/ashot0907/RamPlus/releases/download/v0.2.0-alpha.3/ramplus_0.2.0-alpha.3_linux_arm64.tar.gz
+	sha256sums_aarch64 = ebecd1d0eb2645ca7bacee25ebf0765d9e1b52064cc6058349c77efc2f81ac7f
+
+pkgname = ramplus-bin

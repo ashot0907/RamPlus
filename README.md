@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/ashot0907/ramplus/actions"><img src="https://github.com/ashot0907/ramplus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ashot0907/RamPlus/actions"><img src="https://github.com/ashot0907/RamPlus/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache-2.0"></a>
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: alpha">
 </p>
@@ -104,7 +104,7 @@ and shows you what's happening.
 
 ### Debian / Ubuntu (.deb)
 
-Download `ramplus_<version>_amd64.deb` from [Releases](https://github.com/ashot0907/ramplus/releases) and:
+Download `ramplus_<version>_amd64.deb` from [Releases](https://github.com/ashot0907/RamPlus/releases) and:
 
 ```sh
 sudo apt install ./ramplus_<version>_amd64.deb
@@ -126,14 +126,14 @@ yay -S ramplus-bin        # release binaries; or "ramplus" to build from source
 You need Go (current stable) and Node.js with npm (only to build the web UI).
 
 ```sh
-git clone https://github.com/ashot0907/ramplus.git
+git clone https://github.com/ashot0907/RamPlus.git
 cd ramplus
 make build
 sudo make install         # into /usr/local; sudo make uninstall to remove
 ```
 
 Plain binaries for amd64/arm64 (tar.gz, with `SHA256SUMS`) are on the
-[Releases](https://github.com/ashot0907/ramplus/releases) page as well.
+[Releases](https://github.com/ashot0907/RamPlus/releases) page as well.
 
 ### Open the web interface
 

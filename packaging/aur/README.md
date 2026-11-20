@@ -59,14 +59,14 @@ commit.
 
 Packaging-only fixes (same upstream version): bump `pkgrel` instead.
 
-`SKIP` in the checked-in PKGBUILDs is a placeholder until the first release
-built by GoReleaser exists; never publish with `SKIP`.
+Never publish with `SKIP` sums. The source tarball unpacks to `RamPlus-<ver>/`
+(GitHub uses the repository name), hence `_srcdir` in `ramplus/PKGBUILD`.
 
 ## Checks (namcap)
 
-Built and checked in an `archlinux:latest` container (2026-11-20) with a
-locally built release tarball / working-tree source tarball in place of the
-download. Remaining namcap warnings, all expected:
+Built from the real v0.2.0-alpha.3 downloads (checksums verified, `go test`
+passed in `check()`) and checked in an `archlinux:latest` container
+(2026-11-20). Remaining namcap warnings, all expected:
 
 - `Dependency included, but may not be needed ('systemd')` — no binary links
   against libsystemd, but the package needs `systemctl`, sysusers.d and

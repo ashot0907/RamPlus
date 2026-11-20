@@ -35,7 +35,7 @@ $ ramplus swap plan --size 4G --path /mnt/data/ramplus.swapfile --verbose
       │ # Managed by RamPlus: do not edit, use `ramplus swap`.
       │ [Unit]
       │ Description=RamPlus swapfile /mnt/data/ramplus.swapfile
-      │ Documentation=https://github.com/ashot0907/ramplus
+      │ Documentation=https://github.com/ashot0907/RamPlus
       │ 
       │ [Swap]
       │ What=/mnt/data/ramplus.swapfile

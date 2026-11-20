@@ -41,7 +41,7 @@ Steps
       │ # Managed by RamPlus: do not edit, use `ramplus swap`.
       │ [Unit]
       │ Description=RamPlus swapfile /ramplus.swapfile
-      │ Documentation=https://github.com/ashot0907/ramplus
+      │ Documentation=https://github.com/ashot0907/RamPlus
       │ 
       │ [Swap]
       │ What=/ramplus.swapfile

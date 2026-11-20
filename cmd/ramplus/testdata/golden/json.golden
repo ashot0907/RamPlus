@@ -120,7 +120,7 @@ $ ramplus swap plan --size 4G --json
       "kind": "write_file",
       "path": "/etc/systemd/system/ramplus.swapfile.swap",
       "mode": 420,
-      "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+      "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
       "reload": true,
       "description": "записать /etc/systemd/system/ramplus.swapfile.swap"
     },
@@ -236,7 +236,7 @@ $ ramplus swap apply --size 4G --json --yes
         "kind": "write_file",
         "path": "/etc/systemd/system/ramplus.swapfile.swap",
         "mode": 420,
-        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "записать /etc/systemd/system/ramplus.swapfile.swap"
       }
@@ -388,7 +388,7 @@ $ ramplus swap apply --size 4G --json --yes
         "kind": "write_file",
         "path": "/etc/systemd/system/ramplus.swapfile.swap",
         "mode": 420,
-        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "записать /etc/systemd/system/ramplus.swapfile.swap"
       },
@@ -581,7 +581,7 @@ $ ramplus profile plan zswap-lz4 --json
       "kind": "write_file",
       "path": "/etc/systemd/system/ramplus-zswap.service",
       "mode": 420,
-      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
       "reload": true,
       "description": "записать /etc/systemd/system/ramplus-zswap.service"
     },
@@ -753,7 +753,7 @@ $ ramplus profile apply zswap-lz4 --json --yes
         "kind": "write_file",
         "path": "/etc/systemd/system/ramplus-zswap.service",
         "mode": 420,
-        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "записать /etc/systemd/system/ramplus-zswap.service"
       },
@@ -911,7 +911,7 @@ $ ramplus profile apply zswap-lz4 --json --yes --experimental
         "kind": "write_file",
         "path": "/etc/systemd/system/ramplus-zswap.service",
         "mode": 420,
-        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "записать /etc/systemd/system/ramplus-zswap.service"
       }
@@ -1000,7 +1000,7 @@ $ ramplus profile apply zswap-lz4 --json --yes --experimental
         "kind": "write_file",
         "path": "/etc/systemd/system/ramplus-zswap.service",
         "mode": 420,
-        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "записать /etc/systemd/system/ramplus-zswap.service"
       },
@@ -1151,7 +1151,7 @@ $ ramplus rollback --dry-run --json
     {
       "kind": "delete_config",
       "path": "/etc/systemd/system/ramplus-zswap.service",
-      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
       "reload": true,
       "description": "удалить /etc/systemd/system/ramplus-zswap.service"
     },
@@ -1264,7 +1264,7 @@ $ ramplus rollback --json --yes
       "step": {
         "kind": "delete_config",
         "path": "/etc/systemd/system/ramplus-zswap.service",
-        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "удалить /etc/systemd/system/ramplus-zswap.service"
       }
@@ -1355,7 +1355,7 @@ $ ramplus rollback --json --yes
       {
         "kind": "delete_config",
         "path": "/etc/systemd/system/ramplus-zswap.service",
-        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/RamPlus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
         "reload": true,
         "description": "удалить /etc/systemd/system/ramplus-zswap.service"
       },

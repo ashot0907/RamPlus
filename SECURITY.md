@@ -9,7 +9,7 @@ over the network when explicitly configured. We take security reports seriously.
 
 Report it privately through GitHub Security Advisories:
 
-1. Open <https://github.com/ashot0907/ramplus/security/advisories/new>
+1. Open <https://github.com/ashot0907/RamPlus/security/advisories/new>
    (repository → **Security** → **Report a vulnerability**).
 2. Describe the issue, the affected version or commit (`ramplus --version`), and the steps to
    reproduce. A proof of concept helps, but please do not include data from systems you do not own.

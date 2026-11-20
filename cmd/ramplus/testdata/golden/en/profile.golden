@@ -65,7 +65,7 @@ Steps
       │ # Пишет параметры zswap при загрузке (kernel cmdline не меняется).
       │ [Unit]
       │ Description=RamPlus zswap parameters (profile zswap-lz4)
-      │ Documentation=https://github.com/ashot0907/ramplus
+      │ Documentation=https://github.com/ashot0907/RamPlus
       │ DefaultDependencies=no
       │ After=local-fs.target systemd-modules-load.service
       │ Before=swap.target

@@ -11,7 +11,7 @@ pkgver=${_ver//-/}
 pkgrel=1
 pkgdesc="Virtual memory manager: SSD swapfile, zswap, memory pressure monitoring, rollback"
 arch=('x86_64' 'aarch64')
-url="https://github.com/ashot0907/ramplus"
+url="https://github.com/ashot0907/RamPlus"
 license=('Apache-2.0')
 depends=('systemd')
 provides=('ramplus')
@@ -21,9 +21,9 @@ options=('!strip' '!debug')
 _dl="$url/releases/download/v$_ver"
 source_x86_64=("$_dl/ramplus_${_ver}_linux_amd64.tar.gz")
 source_aarch64=("$_dl/ramplus_${_ver}_linux_arm64.tar.gz")
-# From SHA256SUMS of the release: replace SKIP before publishing.
-sha256sums_x86_64=('SKIP')
-sha256sums_aarch64=('SKIP')
+# From SHA256SUMS of the release.
+sha256sums_x86_64=('5c709d814b8e875660353ebd9a400e61b3fb1e51a6644bb4c39f1ed0f34f89d3')
+sha256sums_aarch64=('ebecd1d0eb2645ca7bacee25ebf0765d9e1b52064cc6058349c77efc2f81ac7f')
 
 package() {
 	install -Dm755 ramplus ramplusd ramplus-web -t "$pkgdir/usr/bin/"

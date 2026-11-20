@@ -23,7 +23,7 @@ cat >"$out/changelog" <<CHANGELOG
 ramplus ($debver) unstable; urgency=medium
 
   * Upstream release $version.
-    Release notes: https://github.com/ashot0907/ramplus/releases
+    Release notes: https://github.com/ashot0907/RamPlus/releases
 
  -- RamPlus maintainers <ashot0907@users.noreply.github.com>  $when
 CHANGELOG

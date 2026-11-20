@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: ramplus
-Upstream-Contact: https://github.com/ashot0907/ramplus/issues
-Source: https://github.com/ashot0907/ramplus
+Upstream-Contact: https://github.com/ashot0907/RamPlus/issues
+Source: https://github.com/ashot0907/RamPlus
 
 Files: *
 Copyright: 2026 ashot0907 and RamPlus contributors

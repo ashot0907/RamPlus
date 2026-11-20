@@ -71,7 +71,7 @@
             "kind": "write_file",
             "path": "/etc/systemd/system/ramplus.swapfile.swap",
             "mode": 420,
-            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
             "reload": true
           },
           "status": "done",
@@ -79,7 +79,7 @@
             {
               "kind": "delete_config",
               "path": "/etc/systemd/system/ramplus.swapfile.swap",
-              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
               "reload": true
             },
             {
@@ -302,7 +302,7 @@
               "kind": "write_file",
               "path": "/etc/systemd/system/ramplus.swapfile.swap",
               "mode": 420,
-              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
               "reload": true
             },
             {
@@ -405,7 +405,7 @@
             "kind": "write_file",
             "path": "/etc/systemd/system/ramplus.swapfile.swap",
             "mode": 420,
-            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+            "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
             "reload": true
           },
           "status": "done",
@@ -413,7 +413,7 @@
             {
               "kind": "delete_config",
               "path": "/etc/systemd/system/ramplus.swapfile.swap",
-              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+              "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/RamPlus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
               "reload": true
             },
             {
