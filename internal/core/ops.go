@@ -97,6 +97,8 @@ func (o *Operation) finish(r Result) {
 type StartOptions struct {
 	// ConfirmExperimental — пользователь подтвердил экспериментальный профиль.
 	ConfirmExperimental bool
+	// RequestedBy — кто запросил (SO_PEERCRED); в журнал с source=daemon.
+	RequestedBy *journal.Requester
 }
 
 // opRegistry — операции процесса: одна выполняется, несколько последних
@@ -146,6 +148,7 @@ func (c *Core) Start(planID string, opts StartOptions) (*Operation, *Result) {
 			started <- op
 		},
 		Progress: func(ev journal.Event) { op.addEvent(eventView(ev)) },
+		Origin:   journal.Origin{Source: journal.SourceDaemon, RequestedBy: opts.RequestedBy},
 	}
 	done := make(chan Result, 1)
 	go func() {

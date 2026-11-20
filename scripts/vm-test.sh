@@ -19,6 +19,14 @@
 # система не в исходном состоянии (check-clean и параметры как в начале), демон удаляется,
 # /swap.img и fstab — как были. Если check-clean после этого чистый, журнал
 # прошлых прогонов возвращается на место.
+# Падение в сценариях E и F: перед очисткой последние 50 строк журнала
+# ramplusd и ramplus-web печатаются и сохраняются в
+# /var/lib/ramplus/vmtest-failed-<время>.journal.txt.
+#
+# Записи служб ищутся по машинному полю event= (journalctl -o cat --since
+# <время перед запросом>) с повтором до 5 с: journald принимает вывод
+# асинхронно. Вывод команд проверяется целиком (out_has), а не через
+# `cmd | grep -q`: под pipefail это ложно падает с SIGPIPE.
 #
 # Ожидаемый «остальной swap» снимается непосредственно перед каждым
 # изменяющим шагом (before), а не один раз в начале.
@@ -38,6 +46,14 @@
 #      чисто; права: nobody без групп не доходит до сокета, член ramplus
 #      строит план, но apply → 403; make uninstall — следов нет.
 #      Нужны curl и собранный ./ramplusd (make build).
+#   F. веб: make install → ramplus init --password-stdin → ramplusd и
+#      ramplus-web → страница входа; неверный пароль → отказ; 6 неверных →
+#      пауза; Host: evil.example → 421; вход → status → recommendation →
+#      plan/setup (рекомендация) → без CSRF отказ → apply с CSRF и
+#      confirm_experimental → swap и профиль применены, одна операция setup →
+#      plan rollback → apply → чисто; выход → status 401; make uninstall
+#      PURGE=1 → следов нет (пользователь ramplus-web, пароль, юниты).
+#      Нужен собранный ./ramplus-web (make build).
 set -euo pipefail
 
 BIN=${1:-./ramplus}
@@ -49,7 +65,13 @@ OLD=""            # существующий swap для сценариев B/C
 CREATED_OLD=0     # /swap.img создан этим скриптом
 SAVED_STATE=""    # журнал прошлых прогонов, отложенный на время теста
 REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-INSTALLED=0       # make install выполнен этим скриптом (сценарий E)
+INSTALLED=0       # make install выполнен этим скриптом (сценарии E, F)
+WEB_INIT=0        # пароль веба задан этим скриптом (сценарий F)
+DAEMON_SCENARIO=0 # начались сценарии E/F (при падении сохранить журнал служб)
+FAIL_TS=""
+WEB=http://127.0.0.1:7781
+JAR=""            # cookie веб-сессии (сценарий F)
+CSRF=""
 GROUPS_PREEXIST=0 # группы ramplus/ramplus-admin были до теста (не удалять)
 # Ручные изменения вне журнала, которые надо вернуть при падении:
 DIRTY_UNIT=0         # A4: swap выключен вручную, юнит ещё не поднял его
@@ -79,7 +101,8 @@ if command -v systemd-detect-virt >/dev/null; then
 fi
 [[ -x $BIN ]] || die "нет бинарника $BIN (make build)"
 [[ -x $REPO/ramplusd ]] || die "нет $REPO/ramplusd (make build)"
-command -v curl >/dev/null || die "нужен curl (сценарий E)"
+[[ -x $REPO/ramplus-web ]] || die "нет $REPO/ramplus-web (make build)"
+command -v curl >/dev/null || die "нужен curl (сценарии E, F)"
 
 # Активный swap: NAME SIZE(байты) PRIO. Колонки задаются через --show=...
 # (у swapon нет опции --output: она молча игнорируется).
@@ -168,6 +191,54 @@ rp() {
 	"$BIN" "$@"
 }
 
+# out_has PATTERN CMD... — вывод CMD (stdout, целиком) содержит PATTERN.
+# Не `cmd | grep -q`: под pipefail grep выходит на первом совпадении, cmd
+# получает SIGPIPE (код 141), и проверка ложно падает.
+out_has() {
+	local pattern=$1 out
+	shift
+	out=$("$@") || return 1
+	grep -q -- "$pattern" <<<"$out"
+}
+
+# now_ts — метка времени для journalctl --since (снимается до запроса).
+now_ts() { date '+%Y-%m-%d %H:%M:%S'; }
+
+# journal_wait SINCE UNIT EVENT [KEY=VALUE...] — в журнале UNIT с момента
+# SINCE есть запись с машинным полем event=EVENT и всеми полями KEY=VALUE
+# (одна строка). journald принимает вывод службы асинхронно, поэтому повтор
+# до 5 с. Ищется по полям (-o cat — строка как её пишет служба), не по тексту.
+journal_wait() {
+	local since=$1 unit=$2 event=$3 i out lines f
+	shift 3
+	for ((i = 0; i < 25; i++)); do
+		out=$(journalctl -u "$unit" --since "$since" -o cat --no-pager 2>/dev/null || true)
+		lines=$(grep -Fw -- "event=$event" <<<"$out" || true)
+		for f in "$@"; do
+			lines=$(grep -Fw -- "$f" <<<"$lines" || true)
+		done
+		if [[ -n $lines ]]; then
+			echo "ok: журнал $unit: $(head -1 <<<"$lines")"
+			return 0
+		fi
+		sleep 0.2
+	done
+	die "в журнале $unit с $since нет записи event=$event $*:\n$(journalctl -u "$unit" --since "$since" -o cat --no-pager 2>/dev/null | tail -20)"
+}
+
+# save_journal — при падении в сценариях E и F: последние 50 строк журнала
+# ramplusd и ramplus-web на экран и в файл рядом с журналом теста.
+save_journal() {
+	local file=/var/lib/ramplus/vmtest-failed-$FAIL_TS.journal.txt out
+	out=$(journalctl -u ramplusd -u ramplus-web --no-pager -n 50 2>&1 || true)
+	echo
+	echo "Журнал ramplusd и ramplus-web (последние 50 строк):"
+	echo "$out"
+	mkdir -p /var/lib/ramplus
+	printf '%s\n' "$out" >"$file"
+	echo "журнал служб сохранён: $file"
+}
+
 # system_clean — RamPlus ничего не держит (check-clean: нет managed swap,
 # активного профиля, незавершённых операций, файлов и юнитов RamPlus) и
 # параметры zswap/vm.* равны снятым в начале теста.
@@ -185,7 +256,10 @@ restore_after_failure() {
 	echo "=== Возврат VM в исходное состояние"
 	if ((INSTALLED)); then
 		# systemd дожидается текущей операции демона (graceful stop).
-		systemctl stop ramplusd 2>/dev/null || true
+		systemctl stop ramplus-web ramplusd 2>/dev/null || true
+	fi
+	if ((WEB_INIT)) && ((GROUPS_PREEXIST)); then
+		"$BIN" passwd --disable || true # без PURGE uninstall пароль не удаляет
 	fi
 	if ((DIRTY_UNIT)); then
 		systemctl start "$UNIT" || true
@@ -204,7 +278,7 @@ restore_after_failure() {
 			echo "система в исходном состоянии — откаты не нужны"
 			break
 		fi
-		if ! "$BIN" history --json 2>/dev/null | grep -q '"rollback_next": true'; then
+		if ! out_has '"rollback_next": true' "$BIN" history --json; then
 			echo "откатывать нечего, но система не в исходном состоянии — разбирать вручную"
 			break
 		fi
@@ -229,8 +303,12 @@ cleanup() {
 		echo
 		echo "Тест упал. Состояние для разбора:"
 		swapon --show || true
+		FAIL_TS=$(date +%Y%m%dT%H%M%S)
+		if ((DAEMON_SCENARIO)); then
+			save_journal
+		fi
 		if [[ -f $STATE ]]; then
-			FAILED_STATE="$STATE.vmtest-failed-$(date +%Y%m%dT%H%M%S)"
+			FAILED_STATE="$STATE.vmtest-failed-$FAIL_TS"
 			cp -p "$STATE" "$FAILED_STATE"
 			echo "журнал теста сохранён: $FAILED_STATE"
 		fi
@@ -278,7 +356,7 @@ echo "$clean_report"
 # Изоляция от прошлых прогонов: незавершённых следов нет, но в журнале
 # могут остаться неотменённые операции (например, profile reset), и
 # «лишний rollback» дошёл бы до них. Журнал откладывается на время теста.
-if "$BIN" history --json | grep -q '"id":'; then
+if out_has '"id":' "$BIN" history --json; then
 	SAVED_STATE="$STATE.vmtest-$(date +%Y%m%dT%H%M%S)"
 	mv "$STATE" "$SAVED_STATE"
 	echo "в журнале есть операции прошлых прогонов: $STATE перемещён в $SAVED_STATE,"
@@ -317,7 +395,7 @@ if grep -q ramplus /etc/fstab; then
 fi
 
 step "A3. status показывает managed"
-rp status --json | grep -q '"managed": true' || die "status --json: нет managed: true"
+out_has '"managed": true' rp status --json || die "status --json: нет managed: true"
 rp status | sed -n '/Swap-устройства/,/^$/p'
 
 step "A4. systemd-юнит сам поднимает swap (как после перезагрузки)"
@@ -377,7 +455,7 @@ echo "существующий swap: $OLD"
 cp -p /etc/fstab "$WORK/fstab.before-replace"
 
 step "B1. plan без --existing: по умолчанию keep, сказано явно"
-rp swap plan --size 4G | grep -q 'по умолчанию — флаг не указан' || die "plan не сообщил о выборе по умолчанию"
+out_has 'по умолчанию — флаг не указан' rp swap plan --size 4G || die "plan не сообщил о выборе по умолчанию"
 
 step "B2. apply --existing=replace"
 before
@@ -438,7 +516,7 @@ assert_eq "$(params)" "$INITIAL_PARAMS" "сценарии A–C не измен�
 assert_no_profile_files
 
 step "D1. plan без root ничего не меняет"
-rp profile plan zswap-lz4 | grep -q 'zswap.compressor' || die "plan не показал zswap.compressor"
+out_has 'zswap.compressor' rp profile plan zswap-lz4 || die "plan не показал zswap.compressor"
 assert_eq "$(params)" "$INITIAL_PARAMS" "plan не изменил значения"
 
 step "D2. apply без подтверждения экспериментального профиля — отказ"
@@ -459,7 +537,7 @@ grep -q '# Managed by RamPlus' /etc/sysctl.d/99-ramplus.conf || die "нет ма
 systemctl is-enabled ramplus-zswap.service >/dev/null || die "ramplus-zswap.service не enabled"
 
 step "D4. status: профиль активен"
-rp status --json | grep -q '"name": "zswap-lz4"' || die "status --json: нет профиля"
+out_has '"name": "zswap-lz4"' rp status --json || die "status --json: нет профиля"
 rp status | sed -n '/Профиль RamPlus/,/^$/p'
 
 step "D5. «перезагрузка»: значения испорчены вручную, юнит их возвращает"
@@ -475,8 +553,8 @@ step "D6. дрейф: ручная запись swappiness → status преду
 SWAPPINESS=$(</proc/sys/vm/swappiness)
 DIRTY_SWAPPINESS=$SWAPPINESS
 echo 133 >/proc/sys/vm/swappiness
-rp status --json | grep -q '"key": "vm.swappiness"' || die "status --json: нет дрейфа vm.swappiness"
-rp status | grep -q 'значения изменены вручную' || die "status не предупредил о дрейфе"
+out_has '"key": "vm.swappiness"' rp status --json || die "status --json: нет дрейфа vm.swappiness"
+out_has 'значения изменены вручную' rp status || die "status не предупредил о дрейфе"
 echo "$SWAPPINESS" >/proc/sys/vm/swappiness
 DIRTY_SWAPPINESS=""
 
@@ -492,7 +570,7 @@ assert_param /proc/sys/vm/swappiness 80
 rp profile reset --yes
 assert_eq "$(params)" "$INITIAL_PARAMS" "значения как в начале"
 assert_no_profile_files
-rp profile reset --yes | grep -q 'Нечего делать' || die "повторный reset должен быть пустым"
+out_has 'Нечего делать' rp profile reset --yes || die "повторный reset должен быть пустым"
 "$BIN" swap check-clean || die "после reset остались следы"
 
 ########################################################################
@@ -517,8 +595,12 @@ api() {
 	BODY=${out%$'\n'*}
 }
 
-# field NAME — первое значение "NAME": "..." в $BODY.
-field() { sed -n "s/.*\"$1\": \"\([^\"]*\)\".*/\1/p" <<<"$BODY" | head -1; }
+# field NAME — первое значение "NAME": "..." в $BODY (с пробелом после
+# двоеточия — ответы демона, без — компактный JSON ramplus-web).
+field() { sed -n "s/.*\"$1\": *\"\([^\"]*\)\".*/\1/p" <<<"$BODY" | head -1; }
+
+# numfield NAME — первое числовое значение "NAME": 123 ("" — null или нет).
+numfield() { sed -n "s/.*\"$1\": *\([0-9][0-9]*\).*/\1/p" <<<"$BODY" | head -1; }
 
 expect_code() {
 	[[ $CODE == "$1" ]] || die "$2: ожидался HTTP $1, получен $CODE:\n$BODY"
@@ -550,6 +632,7 @@ apply_plan() {
 }
 
 step "E1. make install, systemctl start ramplusd"
+DAEMON_SCENARIO=1
 make -s -C "$REPO" install
 INSTALLED=1
 systemctl start ramplusd
@@ -612,10 +695,11 @@ expect_code 200 "status от члена ramplus"
 api "${reader[@]}" -- POST /v1/plan/swap '{"action": "apply", "size": "4G", "existing": "keep"}'
 expect_code 200 "plan от члена ramplus"
 id=$(field id)
+since=$(now_ts)
 api "${reader[@]}" -- POST /v1/apply "{\"plan_id\": \"$id\"}"
 expect_code 403 "apply от члена ramplus (не ramplus-admin)"
 [[ $(field code) == auth.forbidden ]] || die "код отказа: $BODY"
-journalctl -u ramplusd --no-pager -n 50 | grep -q 'auth.forbidden' || die "отказ не записан в журнал демона"
+journal_wait "$since" ramplusd auth.forbidden "uid=$(id -u nobody)" need=admin method=POST path=/v1/apply
 assert_state "$SWAPFILE" 0 "$BEFORE"
 
 step "E6. make uninstall — следов нет"
@@ -634,6 +718,273 @@ if ((!GROUPS_PREEXIST)); then
 fi
 if pgrep -x ramplusd >/dev/null; then
 	die "после uninstall работает ramplusd"
+fi
+"$BIN" swap check-clean || die "после uninstall остались следы"
+
+########################################################################
+# web METHOD PATH [BODY] [HOST]: запрос к ramplus-web с cookie-сессией $JAR
+# и токеном $CSRF; тело — в $BODY, код — в $CODE.
+web() {
+	local method=$1 path=$2 data=${3:-} host=${4:-} out rc=0
+	local args=(-sS -b "$JAR" -c "$JAR" -X "$method" -w '\n%{http_code}')
+	if [[ -n $data ]]; then
+		args+=(-H 'Content-Type: application/json' -d "$data")
+	fi
+	if [[ -n $CSRF ]]; then
+		args+=(-H "X-CSRF-Token: $CSRF")
+	fi
+	if [[ -n $host ]]; then
+		args+=(-H "Host: $host")
+	fi
+	out=$(curl "${args[@]}" "$WEB$path") || rc=$?
+	((rc == 0)) || die "curl $method $path (веб): код $rc"
+	CODE=${out##*$'\n'}
+	BODY=${out%$'\n'*}
+}
+
+# web_wait_op ID — ждать завершения операции через веб, status=done.
+web_wait_op() {
+	local i
+	for ((i = 0; i < 600; i++)); do
+		web GET "/api/operations/$1"
+		expect_code 200 "операция $1 (веб)"
+		if grep -q '"running": false' <<<"$BODY"; then
+			[[ $(field status) == "done" ]] || die "операция $1 не выполнена:\n$BODY"
+			return
+		fi
+		sleep 0.5
+	done
+	die "операция $1 не завершилась за 5 минут"
+}
+
+WEBPW="vm-test-$(date +%s)-пароль"
+WRONGPW="wrong-password-$$"
+JAR="$WORK/cookies"
+: >"$JAR"
+
+step "F1. make install, ramplus init --password-stdin, ramplusd и ramplus-web"
+DAEMON_SCENARIO=1
+F_START=$(now_ts)
+make -s -C "$REPO" install
+INSTALLED=1
+out_has ramplus-admin id ramplus-web || die "ramplus-web не в группе ramplus-admin: $(id ramplus-web)"
+printf '%s\n' "$WEBPW" | "$BIN" init --password-stdin
+WEB_INIT=1
+[[ $(stat -c '%a %U %G' /etc/ramplus/web-auth) == "640 root ramplus-web" ]] ||
+	die "права /etc/ramplus/web-auth: $(stat -c '%a %U %G' /etc/ramplus/web-auth)"
+if grep -qF "$WEBPW" /etc/ramplus/web-auth; then
+	die "пароль лежит в файле открытым текстом"
+fi
+systemctl start ramplusd ramplus-web
+for ((i = 0; i < 50; i++)); do
+	curl -s -o /dev/null "$WEB/api/session" && break
+	sleep 0.2
+done
+[[ $(ps -o user:32= -C ramplus-web | head -1) == ramplus-web ]] || die "ramplus-web работает не от ramplus-web: $(ps -o user:32= -C ramplus-web)"
+
+step "F2. страница входа отдаётся, заголовки безопасности"
+web GET /
+expect_code 200 "главная страница"
+grep -q '<div id="root">' <<<"$BODY" || die "нет фронтенда:\n$BODY"
+headers=$(curl -sS -D - -o /dev/null "$WEB/")
+grep -qi "^content-security-policy: default-src 'none'" <<<"$headers" || die "нет CSP:\n$headers"
+grep -qi '^x-frame-options: DENY' <<<"$headers" || die "нет X-Frame-Options:\n$headers"
+web GET /api/session
+grep -q '"password_set":true' <<<"$BODY" || die "сессия: $BODY"
+
+step "F3. неверный пароль → отказ"
+F3_START=$(now_ts)
+web POST /api/login "{\"password\": \"$WRONGPW\"}"
+expect_code 401 "неверный пароль"
+[[ $(field code) == auth.invalid ]] || die "код: $BODY"
+
+step "F4. 6 неверных попыток → пауза"
+for ((i = 2; i <= 5; i++)); do
+	web POST /api/login "{\"password\": \"$WRONGPW\"}"
+	expect_code 401 "неверный пароль #$i"
+done
+web POST /api/login "{\"password\": \"$WEBPW\"}"
+expect_code 429 "6-я попытка — пауза (даже с верным паролем)"
+[[ $(field code) == auth.rate_limited ]] || die "код: $BODY"
+wait_s=$(numfield retry_after_seconds)
+[[ -n $wait_s ]] || die "нет retry_after_seconds: $BODY"
+journal_wait "$F3_START" ramplus-web login.failed ip=127.0.0.1
+journal_wait "$F3_START" ramplus-web login.rate_limited ip=127.0.0.1
+web_log=$(journalctl -u ramplus-web --since "$F_START" -o cat --no-pager)
+if grep -qF -e "$WRONGPW" -e "$WEBPW" <<<"$web_log"; then
+	die "пароль попал в журнал ramplus-web"
+fi
+echo "пауза $wait_s с"
+sleep "$((wait_s + 1))"
+
+step "F5. Host: evil.example → 421"
+web GET / "" evil.example
+expect_code 421 "чужой Host"
+web GET /api/session "" evil.example:7781
+expect_code 421 "чужой Host с портом"
+
+step "F6. вход"
+web POST /api/login "{\"password\": \"$WEBPW\"}"
+expect_code 200 "вход"
+CSRF=$(field csrf_token)
+[[ -n $CSRF ]] || die "нет csrf_token: $BODY"
+grep -qi 'HttpOnly' "$JAR" || grep -q '#HttpOnly_' "$JAR" || die "cookie без HttpOnly:\n$(cat "$JAR")"
+
+step "F7. status и recommendation через веб"
+web GET /api/status
+expect_code 200 "status (веб)"
+grep -q '"memory"' <<<"$BODY" || die "status без memory"
+web GET /api/recommendation
+expect_code 200 "recommendation"
+REC_SIZE=$(numfield swap_size_bytes)
+REC_EXISTING=$(field existing)
+REC_PROFILE=$(field profile)
+[[ -n $REC_SIZE ]] || die "рекомендации swap нет (нужно место на диске):\n$BODY"
+REC_GIB=$((REC_SIZE / 1024 / 1024 / 1024))
+echo "рекомендация: ${REC_GIB}G, existing=${REC_EXISTING:-null}, профиль $REC_PROFILE"
+[[ $REC_PROFILE == zswap-lz4 ]] || die "ожидался профиль zswap-lz4 (zswap в ядре VM?):\n$BODY"
+
+step "F8. plan/setup по рекомендации; без CSRF — отказ"
+before
+setup_body="{\"swap\": {\"size\": $REC_SIZE"
+if [[ -n $REC_EXISTING ]]; then
+	setup_body+=", \"existing\": \"$REC_EXISTING\""
+fi
+setup_body+="}, \"profile\": {\"name\": \"$REC_PROFILE\"}}"
+saved_csrf=$CSRF
+CSRF=""
+web POST /api/plan/setup "$setup_body"
+expect_code 403 "plan/setup без CSRF"
+[[ $(field code) == csrf.invalid ]] || die "код: $BODY"
+CSRF=$saved_csrf
+web POST /api/plan/setup "$setup_body"
+expect_code 200 "plan/setup"
+grep -q '"blocked": false' <<<"$BODY" || die "план setup заблокирован:\n$BODY"
+grep -q '"action": "setup"' <<<"$BODY" || die "не setup:\n$BODY"
+plan_id=$(field id)
+
+# История через веб: в журнале — операции всего прогона (A–E тоже), поэтому
+# проверяется только операция с operation_id из /api/apply и прирост журнала.
+# Ответ демона — JSON с отступом 2: операции — объекты на уровне 4 пробелов,
+# их поля — 6.
+
+# history_ids — ID операций из $BODY (GET /api/history), по одному в строке.
+history_ids() { sed -n 's/^      "id": "\([^"]*\)".*/\1/p' <<<"$BODY"; }
+
+# history_op ID — JSON-блок операции ID из $BODY.
+history_op() {
+	awk -v want="      \"id\": \"$1\"," '
+		/^    \{/ { blk = ""; inop = 1 }
+		inop { blk = blk $0 "\n" }
+		/^    \}/ && inop { inop = 0; if (index(blk, want)) printf "%s", blk }
+	' <<<"$BODY"
+}
+
+# history_snapshot — запомнить ID операций журнала (до apply).
+history_snapshot() {
+	web GET /api/history
+	expect_code 200 "history (веб)"
+	history_ids >"$WORK/history.before"
+}
+
+# history_expect_one OPID KEY=VALUE... — после apply в журнале ровно одна
+# новая операция, это OPID, и в её JSON есть все "KEY": "VALUE". При
+# падении печатаются только эта операция и новые записи.
+history_expect_one() {
+	local opid=$1 kv key val block new n_before n_after
+	shift
+	web GET /api/history
+	expect_code 200 "history (веб)"
+	block=$(history_op "$opid")
+	new=$(history_ids | grep -vxF -f "$WORK/history.before" || true)
+	n_before=$(wc -l <"$WORK/history.before")
+	n_after=$(history_ids | wc -l)
+	[[ -n $block ]] || die "операции $opid нет в журнале; новые операции:\n${new:-(нет)}"
+	if ((n_after != n_before + 1)) || [[ $new != "$opid" ]]; then
+		die "журнал должен вырасти ровно на одну операцию $opid: было $n_before, стало $n_after; новые:\n${new:-(нет)}\nоперация $opid:\n$block"
+	fi
+	for kv in "$@"; do
+		key=${kv%%=*} val=${kv#*=}
+		grep -qF "\"$key\": \"$val\"" <<<"$block" || die "операция $opid: нет \"$key\": \"$val\":\n$block"
+	done
+	echo "ok: в журнале одна новая операция $opid ($*)"
+}
+
+# history_expect_field OPID KEY=VALUE — у операции OPID в последнем ответе
+# истории есть "KEY": "VALUE".
+history_expect_field() {
+	local block key=${2%%=*} val=${2#*=}
+	block=$(history_op "$1")
+	grep -qF "\"$key\": \"$val\"" <<<"$block" || die "операция $1: нет \"$key\": \"$val\":\n${block:-(нет в журнале)}"
+	echo "ok: операция $1: $key=$val"
+}
+
+step "F9. apply с CSRF и confirm_experimental → swap и профиль применены, одна операция setup"
+history_snapshot
+web POST /api/apply "{\"plan_id\": \"$plan_id\", \"confirm_experimental\": true}"
+expect_code 202 "apply (веб)"
+SETUP_OP=$(field operation_id)
+[[ -n $SETUP_OP ]] || die "нет operation_id: $BODY"
+web_wait_op "$SETUP_OP"
+expected=$BEFORE
+if [[ $REC_EXISTING == replace ]]; then
+	expected=$(awk '$1 ~ /^\/dev\/zram/' <<<"$BEFORE") # заменён весь swap, кроме zram
+fi
+assert_state "$SWAPFILE" "$REC_GIB" "$expected"
+assert_param /sys/module/zswap/parameters/enabled Y
+assert_param /sys/module/zswap/parameters/compressor lz4
+history_expect_one "$SETUP_OP" action=setup status=committed source=daemon via=web \
+	user=ramplus-web "title=Запас $REC_GIB GB из SSD + режим «Сжатие — быстрое»"
+
+step "F10. plan rollback → apply → чисто; setup отменён одной операцией"
+web POST /api/plan/rollback "{}"
+expect_code 200 "plan rollback (веб)"
+grep -q '"domain": "setup"' <<<"$BODY" || die "rollback отменяет не setup:\n$BODY"
+grep -q "\"operation_id\": \"$SETUP_OP\"" <<<"$BODY" || die "rollback отменяет не $SETUP_OP:\n$(grep -A8 '"rollback"' <<<"$BODY")"
+plan_id=$(field id)
+history_snapshot
+web POST /api/apply "{\"plan_id\": \"$plan_id\"}"
+expect_code 202 "apply rollback (веб)"
+ROLLBACK_OP=$(field operation_id)
+[[ -n $ROLLBACK_OP ]] || die "нет operation_id: $BODY"
+web_wait_op "$ROLLBACK_OP"
+assert_state "$SWAPFILE" 0 "$BEFORE"
+assert_eq "$(params)" "$INITIAL_PARAMS" "параметры zswap/vm.* как в начале"
+"$BIN" swap check-clean || die "после rollback через веб остались следы"
+history_expect_one "$ROLLBACK_OP" action=rollback status=committed "target=$SETUP_OP" source=daemon via=web
+history_expect_field "$SETUP_OP" status=rolled_back
+
+step "F11. выход → status 401"
+web POST /api/logout "{}"
+expect_code 204 "выход"
+web GET /api/status
+expect_code 401 "status после выхода"
+
+step "F12. make uninstall PURGE=1 — следов нет"
+if ((GROUPS_PREEXIST)); then
+	"$BIN" passwd --disable # группы были до теста: PURGE нельзя, пароль убираем сами
+fi
+make -s -C "$REPO" uninstall "${PURGE[@]}"
+INSTALLED=0
+WEB_INIT=0
+for f in /usr/local/bin/ramplus-web /usr/local/lib/systemd/system/ramplus-web.service /etc/ramplus/web-auth /run/ramplus; do
+	[[ ! -e $f ]] || die "после uninstall остался $f"
+done
+if ((!GROUPS_PREEXIST)); then
+	if getent passwd ramplus-web >/dev/null; then
+		die "после uninstall PURGE=1 остался пользователь ramplus-web"
+	fi
+	for g in ramplus ramplus-admin ramplus-web; do
+		if getent group "$g" >/dev/null; then
+			die "после uninstall PURGE=1 осталась группа $g"
+		fi
+	done
+fi
+if pgrep -x ramplus-web >/dev/null || pgrep -x ramplusd >/dev/null; then
+	die "после uninstall работает ramplus-web или ramplusd"
+fi
+if curl -s -o /dev/null "$WEB/"; then
+	die "после uninstall порт 7781 отвечает"
 fi
 "$BIN" swap check-clean || die "после uninstall остались следы"
 

@@ -38,8 +38,11 @@ type session struct {
 
 func newSession(t *testing.T, w *fakesys.World) *session {
 	t.Helper()
-	oldSys, oldCollect, oldLocal := newSystem, collect, time.Local
-	t.Cleanup(func() { newSystem, collect, time.Local = oldSys, oldCollect, oldLocal })
+	oldSys, oldCollect, oldLocal, oldOrigin := newSystem, collect, time.Local, cliOrigin
+	t.Cleanup(func() { newSystem, collect, time.Local, cliOrigin = oldSys, oldCollect, oldLocal, oldOrigin })
+	cliOrigin = func() journal.Origin {
+		return journal.Origin{Source: journal.SourceCLI, RequestedBy: &journal.Requester{UID: 1000, User: "golden"}}
+	}
 	time.Local = time.UTC
 	newSystem = w.System
 	collect = func() monitor.Status { return goldenStatus(w) }
@@ -69,13 +72,16 @@ func goldenStatus(w *fakesys.World) monitor.Status {
 }
 
 // run выполняет команду CLI и дописывает её вывод в сессию.
-func (s *session) run(args ...string) {
+func (s *session) run(args ...string) { s.t.Helper(); s.runIn("", args...) }
+
+// runIn — run со stdin.
+func (s *session) runIn(stdin string, args ...string) {
 	s.t.Helper()
 	root := newRootCmd()
 	var out bytes.Buffer
 	root.SetOut(&out)
 	root.SetErr(&out)
-	root.SetIn(strings.NewReader(""))
+	root.SetIn(strings.NewReader(stdin))
 	root.SetArgs(args)
 	err := root.Execute()
 	s.out.WriteString("$ ramplus " + strings.Join(args, " ") + "\n")
@@ -322,4 +328,41 @@ func TestGoldenOrphan(t *testing.T) {
 	s.run("swap", "remove", "--orphan", "--yes")
 	s.run("swap", "check-clean")
 	s.check("orphan")
+}
+
+// setup: swap и профиль одной операцией, один rollback.
+func TestGoldenSetup(t *testing.T) {
+	s := newSession(t, fakesys.New().WithKernelParams(false).WithOldSwap(0))
+	s.run("recommend")
+	s.run("recommend", "--json")
+	s.run("setup", "--size", "8G", "--existing=replace", "--profile", "zswap-lz4", "--dry-run")
+	s.run("setup", "--size", "8G", "--existing=replace", "--profile", "zswap-lz4", "--yes")
+	s.run("setup", "--size", "8G", "--existing=replace", "--profile", "zswap-lz4", "--experimental", "--yes")
+	s.run("setup", "--size", "8G", "--profile", "zswap-lz4", "--dry-run")
+	s.run("history")
+	s.run("rollback", "--dry-run")
+	s.run("rollback", "--yes")
+	s.run("swap", "check-clean")
+	s.run("setup", "--dry-run")
+	s.check("setup")
+}
+
+// init / passwd: пароль веба (хеш в файле не печатается).
+func TestGoldenWebPassword(t *testing.T) {
+	w := fakesys.New()
+	s := newSession(t, w)
+	old := lookupWebGroup
+	t.Cleanup(func() { lookupWebGroup = old })
+	lookupWebGroup = func() (int, error) { return 977, nil }
+	s.runIn("password1\n", "passwd", "--password-stdin")
+	s.runIn("short\n", "init", "--password-stdin")
+	s.runIn("password1\n", "init", "--password-stdin", "--dry-run")
+	s.runIn("password1\n", "init", "--password-stdin")
+	s.runIn("password1\n", "init", "--password-stdin")
+	s.runIn("password2\n", "passwd", "--password-stdin")
+	s.run("passwd", "--disable")
+	s.run("init")
+	w.EUID = 1000
+	s.runIn("password1\n", "init", "--password-stdin")
+	s.check("webauth")
 }

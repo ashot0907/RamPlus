@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"io"
+	"strconv"
 	"text/tabwriter"
 
 	"github.com/ashot0907/ramplus/internal/journal"
@@ -24,7 +25,7 @@ func History(w io.Writer, h journal.History) error {
 	}
 	fmt.Fprintf(w, "Журнал: %s (операций: %d)\n\n", h.Journal, len(h.Operations))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ID\tВРЕМЯ\tСТАТУС\tОТКАТ\tКОМАНДА")
+	fmt.Fprintln(tw, "  ID\tВРЕМЯ\tСТАТУС\tОТКАТ\tОПЕРАЦИЯ\tИСТОЧНИК\tКОМАНДА")
 	var errs []journal.HistoryEntry
 	for _, op := range h.Operations {
 		status := opStatusText[op.Status]
@@ -42,7 +43,11 @@ func History(w io.Writer, h journal.History) error {
 		if op.Target != "" {
 			cmd += " (отменяет " + op.Target + ")"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), status, undo, cmd)
+		title := op.Title
+		if title == "" {
+			title = "—"
+		}
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), status, undo, title, SourceText(op), cmd)
 		if op.Error != "" {
 			errs = append(errs, op)
 		}
@@ -55,4 +60,31 @@ func History(w io.Writer, h journal.History) error {
 	}
 	fmt.Fprintln(w, "\nОТКАТ: «следующий» — эту операцию отменит ramplus rollback; «да» — повторные rollback дойдут до неё.")
 	return nil
+}
+
+// SourceText — откуда запрошена операция: «из терминала (ashot)», «через
+// веб-интерфейс», «через API демона (uid 1001)», «неизвестно» (старый журнал).
+func SourceText(e journal.HistoryEntry) string {
+	who := ""
+	if r := e.RequestedBy; r != nil {
+		who = r.User
+		if who == "" {
+			who = "uid " + strconv.FormatUint(uint64(r.UID), 10)
+		}
+	}
+	with := func(s string) string {
+		if who == "" {
+			return s
+		}
+		return s + " (" + who + ")"
+	}
+	switch {
+	case e.Source == journal.SourceDaemon && e.RequestedBy != nil && e.RequestedBy.Via == journal.ViaWeb:
+		return "через веб-интерфейс"
+	case e.Source == journal.SourceCLI:
+		return with("из терминала")
+	case e.Source == journal.SourceDaemon:
+		return with("через API демона")
+	}
+	return "неизвестно"
 }

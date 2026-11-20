@@ -38,6 +38,11 @@ type Server struct {
 	Log     *slog.Logger
 	// StatusInterval — период снимков /v1/status/stream (по умолчанию 1 с).
 	StatusInterval time.Duration
+	// WebUID — uid пользователя ramplus-web: его операции помечаются в
+	// журнале via=web (по SO_PEERCRED, заголовком не подделать). nil — нет.
+	WebUID *uint32
+	// LookupUser — имя пользователя по uid для журнала ("" — нет).
+	LookupUser func(uid uint32) string
 
 	started time.Time
 	streams atomic.Int64 // открытые SSE-потоки (тесты: отключение освобождает)
@@ -132,7 +137,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	s.mux.ServeHTTP(rw, r)
 	p, _ := PeerFrom(r.Context())
-	s.Log.Info("request", "method", r.Method, "path", r.URL.Path, "status", rw.status,
+	s.Log.Info("запрос", "event", EventRequest, "method", r.Method, "path", r.URL.Path, "status", rw.status,
 		"uid", p.UID, "pid", p.PID, "ms", time.Since(start).Milliseconds())
 }
 

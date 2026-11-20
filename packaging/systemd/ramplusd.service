@@ -11,7 +11,7 @@ After=local-fs.target systemd-tmpfiles-setup.service
 Type=exec
 ExecStart=@BINDIR@/ramplusd
 # root: swapon/swapoff, /etc/systemd, /etc/sysctl.d, /proc/sys, /sys/module/zswap,
-# /var/lib/ramplus. HTTP-сервера с root нет — это отдельный ramplus-web (позже).
+# /var/lib/ramplus. HTTP-сервера с root нет — это отдельный ramplus-web (User=ramplus-web).
 User=root
 Restart=on-failure
 RestartSec=2s

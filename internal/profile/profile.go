@@ -40,8 +40,10 @@ func StatusText(status string) string {
 
 // Profile — встроенный профиль.
 type Profile struct {
-	Name        string `json:"name"`
-	Title       string `json:"title"`
+	Name  string `json:"name"`
+	Title string `json:"title"`
+	// Friendly — название режима для человека (веб, история): «Сжатие — быстрое».
+	Friendly    string `json:"friendly"`
 	Description string `json:"description"`
 	Status      string `json:"status"`
 	// Evidence — ссылка на результат scripts/bench.sh на реальном SSD.
@@ -131,6 +133,15 @@ func All() []Profile {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// FriendlyName — название режима для человека («Сжатие — быстрое»);
+// неизвестный профиль — его имя.
+func FriendlyName(name string) string {
+	if p, ok := catalog[name]; ok && p.Friendly != "" {
+		return p.Friendly
+	}
+	return name
 }
 
 // Get — профиль по имени.

@@ -40,6 +40,8 @@ type FS interface {
 	Mkdir(name string, perm fs.FileMode) error
 	MkdirAll(name string, perm fs.FileMode) error
 	Chmod(name string, perm fs.FileMode) error
+	// Chown меняет владельца (uid/gid; -1 — не менять).
+	Chown(name string, uid, gid int) error
 	// Create создаёт новый пустой файл (O_EXCL). Существующий — ошибка fs.ErrExist.
 	Create(name string, perm fs.FileMode) error
 	// Fallocate выделяет size байт в существующем файле. Если ФС не умеет —

@@ -41,7 +41,7 @@ func showPlan(cmd *cobra.Command, p *plan.Plan, verbose, asJSON bool) error {
 // executeJSON — выполнить без вопросов и напечатать итог JSON
 // (core.Result). Неуспех — код выхода 1.
 func executeJSON(cmd *cobra.Command, r core.Request, confirm func(*plan.Plan) (bool, error)) error {
-	res := newCore().Execute(cmd.Context(), r, journal.Hooks{Confirm: confirm})
+	res := newCore().Execute(cmd.Context(), r, journal.Hooks{Confirm: confirm, Origin: cliOrigin()})
 	if err := writeJSON(cmd.OutOrStdout(), res); err != nil {
 		return err
 	}

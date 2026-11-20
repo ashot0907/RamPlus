@@ -116,3 +116,6 @@ func ResumeParam(cmdline string) string {
 	}
 	return ""
 }
+
+// SizeFlag — размер для командной строки: 4G, 512M.
+func SizeFlag(b uint64) string { return sizeFlag(b) }

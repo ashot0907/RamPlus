@@ -2,21 +2,29 @@
 
 Open-source инструмент для Linux (десктоп и серверы) для управления
 виртуальной памятью: swapfile на SSD, zswap, zram, профили, мониторинг
-давления на память. Управление через CLI, позже — через веб-интерфейс.
+давления на память. Управление через CLI и веб-интерфейс.
 
 > Статус: ранняя разработка. Есть `ramplus status` (только чтение),
 > управление swapfile (`ramplus swap plan|apply|resize|remove`), профили,
-> `ramplus rollback`, `ramplus history` и демон `ramplusd` с API на unix-сокете.
+> `ramplus setup` (swap и профиль одной операцией), `ramplus recommend`,
+> `ramplus rollback`, `ramplus history`, демон `ramplusd` с API на unix-сокете
+> и веб-интерфейс `ramplus-web`.
 
 ## Сборка
 
-Нужен Go (актуальная стабильная версия), только Linux.
+Нужны Go (актуальная стабильная версия) и Node.js с npm (только для сборки
+фронтенда), только Linux.
 
 ```sh
-make build   # собирает ./ramplus и ./ramplusd
-make test    # go test ./...
-make lint    # gofmt + go vet
+make build     # фронтенд (npm ci && npm run build) + ./ramplus, ./ramplusd, ./ramplus-web
+make web       # только фронтенд: web/ → internal/webui/dist
+make test      # go test ./...
+make web-test  # vitest: словари ru/en, логика интерфейса, окно плана
+make lint      # gofmt + go vet + shellcheck
 ```
+
+Без `make web` Go-часть тоже собирается и тестируется: ramplus-web тогда
+отдаёт страницу «фронтенд не собран».
 
 ## Использование
 
@@ -78,6 +86,14 @@ sudo ramplus swap remove --orphan                  # убрать следы Ram
 
 У `apply`, `resize`, `remove` и `rollback` есть `--dry-run` (только план) и
 `--yes` (без вопроса, для скриптов).
+
+Для аудита у каждой операции в журнале есть `source` (`cli` — из терминала,
+`daemon` — через API демона) и `requested_by` (uid и имя того, кто
+запросил). Для CLI это пользователь, вызвавший sudo. Для демона — uid по
+SO_PEERCRED, у запросов от пользователя `ramplus-web` стоит пометка
+`via: "web"`. `history` показывает это как «из терминала (ashot)» или «через
+веб-интерфейс». В журналах, записанных до появления этих полей, источник —
+`unknown`.
 
 Следы без записи в журнале (журнал удалён или потерян, а swapfile и юнит
 остались) `check-clean` показывает отдельно: «найдены следы RamPlus без
@@ -203,7 +219,7 @@ sudo ramplus rollback                              # общий стек со sw
 
 HTTP/JSON API поверх unix-сокета `/run/ramplus/ramplusd.sock` (TCP не
 слушает). Демон — тонкая оболочка над тем же `internal/core`, что и CLI.
-CLI пока работает напрямую (через sudo); оба можно запускать одновременно:
+CLI работает напрямую (через sudo); оба можно запускать одновременно:
 журнал и блокировка `/run/lock/ramplus.lock` не дают операциям пересечься
 (вторая получает отказ, журнал целый).
 
@@ -242,6 +258,9 @@ root или `ramplus` (или `ramplus-admin`), изменения — root ил
 | `GET /v1/status` | то же, что `status --json` |
 | `GET /v1/status/stream` | SSE: снимок раз в секунду и пики |
 | `GET /v1/history` | то же, что `history --json` |
+| `GET /v1/recommendation` | то же, что `recommend --json` (`?path=` — другое место swapfile) |
+| `GET /v1/profiles` | каталог профилей, параметры ядра и их текущие значения |
+| `POST /v1/plan/setup` | `{swap: {size, existing, delete_old, path} \| null, profile: {name, set} \| null}` |
 | `POST /v1/plan/swap` | `{action: apply\|resize\|remove, size: "4G", existing, delete_old, path, force}` |
 | `POST /v1/plan/profile` | `{name, set: {"vm.swappiness": "80"}, experimental, force}` |
 | `POST /v1/plan/profile-reset`, `POST /v1/plan/rollback` | тело не нужно (`rollback`: `{force}`) |
@@ -267,6 +286,89 @@ SIGTERM демон закрывает потоки, дожидается тек�
 логи (key=value) идут в journald. Выбор защит systemd с объяснением — в
 комментариях [packaging/systemd/ramplusd.service](packaging/systemd/ramplusd.service).
 
+## Рекомендация и setup
+
+`ramplus recommend [--json] [--path P]` — что RamPlus советует для этой
+машины (только чтение):
+
+- размер swap: RAM ≤ 8 GB → как RAM, 8–32 GB → половина, больше → 16 GB.
+  RAM берётся из MemTotal с округлением вверх до целого GB (ядро
+  резервирует часть установленной памяти). Затем размер ограничивается
+  местом на ФС (запас свободного места — как в плане) и округляется вниз.
+  Меньше 1 GB — swap не рекомендуется, с причиной;
+- `existing`: `replace`, если существующий swap — файл и его данные
+  помещаются в RAM и новый swap; `keep` — раздел, zram или небезопасный
+  swapoff; `null` — другого swap нет;
+- профиль: `zswap-lz4` с его реальным статусом (`experimental` —
+  интерфейс показывает «предварительно»); нет zswap в ядре или есть zram —
+  `default`;
+- рекомендация проверяется тем же планировщиком: если план заблокирован
+  (система на USB-диске, нет места), рекомендация говорит об этом
+  (`swap_size_bytes: null`, `swap_reason`, `swap_blocked`).
+
+`ramplus setup` — swap и профиль одной операцией: проверки обеих частей,
+шаги подряд (сначала swap, потом профиль), один отпечаток, одна запись в
+журнале, один `rollback`. Любая часть может отсутствовать. Отказ любой части
+блокирует весь план. Swap задаётся как желаемое состояние: своего swap нет —
+создаётся, размер другой — меняется, такой же — без изменений.
+
+```sh
+ramplus setup --size 16G --existing=replace --profile zswap-lz4 --dry-run
+sudo ramplus setup --size 16G --existing=replace --profile zswap-lz4 --experimental
+ramplus history     # «Запас 16 GB из SSD + режим «Сжатие — быстрое»»
+sudo ramplus rollback
+```
+
+## Веб-интерфейс
+
+`ramplus-web` отдаёт встроенный фронтенд (React + TypeScript, `web/`) и
+проксирует `/api/*` на сокет демона `/v1/*` по явному списку путей. Работает
+не от root: системный пользователь `ramplus-web` в группах `ramplus` и
+`ramplus-admin`. На диск ничего не пишет.
+
+```sh
+make build && sudo make install
+sudo ramplus init                     # пароль веба (или --password-stdin для скриптов)
+sudo systemctl enable --now ramplusd ramplus-web
+xdg-open http://127.0.0.1:7781
+```
+
+Сервер без графики — через SSH-туннель (веб слушает только 127.0.0.1):
+
+```sh
+ssh -L 7781:localhost:7781 user@server   # затем на своём компьютере: http://127.0.0.1:7781
+```
+
+Слушать другой адрес можно только с TLS, иначе ramplus-web не стартует:
+`--listen 0.0.0.0:7781 --tls-self-signed --host server.lan` (отпечаток
+сертификата — в журнале) или `--tls-cert`/`--tls-key`. Параметры добавляются
+в `ExecStart` через `systemctl edit ramplus-web`.
+
+Безопасность:
+
+- пароль — хеш argon2id (64 MiB, t=3) в `/etc/ramplus/web-auth`
+  (`root:ramplus-web`, 0640); сменить — `sudo ramplus passwd` (открытые
+  сессии завершаются), отключить вход — `sudo ramplus passwd --disable`;
+- сессия в cookie: HttpOnly, SameSite=Strict, Secure и префикс `__Host-` при
+  TLS, срок 12 ч; выход удаляет сессию. Сессии хранятся в памяти
+  ramplus-web: после перезапуска нужно войти снова;
+- CSRF-токен (`X-CSRF-Token`) на всех изменяющих запросах, плюс проверка
+  Origin и Sec-Fetch-Site;
+- 5 неудачных входов за 5 минут с адреса — пауза 30 с, каждая следующая
+  вдвое длиннее (до 15 мин). Неудачные входы попадают в журнал systemd, пароли — нет;
+- проверка Host (защита от DNS rebinding): разрешены `127.0.0.1`,
+  `localhost`, `[::1]` и имена из `--host`, иначе 421;
+- строгий CSP без inline-скриптов и внешних источников, `X-Frame-Options:
+  DENY`, `Referrer-Policy: no-referrer`, `X-Content-Type-Options: nosniff`;
+  шрифты Inter и Manrope (с кириллицей) лежат в бандле;
+- пароль не задан — веб показывает только «выполните sudo ramplus init».
+
+Интерфейс на русском и английском (по умолчанию — язык браузера). Коды
+проверок плана переводятся по коду; если перевода нет, показывается текст с
+сервера. Выбор защит systemd с объяснением — в
+[packaging/systemd/ramplus-web.service](packaging/systemd/ramplus-web.service).
+`make uninstall PURGE=1` удаляет и пользователя `ramplus-web`, и файл пароля.
+
 ## Бенчмарк
 
 `scripts/bench.sh` сравнивает no-swap, swap и три конфигурации zswap на
@@ -281,9 +383,14 @@ SIGTERM демон закрывает потоки, дожидается тек�
 ```
 cmd/ramplus        CLI — тонкая оболочка над internal/core
 cmd/ramplusd       демон — тонкая оболочка над internal/core (через internal/api)
+cmd/ramplus-web    веб-сервер (не root) — тонкая оболочка над internal/web
 cmd/ramplus-probe  нагрузка, latency-probe, сэмплер и отчёт для bench.sh
 internal/core      сервисный слой: статус, планы, выполнение, операции демона
 internal/api       API демона: unix-сокет, SO_PEERCRED, хендлеры, SSE, клиент
+internal/web       ramplus-web: вход, сессии, CSRF, проверка Host, прокси /api → демон
+internal/webauth   пароль веба: argon2id, формат /etc/ramplus/web-auth
+internal/webui     собранный фронтенд (go:embed)
+web/               фронтенд: React + TypeScript (Vite), vitest
 internal/plan      модель плана — данные (JSON): проверки, выбор, шаги, итог
 internal/journal   журнал state.json, write-ahead, стек отката, сверка состояния
 internal/swap      swap: факты, планировщик, шаги
@@ -293,7 +400,7 @@ internal/sys       интерфейсы FS/Executor/Kernel и реальные �
 internal/fakesys   фейковая система для тестов
 internal/detect    система, диски, ФС
 internal/monitor   meminfo, swaps, zswap, zram, PSI, vm sysctl
-packaging/         systemd-юнит, sysusers.d, tmpfiles.d
+packaging/         systemd-юниты ramplusd и ramplus-web, sysusers.d, tmpfiles.d
 scripts/           интеграционный тест для VM, бенчмарк
 ```
 

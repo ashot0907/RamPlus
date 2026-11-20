@@ -36,6 +36,7 @@ func run() int {
 	socket := flag.String("socket", api.DefaultSocket, "путь unix-сокета")
 	readGroup := flag.String("group", "ramplus", "группа с правом чтения (status, history, plan); владелец-группа сокета")
 	adminGroup := flag.String("admin-group", "ramplus-admin", "группа с правом изменений (apply)")
+	webUser := flag.String("web-user", "ramplus-web", "пользователь веб-интерфейса: его операции помечаются в журнале «через веб-интерфейс»")
 	showVersion := flag.Bool("version", false, "показать версию")
 	flag.Parse()
 	if *showVersion {
@@ -65,6 +66,13 @@ func run() int {
 	c := core.New(sys.DefaultSystem())
 	c.Daemon = true
 	srv := api.New(c, version, pol, log)
+	srv.LookupUser = lookupUserName
+	if u, err := user.Lookup(*webUser); err == nil {
+		if id, err := strconv.ParseUint(u.Uid, 10, 32); err == nil {
+			v := uint32(id)
+			srv.WebUID = &v
+		}
+	}
 
 	l, err := api.Listen(*socket, pol.ReadGID)
 	if err != nil {
@@ -143,4 +151,13 @@ func lookupGroup(log *slog.Logger, name string) *uint32 {
 	}
 	v := uint32(id)
 	return &v
+}
+
+// lookupUserName — имя пользователя по uid ("" — нет в /etc/passwd).
+func lookupUserName(uid uint32) string {
+	u, err := user.LookupId(strconv.FormatUint(uint64(uid), 10))
+	if err != nil {
+		return ""
+	}
+	return u.Username
 }

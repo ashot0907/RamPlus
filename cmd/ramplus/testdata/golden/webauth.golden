@@ -1,0 +1,28 @@
+$ ramplus passwd --password-stdin
+error: пароль веб-интерфейса не задан — задать: sudo ramplus init
+
+$ ramplus init --password-stdin
+error: пароль короче 8 символов
+
+$ ramplus init --password-stdin --dry-run
+dry-run: будет записан /etc/ramplus/web-auth (хеш argon2id, владелец root:977, права 0640); ничего не изменено
+
+$ ramplus init --password-stdin
+Пароль веб-интерфейса задан (/etc/ramplus/web-auth).
+Запустить: sudo systemctl enable --now ramplusd ramplus-web, затем откройте http://127.0.0.1:7781
+
+$ ramplus init --password-stdin
+error: пароль веб-интерфейса уже задан — сменить: sudo ramplus passwd
+
+$ ramplus passwd --password-stdin
+Пароль веб-интерфейса изменён (/etc/ramplus/web-auth). Открытые сессии завершены.
+
+$ ramplus passwd --disable
+Пароль веб-интерфейса удалён (/etc/ramplus/web-auth). Задать снова: sudo ramplus init
+
+$ ramplus init
+error: нет терминала для ввода пароля: используйте --password-stdin
+
+$ ramplus init --password-stdin
+error: нужны права root: запустите через sudo: sudo ramplus init
+

@@ -61,6 +61,7 @@ func (OSFS) Remove(name string) error                     { return os.Remove(nam
 func (OSFS) Mkdir(name string, perm fs.FileMode) error    { return os.Mkdir(name, perm) }
 func (OSFS) MkdirAll(name string, perm fs.FileMode) error { return os.MkdirAll(name, perm) }
 func (OSFS) Chmod(name string, perm fs.FileMode) error    { return os.Chmod(name, perm) }
+func (OSFS) Chown(name string, uid, gid int) error        { return os.Chown(name, uid, gid) }
 
 func (OSFS) WriteFileAtomic(name string, data []byte, perm fs.FileMode) error {
 	dir := filepath.Dir(name)

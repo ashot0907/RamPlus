@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -65,11 +66,21 @@ func fixtureStatus() monitor.Status {
 // unix-сокет во временном каталоге (общие Server и core).
 func newHarness(t *testing.T, w *fakesys.World) *harness {
 	t.Helper()
+	return newHarnessLog(t, w, nil)
+}
+
+// newHarnessLog — то же с журналом демона log; mut настраивают сервер до
+// запуска.
+func newHarnessLog(t *testing.T, w *fakesys.World, log *slog.Logger, mut ...func(*Server)) *harness {
+	t.Helper()
 	c := core.New(w.System())
 	c.Collect = fixtureStatus
 	c.Daemon = true
-	srv := New(c, "test-1.0", Policy{ReadGID: u32(gidRamplus), AdminGID: u32(gidAdmin)}, nil)
+	srv := New(c, "test-1.0", Policy{ReadGID: u32(gidRamplus), AdminGID: u32(gidAdmin)}, log)
 	srv.StatusInterval = 10 * time.Millisecond
+	for _, m := range mut {
+		m(srv)
+	}
 	// Короткий путь: у unix-сокета ограничение ~108 байт.
 	dir, err := os.MkdirTemp("", "rpd")
 	if err != nil {
@@ -244,6 +255,9 @@ func TestAuthMatrix(t *testing.T) {
 		{"POST", "/v1/plan/profile", ProfilePlanRequest{Name: "default"}, AccessRead},
 		{"POST", "/v1/plan/profile-reset", nil, AccessRead},
 		{"POST", "/v1/plan/rollback", nil, AccessRead},
+		{"POST", "/v1/plan/setup", SetupPlanRequest{Profile: &ProfilePlanRequest{Name: "default"}}, AccessRead},
+		{"GET", "/v1/recommendation", nil, AccessRead},
+		{"GET", "/v1/profiles", nil, AccessRead},
 		{"POST", "/v1/apply", ApplyRequest{PlanID: "nope"}, AccessAdmin},
 		{"GET", "/v1/operations/nope", nil, AccessRead},
 		{"GET", "/v1/operations/nope/events", nil, AccessRead},
@@ -615,5 +629,127 @@ func TestDaemonPathNotWritable(t *testing.T) {
 	}
 	if cp.Blocked() {
 		t.Errorf("CLI plan blocked: %+v", cp.Failures())
+	}
+}
+
+// setup одной операцией через демон: рекомендация → план → apply → история.
+func TestSetupThroughDaemon(t *testing.T) {
+	w := fakesys.New().WithKernelParams(false).WithOldSwap(0)
+	h := newHarness(t, w)
+	var rec core.Recommendation
+	r := h.do("reader", "GET", "/v1/recommendation", nil)
+	r.decode(t, &rec)
+	if r.code != 200 || rec.SwapSizeBytes == nil || rec.Existing == nil || *rec.Existing != "replace" || rec.Profile != "zswap-lz4" || rec.ProfileStatus != "experimental" {
+		t.Fatalf("recommendation: %d %s", r.code, r.body)
+	}
+	var cat core.ProfileCatalog
+	r = h.do("reader", "GET", "/v1/profiles", nil)
+	r.decode(t, &cat)
+	if r.code != 200 || len(cat.Profiles) != 3 || cat.Profiles[0].Name != "default" || cat.Profiles[0].Friendly == "" || len(cat.Params) == 0 {
+		t.Fatalf("profiles: %d %s", r.code, r.body)
+	}
+
+	req := map[string]any{
+		"swap":    map[string]any{"size": "8G", "existing": *rec.Existing},
+		"profile": map[string]any{"name": rec.Profile, "set": nil},
+	}
+	p := h.plan("reader", "/v1/plan/setup", req)
+	if p.Action != core.ActionSetup || p.Blocked() || p.Profile == nil || !p.Profile.Experimental {
+		t.Fatalf("plan: %+v %+v", p.Action, p.Failures())
+	}
+	// Без подтверждения экспериментального профиля — отказ.
+	if r := h.apply("admin", p.ID, false); r.code != 422 || r.errCode(t) != "profile.experimental_not_confirmed" {
+		t.Fatalf("no confirm: %d %s", r.code, r.body)
+	}
+	p = h.plan("reader", "/v1/plan/setup", req)
+	r = h.apply("admin", p.ID, true)
+	if r.code != http.StatusAccepted {
+		t.Fatalf("apply: %d %s", r.code, r.body)
+	}
+	var acc ApplyAccepted
+	r.decode(t, &acc)
+	if v := h.waitOp("reader", acc.OperationID); v.Status != core.ResultDone {
+		t.Fatalf("op: %+v", v)
+	}
+	var hist struct {
+		Operations []struct {
+			Action string `json:"action"`
+			Title  string `json:"title"`
+		} `json:"operations"`
+	}
+	h.do("reader", "GET", "/v1/history", nil).decode(t, &hist)
+	if len(hist.Operations) != 1 || hist.Operations[0].Action != "setup" || hist.Operations[0].Title != "Запас 8 GB из SSD + режим «Сжатие — быстрое»" {
+		t.Errorf("history: %+v", hist)
+	}
+	// Один rollback отменяет всё.
+	rb := h.plan("reader", "/v1/plan/rollback", nil)
+	if rb.Rollback == nil || rb.Rollback.Domain != "setup" {
+		t.Fatalf("rollback: %+v", rb.Rollback)
+	}
+	r = h.apply("admin", rb.ID, false)
+	r.decode(t, &acc)
+	if v := h.waitOp("reader", acc.OperationID); v.Status != core.ResultDone {
+		t.Fatalf("rollback op: %+v", v)
+	}
+	if got := h.core.CleanProblems(context.Background()); len(got) != 0 {
+		t.Errorf("not clean: %v", got)
+	}
+}
+
+func TestSetupRequestErrors(t *testing.T) {
+	h := newHarness(t, fakesys.New())
+	for _, body := range []string{
+		`{"swap": {"size": "4G", "existing": "maybe"}}`,
+		`{"swap": {"size": "four"}}`,
+		`{"profile": {"name": "default", "set": {"vm.swappiness": "9999"}}}`,
+		`{"unknown": 1}`,
+	} {
+		if r := h.do("reader", "POST", "/v1/plan/setup", body); r.code != 400 || r.errCode(t) != "request.invalid" {
+			t.Errorf("%s: %d %s", body, r.code, r.body)
+		}
+	}
+	p := h.plan("reader", "/v1/plan/setup", `{"swap": null, "profile": null}`)
+	if !p.Blocked() {
+		t.Error("empty setup must be blocked")
+	}
+}
+
+// Кто запросил операцию — в журнале: uid по SO_PEERCRED, имя, source=daemon;
+// запрос от пользователя веба — via=web.
+func TestRequesterInJournal(t *testing.T) {
+	w := fakesys.New()
+	webUID := peerAdmin.UID
+	h := newHarnessLog(t, w, nil, func(s *Server) {
+		s.LookupUser = func(uid uint32) string { return map[uint32]string{0: "root", peerAdmin.UID: "ramplus-web"}[uid] }
+		s.WebUID = &webUID
+	})
+	run := func(who string) {
+		t.Helper()
+		p := h.plan("reader", "/v1/plan/swap", SwapPlanRequest{Action: "apply", Size: 4 << 30})
+		if p.Blocked() {
+			p = h.plan("reader", "/v1/plan/rollback", nil)
+		}
+		var acc ApplyAccepted
+		r := h.apply(who, p.ID, false)
+		r.decode(t, &acc)
+		if v := h.waitOp(who, acc.OperationID); v.Status != core.ResultDone {
+			t.Fatalf("%s: %+v", who, v)
+		}
+	}
+	run("root")
+	run("admin")
+	hist, err := h.core.History()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist.Operations) != 2 {
+		t.Fatalf("ops: %+v", hist.Operations)
+	}
+	r0, r1 := hist.Operations[0].RequestedBy, hist.Operations[1].RequestedBy
+	if hist.Operations[0].Source != "daemon" || r0 == nil || r0.UID != 0 || r0.User != "root" || r0.Via != "" {
+		t.Errorf("root op: %s %+v", hist.Operations[0].Source, r0)
+	}
+	if hist.Operations[1].Source != "daemon" || r1 == nil || r1.UID != peerAdmin.UID || r1.Via != "web" {
+		t.Errorf("web op: %s %+v", hist.Operations[1].Source, r1)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/core"
@@ -51,6 +52,22 @@ type ProfilePlanRequest struct {
 	Set          map[string]string `json:"set"`
 	Experimental bool              `json:"experimental"`
 	Force        bool              `json:"force"`
+}
+
+// SetupPlanRequest — POST /v1/plan/setup: swap и профиль одной операцией.
+// null — эту часть не трогать.
+type SetupPlanRequest struct {
+	Swap    *SetupSwapRequest   `json:"swap"`
+	Profile *ProfilePlanRequest `json:"profile"`
+}
+
+// SetupSwapRequest — желаемый swap RamPlus.
+type SetupSwapRequest struct {
+	Size      Size   `json:"size"`
+	Existing  string `json:"existing"`
+	DeleteOld bool   `json:"delete_old"`
+	Path      string `json:"path"`
+	Force     bool   `json:"force"`
 }
 
 // RollbackPlanRequest — POST /v1/plan/rollback (тело необязательно).
@@ -106,6 +123,9 @@ func (s *Server) routes() {
 	handle("GET /v1/status", AccessRead, s.status)
 	handle("GET /v1/status/stream", AccessRead, s.statusStream)
 	handle("GET /v1/history", AccessRead, s.history)
+	handle("GET /v1/recommendation", AccessRead, s.recommendation)
+	handle("GET /v1/profiles", AccessRead, s.profiles)
+	handle("POST /v1/plan/setup", AccessRead, s.planSetup)
 	handle("POST /v1/plan/swap", AccessRead, s.planSwap)
 	handle("POST /v1/plan/profile", AccessRead, s.planProfile)
 	handle("POST /v1/plan/profile-reset", AccessRead, s.planProfileReset)
@@ -132,14 +152,35 @@ func (s *Server) authorize(a Access, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := PeerFrom(r.Context())
 		if err != nil || !s.Policy.Allow(p, a) {
-			s.Log.Warn("auth.forbidden", "uid", p.UID, "gid", p.GID, "groups", p.Groups, "pid", p.PID,
-				"method", r.Method, "path", r.URL.Path, "need", a.String(), "peer_error", errText(err))
+			s.Log.Warn("доступ запрещён", "event", EventAuthForbidden, "uid", p.UID, "gid", p.GID, "gids", gidList(p.Groups),
+				"pid", p.PID, "method", r.Method, "path", r.URL.Path, "need", a.String(), "peer_error", errText(err))
 			msg := "нет прав: чтение — root или группа ramplus, изменения — root или группа ramplus-admin"
 			writeError(w, http.StatusForbidden, "auth.forbidden", msg)
 			return
 		}
 		h(w, r)
 	})
+}
+
+// Машинные имена событий в журнале демона (поле event=): по ним ищут
+// записи тесты и администраторы, текст msg может меняться.
+const (
+	EventAuthForbidden    = "auth.forbidden"
+	EventOperationStarted = "operation.started"
+	EventRequest          = "request"
+)
+
+// gidList — группы через запятую, без пробелов: «4,24,990» (одно поле
+// key=value в текстовом журнале, удобно для grep); нет групп — «none».
+func gidList(gids []uint32) string {
+	if len(gids) == 0 {
+		return "none"
+	}
+	parts := make([]string, len(gids))
+	for i, g := range gids {
+		parts[i] = strconv.FormatUint(uint64(g), 10)
+	}
+	return strings.Join(parts, ",")
 }
 
 func errText(err error) string {
@@ -228,6 +269,15 @@ func (s *Server) planProfile(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	pr, err := req.request()
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "request.invalid", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Core.ProfilePlan(r.Context(), pr))
+}
+
+func (req ProfilePlanRequest) request() (profile.ProfileRequest, error) {
 	pairs := make([]string, 0, len(req.Set))
 	for k, v := range req.Set {
 		pairs = append(pairs, k+"="+v)
@@ -235,11 +285,43 @@ func (s *Server) planProfile(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(pairs)
 	set, err := profile.ParseSet(pairs)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "request.invalid", "set: "+err.Error())
+		return profile.ProfileRequest{}, errors.New("set: " + err.Error())
+	}
+	return profile.ProfileRequest{Name: req.Name, Set: set, Force: req.Force, Experimental: req.Experimental}, nil
+}
+
+func (s *Server) planSetup(w http.ResponseWriter, r *http.Request) {
+	var req SetupPlanRequest
+	if !decode(w, r, &req) {
 		return
 	}
-	pr := profile.ProfileRequest{Name: req.Name, Set: set, Force: req.Force, Experimental: req.Experimental}
-	writeJSON(w, http.StatusOK, s.Core.ProfilePlan(r.Context(), pr))
+	var sr core.SetupRequest
+	if sw := req.Swap; sw != nil {
+		switch swap.ExistingMode(sw.Existing) {
+		case "", swap.ExistingKeep, swap.ExistingReplace:
+		default:
+			writeError(w, http.StatusBadRequest, "request.invalid", fmt.Sprintf("swap.existing: ожидается keep или replace, получено %q", sw.Existing))
+			return
+		}
+		sr.Swap = &swap.Options{Size: uint64(sw.Size), Existing: swap.ExistingMode(sw.Existing), DeleteOld: sw.DeleteOld, Path: sw.Path, Force: sw.Force}
+	}
+	if req.Profile != nil {
+		pr, err := req.Profile.request()
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "request.invalid", "profile."+err.Error())
+			return
+		}
+		sr.Profile = &pr
+	}
+	writeJSON(w, http.StatusOK, s.Core.SetupPlan(r.Context(), sr))
+}
+
+func (s *Server) recommendation(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Core.Recommend(r.Context(), r.URL.Query().Get("path")))
+}
+
+func (s *Server) profiles(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Core.Profiles(r.Context()))
 }
 
 func (s *Server) planProfileReset(w http.ResponseWriter, r *http.Request) {
@@ -285,10 +367,11 @@ func (s *Server) apply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "request.invalid", "plan_id: обязательное поле (POST /v1/plan/...)")
 		return
 	}
-	op, res := s.Core.Start(req.PlanID, core.StartOptions{ConfirmExperimental: req.ConfirmExperimental})
+	p, _ := PeerFrom(r.Context())
+	who := core.DaemonRequester(p.UID, s.WebUID, s.LookupUser)
+	op, res := s.Core.Start(req.PlanID, core.StartOptions{ConfirmExperimental: req.ConfirmExperimental, RequestedBy: who})
 	if op != nil {
-		p, _ := PeerFrom(r.Context())
-		s.Log.Info("operation.started", "id", op.ID, "plan_id", req.PlanID, "command", op.Command, "uid", p.UID, "pid", p.PID)
+		s.Log.Info("операция запущена", "event", EventOperationStarted, "user", who.User, "via", who.Via, "id", op.ID, "plan_id", req.PlanID, "command", op.Command, "uid", p.UID, "pid", p.PID)
 		self := "/v1/operations/" + op.ID
 		writeJSON(w, http.StatusAccepted, ApplyAccepted{OperationID: op.ID, PlanID: req.PlanID, Status: string(core.StatusRunning),
 			Self: self, Events: self + "/events"})

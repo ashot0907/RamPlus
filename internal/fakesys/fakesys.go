@@ -47,6 +47,8 @@ type File struct {
 	Dir   bool
 	Swap  bool // после mkswap
 	NoCOW bool
+	// UID/GID — владелец (Chown).
+	UID, GID int
 }
 
 // Mount — дополнительная ФС (для --path).
@@ -71,6 +73,7 @@ type World struct {
 	FSType, Transport string
 	Total, Avail      uint64
 	MemAvail          uint64
+	MemTotal          uint64 // 0 — 16 GiB
 	Cmdline           string
 	BtrfsTool         bool
 	Mkswapfile        bool
@@ -375,8 +378,12 @@ func (f *FS) ReadFile(name string) ([]byte, error) {
 		}
 		return b.Bytes(), nil
 	case meminfoPath:
+		total := w.MemTotal
+		if total == 0 {
+			total = 16 * GiB
+		}
 		return []byte(fmt.Sprintf("MemTotal: %d kB\nMemFree: %d kB\nMemAvailable: %d kB\n",
-			16*GiB/KiB, w.MemAvail/KiB, w.MemAvail/KiB)), nil
+			total/KiB, w.MemAvail/KiB, w.MemAvail/KiB)), nil
 	case cmdlinePath:
 		return []byte(w.Cmdline + "\n"), nil
 	}
@@ -530,6 +537,23 @@ func (f *FS) Chmod(name string, perm fs.FileMode) error {
 		return notExist("chmod", name)
 	}
 	file.Mode = perm
+	return nil
+}
+
+func (f *FS) Chown(name string, uid, gid int) error {
+	if err := f.w.mutate("chown " + name); err != nil {
+		return err
+	}
+	file, ok := f.w.Files[name]
+	if !ok {
+		return notExist("chown", name)
+	}
+	if uid >= 0 {
+		file.UID = uid
+	}
+	if gid >= 0 {
+		file.GID = gid
+	}
 	return nil
 }
 

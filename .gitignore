@@ -5,3 +5,7 @@
 *.out
 /ramplus-probe
 /bench-results-*/
+# Собранный фронтенд (make web); .keep — чтобы go:embed работал без сборки.
+/internal/webui/dist/*
+!/internal/webui/dist/.keep
+/web/node_modules/

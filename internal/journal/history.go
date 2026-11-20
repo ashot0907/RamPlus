@@ -21,6 +21,15 @@ type HistoryEntry struct {
 	Undoable bool `json:"undoable"`
 	// RollbackNext — её отменит следующий ramplus rollback.
 	RollbackNext bool `json:"rollback_next"`
+	// Title — название для человека («Запас 16 GB из SSD + режим «Сжатие —
+	// быстрое»»); Change — то же как данные (для перевода в вебе).
+	// Заполняет core: журнал не знает swap и профилей.
+	Title  string           `json:"title"`
+	Change *plan.ChangeView `json:"change,omitempty"`
+	// Source — cli | daemon | unknown (журнал без этого поля);
+	// RequestedBy — кто запросил (nil — неизвестно).
+	Source      string     `json:"source"`
+	RequestedBy *Requester `json:"requested_by,omitempty"`
 }
 
 // History — операции журнала в порядке выполнения.
@@ -47,7 +56,15 @@ func HistoryOf(st State) History {
 			ID: op.ID, Action: op.Action, Command: op.Command, Status: op.Status, Target: op.Target,
 			StartedAt: op.StartedAt, FinishedAt: op.FinishedAt, Steps: len(op.Applied), Error: op.Error,
 			Undoable: undoable[i], RollbackNext: hasNext && i == next && undoable[i],
+			Source: sourceOf(op), RequestedBy: op.RequestedBy,
 		})
 	}
 	return h
+}
+
+func sourceOf(op Operation) string {
+	if op.Source == "" {
+		return SourceUnknown
+	}
+	return op.Source
 }

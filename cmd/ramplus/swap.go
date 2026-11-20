@@ -160,6 +160,7 @@ func execute(cmd *cobra.Command, r core.Request, verbose bool, confirm func(*pla
 	h := render.Exec(out)
 	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Verbose: verbose}) }
 	h.Confirm = confirm
+	h.Origin = cliOrigin()
 	_, err := newCore().Run(cmd.Context(), r, h)
 	return err
 }

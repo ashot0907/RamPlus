@@ -939,3 +939,18 @@ func applyChoices(f Facts, o Options, p Plan) []Choice {
 	}
 	return choices
 }
+
+// View — блок «Сейчас» (swap в системе, ФС цели, RAM) без операции:
+// для плана setup, в котором swap не меняется.
+func View(f Facts) *plan.SwapView { return view(f, Options{}) }
+
+// FingerprintPart — часть отпечатка плана от фактов swap (для составных
+// планов: setup).
+func (f Facts) FingerprintPart() any { return f.fingerprintPart() }
+
+// OtherSwaps — активный swap не RamPlus и не zram (его можно заменить или
+// оставить).
+func OtherSwaps(f Facts) []monitor.SwapDevice { return otherSwaps(f) }
+
+// IsZram — путь swap — устройство zram.
+func IsZram(path string) bool { return isZram(path) }

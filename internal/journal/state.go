@@ -63,6 +63,33 @@ type Operation struct {
 	ProfileAfter     json.RawMessage `json:"profile_after,omitempty"`
 	BaselineCaptured bool            `json:"baseline_captured,omitempty"`
 	Error            string          `json:"error,omitempty"`
+	// Source — откуда запрошена операция: cli | daemon ("" — журнал старше
+	// этого поля, источник неизвестен). RequestedBy — кто запросил.
+	Source      string     `json:"source,omitempty"`
+	RequestedBy *Requester `json:"requested_by,omitempty"`
+}
+
+// Источники операций.
+const (
+	SourceCLI     = "cli"     // ramplus из терминала (sudo)
+	SourceDaemon  = "daemon"  // через API демона ramplusd
+	SourceUnknown = "unknown" // в истории: журнал без поля source
+	ViaWeb        = "web"     // через веб-интерфейс (запрос от пользователя ramplus-web)
+)
+
+// Requester — кто запросил операцию (аудит): uid по SO_PEERCRED (демон)
+// или uid вызвавшего sudo (CLI), имя — если есть в системе.
+type Requester struct {
+	UID  uint32 `json:"uid"`
+	User string `json:"user,omitempty"`
+	// Via — web: запрос пришёл от ramplus-web (UID — его пользователь).
+	Via string `json:"via,omitempty"`
+}
+
+// Origin — источник операции для записи в журнал.
+type Origin struct {
+	Source      string
+	RequestedBy *Requester
 }
 
 // State — /var/lib/ramplus/state.json.

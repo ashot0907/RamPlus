@@ -1,6 +1,7 @@
 {
   "name": "zswap-zstd",
   "title": "zswap + zstd",
+  "friendly": "Сжатие — плотное",
   "description": "zswap включён: zstd, zsmalloc, пул до 20% RAM; sysctl как в default.",
   "status": "experimental",
   "evidence": "",

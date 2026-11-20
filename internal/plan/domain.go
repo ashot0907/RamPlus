@@ -10,12 +10,15 @@ import (
 const (
 	DomainSwap    = "swap"
 	DomainProfile = "profile"
+	// DomainSetup — swap и профиль одной операцией (ramplus setup, веб).
+	DomainSetup = "setup"
 )
 
 // DomainNoun — что меняет домен, для человека («а не изменение swap»).
 var DomainNoun = map[string]string{
 	DomainSwap:    "изменение swap",
 	DomainProfile: "настройка профиля",
+	DomainSetup:   "настройка памяти (swap и профиль)",
 }
 
 // ActionInfo — домен операции и её название для человека.
@@ -96,4 +99,15 @@ func plural(n int, one, few, many string) string {
 		return few
 	}
 	return many
+}
+
+// ChangeView — что меняет операция: размер swap RamPlus и профиль до и
+// после (история, веб). nil-размер — swap RamPlus нет; "" — профиля нет.
+type ChangeView struct {
+	SwapBefore    *uint64 `json:"swap_before_bytes"`
+	SwapAfter     *uint64 `json:"swap_after_bytes"`
+	ProfileBefore string  `json:"profile_before"`
+	ProfileAfter  string  `json:"profile_after"`
+	// Target — rollback: что отменяется.
+	Target *ChangeView `json:"target,omitempty"`
 }

@@ -223,12 +223,12 @@ error: шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/
 $ ramplus history
 Журнал: /var/lib/ramplus/state.json (операций: 5)
 
-  ID                                 ВРЕМЯ                СТАТУС            ОТКАТ      КОМАНДА
-  <OPID>  2026-11-16 12:00:01  выполнена         да         ramplus swap apply --size 4G
-  <OPID>  2026-11-16 12:00:26  выполнена         следующий  ramplus profile apply zswap-lz4 --experimental
-  <OPID>  2026-11-16 12:00:47  откачена          —          ramplus swap resize --size 6G
-  <OPID>  2026-11-16 12:00:09  выполнена         —          ramplus rollback (отменяет <OPID>)
-  <OPID>  2026-11-16 12:00:31  ошибка, откачена  —          ramplus swap remove
+  ID                                 ВРЕМЯ                СТАТУС            ОТКАТ      ОПЕРАЦИЯ                           ИСТОЧНИК               КОМАНДА
+  <OPID>  2026-11-16 12:00:01  выполнена         да         Запас 4 GB из SSD                  из терминала (golden)  ramplus swap apply --size 4G
+  <OPID>  2026-11-16 12:00:26  выполнена         следующий  Режим «Сжатие — быстрое»           из терминала (golden)  ramplus profile apply zswap-lz4 --experimental
+  <OPID>  2026-11-16 12:00:47  откачена          —          Запас из SSD: 4 GB → 6 GB          из терминала (golden)  ramplus swap resize --size 6G
+  <OPID>  2026-11-16 12:00:09  выполнена         —          Отмена: запас из SSD: 4 GB → 6 GB  из терминала (golden)  ramplus rollback (отменяет <OPID>)
+  <OPID>  2026-11-16 12:00:31  ошибка, откачена  —          Запас из SSD убран                 из терминала (golden)  ramplus swap remove
 
 <OPID>: шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; выполненные шаги откачены, система в исходном состоянии
 
@@ -249,7 +249,19 @@ $ ramplus history --json
       "finished_at": "2026-11-16T12:00:24Z",
       "steps": 7,
       "undoable": true,
-      "rollback_next": false
+      "rollback_next": false,
+      "title": "Запас 4 GB из SSD",
+      "change": {
+        "swap_before_bytes": null,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "",
+        "profile_after": ""
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
     },
     {
       "id": "<OPID>",
@@ -260,7 +272,19 @@ $ ramplus history --json
       "finished_at": "2026-11-16T12:00:45Z",
       "steps": 6,
       "undoable": true,
-      "rollback_next": true
+      "rollback_next": true,
+      "title": "Режим «Сжатие — быстрое»",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
     },
     {
       "id": "<OPID>",
@@ -271,7 +295,19 @@ $ ramplus history --json
       "finished_at": "2026-11-16T12:00:07Z",
       "steps": 6,
       "undoable": false,
-      "rollback_next": false
+      "rollback_next": false,
+      "title": "Запас из SSD: 4 GB → 6 GB",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": 6442450944,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
     },
     {
       "id": "<OPID>",
@@ -283,7 +319,25 @@ $ ramplus history --json
       "finished_at": "2026-11-16T12:00:29Z",
       "steps": 6,
       "undoable": false,
-      "rollback_next": false
+      "rollback_next": false,
+      "title": "Отмена: запас из SSD: 4 GB → 6 GB",
+      "change": {
+        "swap_before_bytes": 6442450944,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4",
+        "target": {
+          "swap_before_bytes": 4294967296,
+          "swap_after_bytes": 6442450944,
+          "profile_before": "zswap-lz4",
+          "profile_after": "zswap-lz4"
+        }
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
     },
     {
       "id": "<OPID>",
@@ -295,7 +349,19 @@ $ ramplus history --json
       "steps": 0,
       "error": "шаг 1/5 (swapoff /ramplus.swapfile): запись журнала /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; выполненные шаги откачены, система в исходном состоянии",
       "undoable": false,
-      "rollback_next": false
+      "rollback_next": false,
+      "title": "Запас из SSD убран",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": null,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
     }
   ]
 }

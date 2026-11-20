@@ -1,6 +1,7 @@
 {
   "name": "default",
   "title": "Стандарт Ubuntu 24.04",
+  "friendly": "Как в обычной Ubuntu",
   "description": "Значения стоковой Ubuntu 24.04: zswap выключен, swappiness 60, page-cluster 3, watermark_scale_factor 10, vfs_cache_pressure 100. Применение возвращает стандарт.",
   "status": "standard",
   "evidence": "",

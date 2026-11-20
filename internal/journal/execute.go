@@ -26,6 +26,8 @@ type Hooks struct {
 	Started  func(opID string)                // операция записана в журнал
 	Progress func(Event)                      // шаг выполнен/упал/откачен
 	Finished func()                           // операция зафиксирована
+	// Origin — откуда и кем запрошена операция (пишется в журнал).
+	Origin Origin
 }
 
 // Execute выполняет операцию. Порядок:
@@ -93,6 +95,8 @@ func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 		ManagedAfter:  raw(p.Effects.Managed),
 		ProfileBefore: state.Profile,
 		ProfileAfter:  raw(p.Effects.Profile),
+		Source:        h.Origin.Source,
+		RequestedBy:   h.Origin.RequestedBy,
 	}
 	if p.Effects.BaselineCapture != nil && state.Baseline == nil {
 		op.BaselineCaptured = true

@@ -1,0 +1,475 @@
+$ ramplus recommend
+Рекомендация RamPlus
+
+  RAM: 16.0 GiB (MemTotal 16.0 GiB)
+  место: /ramplus.swapfile (ext4 на /, nvme), свободно 300.0 GiB, можно до 280.0 GiB
+  swap RamPlus: 8.0 GiB — RAM 16 GB: запас на SSD — половина RAM
+  существующий swap: --existing=replace — существующий swap — файл: заменяем своим, старый файл остаётся для отката
+  профиль: zswap-lz4 (experimental) — победил в наших тестах: меньше зависаний при нехватке памяти
+  [profile.preliminary] предварительно: профиль zswap-lz4 ещё подтверждается на реальном SSD (scripts/bench.sh)
+
+План: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental --dry-run
+
+$ ramplus recommend --json
+{
+  "schema_version": 1,
+  "ram_bytes": 17179869184,
+  "ram_rounded_bytes": 17179869184,
+  "swap_size_bytes": 8589934592,
+  "swap_reason": "RAM 16 GB: запас на SSD — половина RAM",
+  "swap_reason_code": "ram.medium",
+  "swap_max_bytes": 300647710720,
+  "swap_blocked": [],
+  "target": {
+    "path": "/ramplus.swapfile",
+    "mount_point": "/",
+    "fs_type": "ext4",
+    "disk_kind": "nvme",
+    "transport": "nvme",
+    "total_bytes": 536870912000,
+    "available_bytes": 322122547200,
+    "max_bytes": 300647710720,
+    "usable": true,
+    "selected": true
+  },
+  "targets": [
+    {
+      "path": "/ramplus.swapfile",
+      "mount_point": "/",
+      "fs_type": "ext4",
+      "disk_kind": "nvme",
+      "transport": "nvme",
+      "total_bytes": 536870912000,
+      "available_bytes": 322122547200,
+      "max_bytes": 300647710720,
+      "usable": true,
+      "selected": true
+    }
+  ],
+  "managed_bytes": null,
+  "existing": "replace",
+  "existing_reason": "существующий swap — файл: заменяем своим, старый файл остаётся для отката",
+  "profile": "zswap-lz4",
+  "profile_status": "experimental",
+  "profile_reason": "победил в наших тестах: меньше зависаний при нехватке памяти",
+  "notes": [
+    {
+      "code": "profile.preliminary",
+      "message": "предварительно: профиль zswap-lz4 ещё подтверждается на реальном SSD (scripts/bench.sh)"
+    }
+  ]
+}
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --dry-run
+План: настройка памяти — swap и профиль одной операцией (один rollback)
+Команда: ramplus setup --size 8G --existing=replace --profile zswap-lz4
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 0 B  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 8.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+  Существующий swap (--existing): replace  [указано]
+      keep      итого swap 16.0 GiB: /swap.img остаётся, новый добавляется с приоритетом 10 и используется первым
+    * replace   итого swap 8.0 GiB: /swap.img — swapoff и комментарий в /etc/fstab; файл остаётся на диске (удалить: --delete-old)
+  Старые swap-файлы (--delete-old): оставить  [по умолчанию — флаг не указан]
+    * оставить  на диске остаётся /swap.img (8.0 GiB): вернуть можно через rollback
+      удалить   освобождается 8.0 GiB; rollback пересоздаст пустые swap-файлы того же размера
+
+Профиль: zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         ядро по умолчанию
+  zswap.compressor  lzo     →  lz4       ядро по умолчанию
+  zswap.zpool       —          zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] существующий swap: /swap.img (file, 8.0 GiB, занято 0 B, приоритет -2): выбрано --existing=replace
+  [info] приоритет: новый swap получит приоритет 10 (выше существующего swap (-2): новый используется первым)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 292.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /swap.img: /swap.img не используется — swapoff безопасен
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. создать /ramplus.swapfile, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+  13. записать /etc/sysctl.d/99-ramplus.conf
+  14. записать /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  профиль: zswap-lz4
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: /swap.img, строка fstab «/swap.img none swap sw 0 0»
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4   (экспериментальный профиль: потребуется подтверждение или --experimental)
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --yes
+План: настройка памяти — swap и профиль одной операцией (один rollback)
+Команда: ramplus setup --size 8G --existing=replace --profile zswap-lz4
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 0 B  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 8.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+  Существующий swap (--existing): replace  [указано]
+      keep      итого swap 16.0 GiB: /swap.img остаётся, новый добавляется с приоритетом 10 и используется первым
+    * replace   итого swap 8.0 GiB: /swap.img — swapoff и комментарий в /etc/fstab; файл остаётся на диске (удалить: --delete-old)
+  Старые swap-файлы (--delete-old): оставить  [по умолчанию — флаг не указан]
+    * оставить  на диске остаётся /swap.img (8.0 GiB): вернуть можно через rollback
+      удалить   освобождается 8.0 GiB; rollback пересоздаст пустые swap-файлы того же размера
+
+Профиль: zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         ядро по умолчанию
+  zswap.compressor  lzo     →  lz4       ядро по умолчанию
+  zswap.zpool       —          zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] существующий swap: /swap.img (file, 8.0 GiB, занято 0 B, приоритет -2): выбрано --existing=replace
+  [info] приоритет: новый swap получит приоритет 10 (выше существующего swap (-2): новый используется первым)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 292.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /swap.img: /swap.img не используется — swapoff безопасен
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. создать /ramplus.swapfile, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+  13. записать /etc/sysctl.d/99-ramplus.conf
+  14. записать /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  профиль: zswap-lz4
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: /swap.img, строка fstab «/swap.img none swap sw 0 0»
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4   (экспериментальный профиль: потребуется подтверждение или --experimental)
+error: профиль экспериментальный (не подтверждён бенчмарком на SSD): для скриптов добавьте --experimental
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental --yes
+План: настройка памяти — swap и профиль одной операцией (один rollback)
+Команда: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 0 B  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Выбор
+  Место (--path): /ramplus.swapfile  [по умолчанию — флаг не указан]
+      варианты — смонтированные ФС; другой путь: --path /точка/монтирования/ramplus.swapfile
+    * /ramplus.swapfile ext4 на /dev/fake_, NVMe/nvme, свободно 300.0 GiB из 500.0 GiB — можно до 280.0 GiB
+  Размер (--size): 8.0 GiB  [указано]
+      на / допустимо до 280.0 GiB
+  Существующий swap (--existing): replace  [указано]
+      keep      итого swap 16.0 GiB: /swap.img остаётся, новый добавляется с приоритетом 10 и используется первым
+    * replace   итого swap 8.0 GiB: /swap.img — swapoff и комментарий в /etc/fstab; файл остаётся на диске (удалить: --delete-old)
+  Старые swap-файлы (--delete-old): оставить  [по умолчанию — флаг не указан]
+    * оставить  на диске остаётся /swap.img (8.0 GiB): вернуть можно через rollback
+      удалить   освобождается 8.0 GiB; rollback пересоздаст пустые swap-файлы того же размера
+
+Профиль: zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+
+Параметры
+  ПАРАМЕТР          СЕЙЧАС     НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.enabled     N       →  Y         ядро по умолчанию
+  zswap.compressor  lzo     →  lz4       ядро по умолчанию
+  zswap.zpool       —          zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   root: запущено от root
+  [info] путь: /ramplus.swapfile (по умолчанию)
+  [ok]   ФС: ext4 на /dev/fake_ (точка монтирования /): swapfile через fallocate
+  [ok]   диск: NVMe (nvme)
+  [info] существующий swap: /swap.img (file, 8.0 GiB, занято 0 B, приоритет -2): выбрано --existing=replace
+  [info] приоритет: новый swap получит приоритет 10 (выше существующего swap (-2): новый используется первым)
+  [ok]   место: на / доступно 300.0 GiB из 500.0 GiB; после создания останется 292.0 GiB, нужно ≥ 20.0 GiB (10% диска, но не больше 20.0 GiB и не меньше 5.0 GiB)
+  [ok]   память для swapoff /swap.img: /swap.img не используется — swapoff безопасен
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [info] исходные значения: первый apply профиля: текущие значения системы сохраняются в /var/lib/ramplus/state.json для ramplus profile reset
+
+Шаги
+   1. создать /ramplus.swapfile, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (приоритет 10)
+   5. записать /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled)
+  13. записать /etc/sysctl.d/99-ramplus.conf
+  14. записать /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (содержимое записываемых файлов: --verbose)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  профиль: zswap-lz4
+  создаётся: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  отключается: /swap.img, строка fstab «/swap.img none swap sw 0 0»
+  удаляется: —
+
+Результат: план выполним. Применить: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+Выполнение (операция <OPID>)
+  [1/16] создать /ramplus.swapfile, 8.0 GiB (fallocate; если ФС не умеет — запись нулями), права 600 ... ok
+  [2/16] chmod 600 /ramplus.swapfile ... ok
+  [3/16] mkswap /ramplus.swapfile ... ok
+  [4/16] swapon /ramplus.swapfile (приоритет 10) ... ok
+  [5/16] записать /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/16] systemctl daemon-reload ... ok
+  [7/16] systemctl enable ramplus.swapfile.swap ... ok
+  [8/16] swapoff /swap.img ... ok
+  [9/16] закомментировать в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" (бэкап — в /var/lib/ramplus/backups) ... ok
+  [10/16] systemctl daemon-reload ... ok
+  [11/16] zswap.compressor = lz4 (запись в /sys/module/zswap/parameters/compressor) ... ok
+  [12/16] zswap.enabled = Y (запись в /sys/module/zswap/parameters/enabled) ... ok
+  [13/16] записать /etc/sysctl.d/99-ramplus.conf ... ok
+  [14/16] записать /etc/systemd/system/ramplus-zswap.service ... ok
+  [15/16] systemctl daemon-reload ... ok
+  [16/16] systemctl enable ramplus-zswap.service ... ok
+Готово.
+
+$ ramplus setup --size 8G --profile zswap-lz4 --dry-run
+План: настройка памяти — swap и профиль одной операцией (один rollback)
+Команда: ramplus setup --size 8G --profile zswap-lz4
+
+Сейчас
+  swap        /ramplus.swapfile  file  8.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Профиль: zswap-lz4 — экспериментальный: не подтверждён бенчмарком на SSD
+Сейчас применён: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)
+
+Параметры
+  ПАРАМЕТР     СЕЙЧАС    НОВОЕ     ОТКУДА СЕЙЧАС
+  zswap.zpool  —         zsmalloc  нет в этом ядре — пропуск
+  без изменений: zswap.enabled=Y, zswap.compressor=lz4, zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Проверки
+  [ok]   swap RamPlus: уже 8.0 GiB (/ramplus.swapfile) — без изменений
+  [ok]   root: запущено от root
+  [warn] статус: профиль экспериментальный: не подтверждён scripts/bench.sh на реальном SSD — применяется только с явным подтверждением (в скриптах: --experimental)
+  [info] zswap.zpool: параметра zpool нет в этом ядре: используется zsmalloc — пропускается
+  [ok]   профиль: система уже соответствует профилю zswap-lz4 — менять нечего
+  [ok]   setup: система уже в выбранном состоянии — нечего делать
+
+Шаги
+  (нет)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  профиль: zswap-lz4
+  создаётся: —
+  отключается: —
+  удаляется: —
+
+Результат: менять нечего.
+
+$ ramplus history
+Журнал: /var/lib/ramplus/state.json (операций: 1)
+
+  ID                                 ВРЕМЯ                СТАТУС     ОТКАТ      ОПЕРАЦИЯ                                      ИСТОЧНИК               КОМАНДА
+  <OPID>  2026-11-16 12:00:02  выполнена  следующий  Запас 8 GB из SSD + режим «Сжатие — быстрое»  из терминала (golden)  ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+ОТКАТ: «следующий» — эту операцию отменит ramplus rollback; «да» — повторные rollback дойдут до неё.
+
+$ ramplus rollback --dry-run
+План: откат последней операции
+Команда: ramplus rollback
+
+Сейчас
+  swap        /ramplus.swapfile  file  8.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [info] rollback: отменяется операция <OPID> от 2026-11-16 12:00:02: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+  [ok]   состояние: система в состоянии, записанном в журнале после операции <OPID>
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. systemctl disable ramplus-zswap.service
+   2. удалить /etc/systemd/system/ramplus-zswap.service
+   3. systemctl daemon-reload
+   4. удалить /etc/sysctl.d/99-ramplus.conf
+   5. zswap.enabled = N (запись в /sys/module/zswap/parameters/enabled)
+   6. zswap.compressor = lzo (запись в /sys/module/zswap/parameters/compressor)
+   7. вернуть в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0"
+   8. systemctl daemon-reload
+   9. swapon /swap.img (приоритет — автоматически)
+  10. systemctl disable ramplus.swapfile.swap
+  11. удалить /etc/systemd/system/ramplus.swapfile.swap
+  12. systemctl daemon-reload
+  13. swapoff /ramplus.swapfile
+  14. удалить файл /ramplus.swapfile (8.0 GiB)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  создаётся: —
+  отключается: /ramplus.swapfile
+  удаляется: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus rollback
+
+$ ramplus rollback --yes
+План: откат последней операции
+Команда: ramplus rollback
+
+Сейчас
+  swap        /ramplus.swapfile  file  8.0 GiB  занято 0 B  приоритет 10  RamPlus
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, приоритет 10, юнит ramplus.swapfile.swap
+
+Проверки
+  [ok]   root: запущено от root
+  [info] rollback: отменяется операция <OPID> от 2026-11-16 12:00:02: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+  [ok]   состояние: система в состоянии, записанном в журнале после операции <OPID>
+  [ok]   память для swapoff /ramplus.swapfile: /ramplus.swapfile не используется — swapoff безопасен
+
+Шаги
+   1. systemctl disable ramplus-zswap.service
+   2. удалить /etc/systemd/system/ramplus-zswap.service
+   3. systemctl daemon-reload
+   4. удалить /etc/sysctl.d/99-ramplus.conf
+   5. zswap.enabled = N (запись в /sys/module/zswap/parameters/enabled)
+   6. zswap.compressor = lzo (запись в /sys/module/zswap/parameters/compressor)
+   7. вернуть в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0"
+   8. systemctl daemon-reload
+   9. swapon /swap.img (приоритет — автоматически)
+  10. systemctl disable ramplus.swapfile.swap
+  11. удалить /etc/systemd/system/ramplus.swapfile.swap
+  12. systemctl daemon-reload
+  13. swapoff /ramplus.swapfile
+  14. удалить файл /ramplus.swapfile (8.0 GiB)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  создаётся: —
+  отключается: /ramplus.swapfile
+  удаляется: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Результат: план выполним. Применить: sudo ramplus rollback
+
+Выполнение (операция <OPID>)
+  [1/14] systemctl disable ramplus-zswap.service ... ok
+  [2/14] удалить /etc/systemd/system/ramplus-zswap.service ... ok
+  [3/14] systemctl daemon-reload ... ok
+  [4/14] удалить /etc/sysctl.d/99-ramplus.conf ... ok
+  [5/14] zswap.enabled = N (запись в /sys/module/zswap/parameters/enabled) ... ok
+  [6/14] zswap.compressor = lzo (запись в /sys/module/zswap/parameters/compressor) ... ok
+  [7/14] вернуть в /etc/fstab строку "/swap.img\tnone\tswap\tsw\t0\t0" ... ok
+  [8/14] systemctl daemon-reload ... ok
+  [9/14] swapon /swap.img (приоритет — автоматически) ... ok
+  [10/14] systemctl disable ramplus.swapfile.swap ... ok
+  [11/14] удалить /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [12/14] systemctl daemon-reload ... ok
+  [13/14] swapoff /ramplus.swapfile ... ok
+  [14/14] удалить файл /ramplus.swapfile (8.0 GiB) ... ok
+Готово.
+
+$ ramplus swap check-clean
+чисто: следов RamPlus нет
+
+$ ramplus setup --dry-run
+План: настройка памяти — swap и профиль одной операцией (один rollback)
+Команда: ramplus setup
+
+Сейчас
+  swap        /swap.img  file  8.0 GiB  занято 0 B  приоритет -2  в /etc/fstab
+  ФС цели     ext4 на /dev/fake_, точка / (sda, NVMe, nvme)
+  место на /  доступно 300.0 GiB из 500.0 GiB
+  RAM         доступно 8.0 GiB из 16.0 GiB
+
+Проверки
+  [ok]   root: запущено от root
+  [FAIL] setup: не выбрано ни swap, ни профиль — укажите --size и/или --profile
+
+Шаги
+  (нет)
+
+Итог
+  swap: 8.0 GiB → 8.0 GiB
+  создаётся: —
+  отключается: —
+  удаляется: —
+
+Результат: ПЛАН ЗАБЛОКИРОВАН — проверок не пройдено: 1. Ничего не изменено.
+

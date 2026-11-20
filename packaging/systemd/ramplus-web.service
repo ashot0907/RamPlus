@@ -1,0 +1,67 @@
+# ramplus-web — веб-интерфейс RamPlus: отдаёт встроенный фронтенд и проксирует
+# /api/* на сокет демона ramplusd. Работает НЕ от root (пользователь ramplus-web
+# в группах ramplus и ramplus-admin), на диск ничего не пишет.
+# По умолчанию слушает только 127.0.0.1:7781; удалённо — ssh -L 7781:localhost:7781
+# или явно: --listen 0.0.0.0:7781 --tls-self-signed (без TLS не стартует).
+#
+# Включить: sudo ramplus init && sudo systemctl enable --now ramplusd ramplus-web
+[Unit]
+Description=RamPlus web interface
+Documentation=https://github.com/ashot0907/ramplus
+After=network.target ramplusd.service
+Wants=ramplusd.service
+
+[Service]
+Type=exec
+ExecStart=@BINDIR@/ramplus-web
+User=ramplus-web
+Group=ramplus-web
+# Группы задаёт и sysusers.d; здесь — явно, чтобы сокет демона (root:ramplus 0660)
+# и apply (ramplus-admin) работали независимо от кэша групп.
+SupplementaryGroups=ramplus ramplus-admin
+Restart=on-failure
+RestartSec=2s
+# Две одновременные проверки argon2id по 64 MiB + запас.
+Environment=GOMEMLIMIT=256MiB
+MemoryMax=512M
+UMask=0077
+
+# --- Защита (веб ничего не пишет на диск) ---
+NoNewPrivileges=yes
+# Ни одной capability: порт 7781 > 1024, root не нужен.
+CapabilityBoundingSet=
+AmbientCapabilities=
+# Вся ФС только для чтения (сокет демона подключается и на read-only ФС).
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+# Чужие процессы не видны; /proc — только свои.
+ProtectProc=invisible
+ProcSubset=pid
+# Сеть: TCP для браузера, unix — сокет демона и journald.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+RemoveIPC=yes
+# НЕ включено:
+# PrivateUsers=yes — в своём user namespace дополнительные группы (ramplus,
+#   ramplus-admin) не отображаются; доступ к сокету демона проверяется по ним.
+# PrivateNetwork=yes — веб должен слушать TCP.
+# IPAddressDeny=any — сломает --listen для удалённого доступа (по умолчанию
+#   и так только 127.0.0.1).
+
+[Install]
+WantedBy=multi-user.target

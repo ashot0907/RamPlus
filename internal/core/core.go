@@ -40,6 +40,7 @@ type Request struct {
 	Profile      *profile.ProfileRequest
 	ProfileReset bool
 	Rollback     bool
+	Setup        *SetupRequest
 }
 
 // Plan строит план операции (только чтение, root не нужен) и запоминает
@@ -61,6 +62,8 @@ func (c *Core) build(ctx context.Context, r Request) *plan.Plan {
 
 func (c *Core) buildDomain(ctx context.Context, r Request) *plan.Plan {
 	switch {
+	case r.Setup != nil:
+		return c.setupPlan(ctx, *r.Setup)
 	case r.Swap != nil:
 		return c.swapPlan(ctx, *r.Swap)
 	case r.Profile != nil:

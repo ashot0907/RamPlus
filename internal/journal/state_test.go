@@ -100,3 +100,50 @@ func TestUndoable(t *testing.T) {
 		}
 	}
 }
+
+// Журналы без source/requested_by (до аудита) читаются: источник неизвестен.
+func TestOldJournalSourceUnknown(t *testing.T) {
+	for _, f := range []string{"state/v1-committed.json", "state/v2-duplicate-ids.json"} {
+		s, err := ParseState([]byte(readFixture(t, f)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		h := HistoryOf(s)
+		if len(h.Operations) == 0 {
+			t.Fatalf("%s: no operations", f)
+		}
+		for _, e := range h.Operations {
+			if e.Source != SourceUnknown || e.RequestedBy != nil {
+				t.Errorf("%s: %s source=%q requested_by=%+v", f, e.ID, e.Source, e.RequestedBy)
+			}
+		}
+		// Без полей в журнале — и при записи без них (формат не меняется).
+		b, err := s.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), `"source"`) || strings.Contains(string(b), `"requested_by"`) {
+			t.Errorf("%s: empty source written", f)
+		}
+	}
+}
+
+func TestSourceRoundTrip(t *testing.T) {
+	st := State{Version: StateVersion, Operations: []Operation{
+		{ID: "a", Status: OpCommitted, Applied: []Applied{}, Source: SourceCLI, RequestedBy: &Requester{UID: 1000, User: "ashot"}},
+		{ID: "b", Status: OpCommitted, Applied: []Applied{}, Source: SourceDaemon, RequestedBy: &Requester{UID: 997, User: "ramplus-web", Via: ViaWeb}},
+	}}
+	b, err := st.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseState(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := HistoryOf(got)
+	if h.Operations[0].Source != SourceCLI || h.Operations[0].RequestedBy.User != "ashot" ||
+		h.Operations[1].Source != SourceDaemon || h.Operations[1].RequestedBy.Via != ViaWeb || h.Operations[1].RequestedBy.UID != 997 {
+		t.Errorf("history: %+v %+v", h.Operations[0], h.Operations[1])
+	}
+}
