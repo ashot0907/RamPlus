@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/ashot0907/ramplus/internal/detect"
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/monitor"
 )
 
@@ -204,11 +205,11 @@ func TestPlanFilesystems(t *testing.T) {
 		{"f2fs", false, false, false, false, "поддерживаются ext4, xfs, btrfs"},
 		{"", false, false, false, false, "не удалось"},
 		// Разделы Windows и флешки.
-		{"ntfs", false, false, false, false, foreignFSMsg},
-		{"ntfs3", false, false, false, false, foreignFSMsg},
-		{"vfat", false, false, false, false, foreignFSMsg},
-		{"exfat", false, false, false, false, foreignFSMsg},
-		{"fuseblk", false, false, false, false, foreignFSMsg},
+		{"ntfs", false, false, false, false, "swapfile на этой ФС не поддерживается Linux"},
+		{"ntfs3", false, false, false, false, "swapfile на этой ФС не поддерживается Linux"},
+		{"vfat", false, false, false, false, "swapfile на этой ФС не поддерживается Linux"},
+		{"exfat", false, false, false, false, "swapfile на этой ФС не поддерживается Linux"},
+		{"fuseblk", false, false, false, false, "swapfile на этой ФС не поддерживается Linux"},
 	}
 	for _, tt := range tests {
 		f := baseFacts()
@@ -596,7 +597,7 @@ func TestPlanRollbackRecovery(t *testing.T) {
 	mk := func(v Verdict) Facts {
 		f := baseFacts()
 		f.State.Operations = []Operation{{ID: "op1", Action: ActionApply, Status: OpInProgress, Applied: []Applied{pending}}}
-		f.Recovery = &Recovery{OpID: "op1", Pending: &pending, Verdict: v, Detail: "детали"}
+		f.Recovery = &Recovery{OpID: "op1", Pending: &pending, Verdict: v, Detail: i18n.Raw("детали")}
 		return f
 	}
 	p := BuildPlan(mk(VerdictPresent), Options{Action: ActionRollback})
@@ -624,7 +625,7 @@ func TestOptionsCommand(t *testing.T) {
 func TestPriorityNoteUsesActualPriority(t *testing.T) {
 	f := withOldSwap(baseFacts(), 0) // /swap.img с приоритетом -2
 	_, note, _ := choosePriority(f)
-	if !strings.Contains(note, "(-2)") {
+	if !strings.Contains(note.Text(i18n.RU), "(-2)") {
 		t.Errorf("note = %q", note)
 	}
 }

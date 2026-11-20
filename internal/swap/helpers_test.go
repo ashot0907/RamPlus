@@ -1,6 +1,8 @@
 package swap
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"context"
 	"io"
@@ -90,8 +92,8 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm func(*plan.Pla
 		out = &bytes.Buffer{}
 	}
 	var sp Plan
-	h := render.Exec(out)
-	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{}) }
+	h := render.Exec(i18n.RU, out)
+	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Lang: i18n.RU}) }
 	h.Confirm = confirm
 	_, err := journal.Execute(ctx, m.Sys, func(ctx context.Context) (*plan.Plan, error) {
 		sp = m.Plan(ctx, o)
@@ -103,7 +105,7 @@ func (m *Manager) Execute(ctx context.Context, o Options, confirm func(*plan.Pla
 func renderPlan(t *testing.T, p Plan, verbose bool) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := render.Plan(&out, &p.Plan, render.Options{Verbose: verbose}); err != nil {
+	if err := render.Plan(&out, &p.Plan, render.Options{Verbose: verbose, Lang: i18n.RU}); err != nil {
 		t.Fatal(err)
 	}
 	return out.String()

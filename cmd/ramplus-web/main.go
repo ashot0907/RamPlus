@@ -39,15 +39,15 @@ func (h *hostList) Set(v string) error { *h = append(*h, v); return nil }
 func main() { os.Exit(run()) }
 
 func run() int {
-	listen := flag.String("listen", web.DefaultListen, "адрес:порт; не-локальный адрес — только с TLS")
-	certFile := flag.String("tls-cert", "", "сертификат TLS (PEM)")
-	keyFile := flag.String("tls-key", "", "ключ TLS (PEM)")
-	selfSigned := flag.Bool("tls-self-signed", false, "TLS с самоподписанным сертификатом (создаётся при запуске)")
-	socket := flag.String("socket", api.DefaultSocket, "сокет демона ramplusd")
-	authFile := flag.String("auth-file", webauth.DefaultPath, "файл пароля (sudo ramplus init)")
+	listen := flag.String("listen", web.DefaultListen, "address:port; a non-local address requires TLS")
+	certFile := flag.String("tls-cert", "", "TLS certificate (PEM)")
+	keyFile := flag.String("tls-key", "", "TLS key (PEM)")
+	selfSigned := flag.Bool("tls-self-signed", false, "TLS with a self-signed certificate (generated at start)")
+	socket := flag.String("socket", api.DefaultSocket, "ramplusd daemon socket")
+	authFile := flag.String("auth-file", webauth.DefaultPath, "password file (sudo ramplus init)")
 	var hosts hostList
-	flag.Var(&hosts, "host", "дополнительное разрешённое имя в Host (можно несколько раз), например ramplus.lan")
-	showVersion := flag.Bool("version", false, "показать версию")
+	flag.Var(&hosts, "host", "extra allowed Host name (repeatable), for example ramplus.lan")
+	showVersion := flag.Bool("version", false, "print the version")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -65,20 +65,20 @@ func run() int {
 	fail := func(msg string, args ...any) int { log.Error(msg, args...); return 1 }
 
 	if err := web.CheckNotRoot(os.Geteuid()); err != nil {
-		return fail("отказ запуска", "err", err)
+		return fail("refusing to start", "err", err)
 	}
 	if os.Getenv("GOMEMLIMIT") == "" {
 		debug.SetMemoryLimit(defaultMemLimit)
 	}
 	withTLS := *selfSigned || *certFile != "" || *keyFile != ""
 	if (*certFile == "") != (*keyFile == "") {
-		return fail("нужны оба флага: --tls-cert и --tls-key")
+		return fail("both flags are required: --tls-cert and --tls-key")
 	}
 	if *selfSigned && *certFile != "" {
-		return fail("--tls-self-signed и --tls-cert взаимоисключающие")
+		return fail("--tls-self-signed and --tls-cert are mutually exclusive")
 	}
 	if err := web.ValidateListen(*listen, withTLS); err != nil {
-		return fail("отказ запуска", "err", err)
+		return fail("refusing to start", "err", err)
 	}
 	if h := web.ListenHost(*listen); h != "" {
 		hosts = append(hosts, h)
@@ -97,7 +97,7 @@ func run() int {
 			var fp string
 			cert, fp, err = web.SelfSigned(hosts, time.Now())
 			if err == nil {
-				log.Info("самоподписанный сертификат: сверьте отпечаток в браузере", "sha256", fp)
+				log.Info("self-signed certificate: compare the fingerprint in the browser", "sha256", fp)
 			}
 		} else {
 			cert, err = tls.LoadX509KeyPair(*certFile, *keyFile)
@@ -120,17 +120,17 @@ func run() int {
 		scheme = "https"
 	}
 	if _, err := os.Stat(*authFile); errors.Is(err, os.ErrNotExist) {
-		log.Warn("пароль не задан: веб покажет «выполните sudo ramplus init»", "file", *authFile)
+		log.Warn("no password set: the web UI will show «run sudo ramplus init»", "file", *authFile)
 	}
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- hs.Serve(l) }()
-	log.Info("ramplus-web запущен", "version", version, "url", scheme+"://"+*listen, "daemon", *socket, "pid", os.Getpid())
+	log.Info("ramplus-web started", "version", version, "url", scheme+"://"+*listen, "daemon", *socket, "pid", os.Getpid())
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	select {
 	case s := <-sig:
-		log.Info("остановка", "signal", s.String())
+		log.Info("stopping", "signal", s.String())
 	case err := <-serveErr:
 		if !errors.Is(err, http.ErrServerClosed) {
 			return fail("serve", "err", err)
@@ -140,6 +140,6 @@ func run() int {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = hs.Shutdown(ctx) // SSE-потоки прерываются по таймауту
-	log.Info("ramplus-web остановлен")
+	log.Info("ramplus-web stopped")
 	return 0
 }

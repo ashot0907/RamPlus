@@ -1,0 +1,456 @@
+$ ramplus profile list
+  PROFILE     STATUS                                           EVIDENCE  DESCRIPTION
+  default     stock Ubuntu                                     —         Stock Ubuntu 24.04
+  zswap-lz4   experimental: not confirmed by an SSD benchmark  —         zswap + lz4
+  zswap-zstd  experimental: not confirmed by an SSD benchmark  —         zswap + zstd
+
+No RamPlus profile has been applied.
+A profile becomes «verified» only with evidence — scripts/bench.sh results on a real SSD.
+
+$ ramplus profile show zswap-lz4
+Profile: zswap-lz4 — zswap + lz4
+zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+
+Status:   experimental: not confirmed by an SSD benchmark
+Evidence: —
+Where the values come from: Not confirmed by scripts/bench.sh on a real SSD (see CLAUDE.md). The --quick VM run (2026-11-17) is not used to choose values.
+
+  PARAMETER                  VALUE      WHAT IT IS
+  zswap.enabled              Y          zswap enabled
+  zswap.compressor           lz4        compressor
+  zswap.zpool                zsmalloc   pool allocator
+  zswap.max_pool_percent     20         max pool, % of RAM
+  zswap.shrinker_enabled     untouched  evict cold pages from the pool
+  vm.swappiness              60         tendency to swap
+  vm.page-cluster            3          swap readahead, 2^N pages
+  vm.watermark_scale_factor  10         kswapd memory reserve, ‱
+  vm.vfs_cache_pressure      100        dentry/inode cache reclaim
+
+$ ramplus profile plan zswap-lz4 --verbose
+Plan: profile zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Command: ramplus profile apply zswap-lz4
+Profile: zswap + lz4. zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+Evidence: none (no scripts/bench.sh results on a real SSD)
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+   3. write /etc/sysctl.d/99-ramplus.conf
+      ┌── /etc/sysctl.d/99-ramplus.conf
+      │ # Managed by RamPlus: do not edit, use `ramplus profile`.
+      │ # Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)
+      │ # Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.
+      │ vm.swappiness = 60
+      │ vm.page-cluster = 3
+      │ vm.watermark_scale_factor = 10
+      │ vm.vfs_cache_pressure = 100
+      └──
+   4. write /etc/systemd/system/ramplus-zswap.service
+      ┌── /etc/systemd/system/ramplus-zswap.service
+      │ # Managed by RamPlus: do not edit, use `ramplus profile`.
+      │ # Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)
+      │ # Пишет параметры zswap при загрузке (kernel cmdline не меняется).
+      │ [Unit]
+      │ Description=RamPlus zswap parameters (profile zswap-lz4)
+      │ Documentation=https://github.com/ashot0907/ramplus
+      │ DefaultDependencies=no
+      │ After=local-fs.target systemd-modules-load.service
+      │ Before=swap.target
+      │ ConditionPathIsDirectory=/sys/module/zswap/parameters
+      │ 
+      │ [Service]
+      │ Type=oneshot
+      │ RemainAfterExit=yes
+      │ ExecStart=/bin/sh -c 'echo lz4 > /sys/module/zswap/parameters/compressor'
+      │ ExecStart=/bin/sh -c 'echo 20 > /sys/module/zswap/parameters/max_pool_percent'
+      │ ExecStart=/bin/sh -c 'echo Y > /sys/module/zswap/parameters/enabled'
+      │ 
+      │ [Install]
+      │ WantedBy=swap.target
+      └──
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile apply zswap-lz4   (experimental: confirmation or --experimental will be required)
+
+$ ramplus profile apply zswap-lz4 --yes
+Plan: profile zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Command: ramplus profile apply zswap-lz4
+Profile: zswap + lz4. zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+Evidence: none (no scripts/bench.sh results on a real SSD)
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+   3. write /etc/sysctl.d/99-ramplus.conf
+   4. write /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile apply zswap-lz4   (experimental: confirmation or --experimental will be required)
+error: experimental profile (not confirmed by an SSD benchmark): in scripts add --experimental
+
+$ ramplus profile apply zswap-lz4 --experimental --yes
+Plan: profile zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Command: ramplus profile apply zswap-lz4 --experimental
+Profile: zswap + lz4. zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+Evidence: none (no scripts/bench.sh results on a real SSD)
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+   3. write /etc/sysctl.d/99-ramplus.conf
+   4. write /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile apply zswap-lz4 --experimental
+
+Running (operation <OPID>)
+  [1/6] zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor) ... ok
+  [2/6] zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled) ... ok
+  [3/6] write /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/6] write /etc/systemd/system/ramplus-zswap.service ... ok
+  [5/6] systemctl daemon-reload ... ok
+  [6/6] systemctl enable ramplus-zswap.service ... ok
+Done.
+
+$ ramplus profile current
+Profile: zswap-lz4 — experimental: not confirmed by an SSD benchmark, applied 2026-11-16 12:00:02
+
+  PARAMETER                  NOW            PROFILE  ORIGINAL  SOURCE
+  zswap.enabled              Y              Y        N         RamPlus (ramplus-zswap.service)
+  zswap.compressor           lz4            lz4      lzo       RamPlus (ramplus-zswap.service)
+  zswap.zpool                not in kernel  —        —         not in this kernel
+  zswap.max_pool_percent     20             20       20        RamPlus (ramplus-zswap.service)
+  zswap.shrinker_enabled     Y              —        Y         kernel default
+  vm.swappiness              60             60       60        RamPlus (99-ramplus.conf)
+  vm.page-cluster            3              3        3         RamPlus (99-ramplus.conf)
+  vm.watermark_scale_factor  10             10       10        RamPlus (99-ramplus.conf)
+  vm.vfs_cache_pressure      100            100      100       RamPlus (99-ramplus.conf)
+
+Differences from the original values (captured 2026-11-16 12:00:02): zswap.enabled: N → Y; zswap.compressor: lzo → lz4
+
+$ ramplus profile plan zswap-lz4
+Plan: profile zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Command: ramplus profile apply zswap-lz4
+Profile: zswap + lz4. zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+Evidence: none (no scripts/bench.sh results on a real SSD)
+Currently applied: zswap-lz4 (experimental: not confirmed by an SSD benchmark)
+
+Parameters
+  PARAMETER    NOW    NEW       CURRENT SOURCE
+  zswap.zpool  —      zsmalloc  not in this kernel — skipped
+  unchanged: zswap.enabled=Y, zswap.compressor=lz4, zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [ok]   profile: the system already matches profile zswap-lz4 — nothing to change
+
+Steps
+  (none)
+
+Summary
+  right away (runtime): parameters changed: 0
+  created: —
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: nothing to change.
+
+$ ramplus profile apply default --set vm.swappiness=80 --yes
+Plan: profile default — modified by the user
+Command: ramplus profile apply default --set vm.swappiness=80
+Profile: Stock Ubuntu 24.04. Stock Ubuntu 24.04 values: zswap off, swappiness 60, page-cluster 3, watermark_scale_factor 10, vfs_cache_pressure 100. Applying it restores the stock settings.
+Currently applied: zswap-lz4 (experimental: not confirmed by an SSD benchmark)
+
+Parameters
+  PARAMETER      NOW     NEW         CURRENT SOURCE
+  zswap.enabled  Y    →  N           RamPlus (ramplus-zswap.service)
+  vm.swappiness  60   →  80 (--set)  RamPlus (99-ramplus.conf)
+  unchanged: vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] status: stock Ubuntu: applying it restores the stock values
+  [info] --set: profile modified by the user: vm.swappiness=80 (in the profile: 60)
+
+Steps
+   1. zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)
+   2. vm.swappiness = 80 (write to /proc/sys/vm/swappiness)
+   3. write /etc/sysctl.d/99-ramplus.conf
+   4. write /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+  (content of files to be written: --verbose)
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: —
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile apply default --set vm.swappiness=80
+
+Running (operation <OPID>)
+  [1/5] zswap.enabled = N (write to /sys/module/zswap/parameters/enabled) ... ok
+  [2/5] vm.swappiness = 80 (write to /proc/sys/vm/swappiness) ... ok
+  [3/5] write /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/5] write /etc/systemd/system/ramplus-zswap.service ... ok
+  [5/5] systemctl daemon-reload ... ok
+Done.
+
+$ ramplus profile list
+  PROFILE     STATUS                                           EVIDENCE  DESCRIPTION
+* default     stock Ubuntu                                     —         Stock Ubuntu 24.04
+  zswap-lz4   experimental: not confirmed by an SSD benchmark  —         zswap + lz4
+  zswap-zstd  experimental: not confirmed by an SSD benchmark  —         zswap + zstd
+
+* applied: default (modified by the user)
+A profile becomes «verified» only with evidence — scripts/bench.sh results on a real SSD.
+
+$ ramplus profile reset --dry-run
+Plan: reset the RamPlus profile — restore the values from before the first apply
+Command: ramplus profile reset
+Currently applied: default (modified by the user)
+
+Parameters
+  PARAMETER         NOW     NEW  CURRENT SOURCE
+  zswap.compressor  lz4  →  lzo  kernel default
+  vm.swappiness     80   →  60   RamPlus (99-ramplus.conf)
+  unchanged: zswap.enabled=N, zswap.max_pool_percent=20, zswap.shrinker_enabled=Y, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] reset: restoring the values captured 2026-11-16 12:00:02 before the first apply (operation <OPID>)
+
+Steps
+   1. zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)
+   2. vm.swappiness = 60 (write to /proc/sys/vm/swappiness)
+   3. delete /etc/sysctl.d/99-ramplus.conf
+   4. systemctl disable ramplus-zswap.service
+   5. delete /etc/systemd/system/ramplus-zswap.service
+   6. systemctl daemon-reload
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: —
+  deleted: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile reset
+
+$ ramplus profile reset --yes
+Plan: reset the RamPlus profile — restore the values from before the first apply
+Command: ramplus profile reset
+Currently applied: default (modified by the user)
+
+Parameters
+  PARAMETER         NOW     NEW  CURRENT SOURCE
+  zswap.compressor  lz4  →  lzo  kernel default
+  vm.swappiness     80   →  60   RamPlus (99-ramplus.conf)
+  unchanged: zswap.enabled=N, zswap.max_pool_percent=20, zswap.shrinker_enabled=Y, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] reset: restoring the values captured 2026-11-16 12:00:02 before the first apply (operation <OPID>)
+
+Steps
+   1. zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)
+   2. vm.swappiness = 60 (write to /proc/sys/vm/swappiness)
+   3. delete /etc/sysctl.d/99-ramplus.conf
+   4. systemctl disable ramplus-zswap.service
+   5. delete /etc/systemd/system/ramplus-zswap.service
+   6. systemctl daemon-reload
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: —
+  deleted: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile reset
+
+Running (operation <OPID>)
+  [1/6] zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor) ... ok
+  [2/6] vm.swappiness = 60 (write to /proc/sys/vm/swappiness) ... ok
+  [3/6] delete /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/6] systemctl disable ramplus-zswap.service ... ok
+  [5/6] delete /etc/systemd/system/ramplus-zswap.service ... ok
+  [6/6] systemctl daemon-reload ... ok
+Done.
+
+$ ramplus profile reset --yes
+Plan: reset the RamPlus profile — restore the values from before the first apply
+Command: ramplus profile reset
+
+Parameters
+  PARAMETER  NOW    NEW  CURRENT SOURCE
+  unchanged: zswap.enabled=N, zswap.compressor=lzo, zswap.max_pool_percent=20, zswap.shrinker_enabled=Y, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] reset: restoring the values captured 2026-11-16 12:00:02 before the first apply (operation <OPID>)
+
+Steps
+  (none)
+
+Summary
+  right away (runtime): parameters changed: 0
+  created: —
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: nothing to change.
+Nothing to do.
+
+$ ramplus rollback --dry-run
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:45: ramplus profile reset
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+
+Steps
+   1. write /etc/systemd/system/ramplus-zswap.service
+   2. systemctl daemon-reload
+   3. systemctl enable ramplus-zswap.service
+   4. write /etc/sysctl.d/99-ramplus.conf
+   5. vm.swappiness = 80 (write to /proc/sys/vm/swappiness)
+   6. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 0 B
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:45: ramplus profile reset
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+
+Steps
+   1. write /etc/systemd/system/ramplus-zswap.service
+   2. systemctl daemon-reload
+   3. systemctl enable ramplus-zswap.service
+   4. write /etc/sysctl.d/99-ramplus.conf
+   5. vm.swappiness = 80 (write to /proc/sys/vm/swappiness)
+   6. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 0 B
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/6] write /etc/systemd/system/ramplus-zswap.service ... ok
+  [2/6] systemctl daemon-reload ... ok
+  [3/6] systemctl enable ramplus-zswap.service ... ok
+  [4/6] write /etc/sysctl.d/99-ramplus.conf ... ok
+  [5/6] vm.swappiness = 80 (write to /proc/sys/vm/swappiness) ... ok
+  [6/6] zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor) ... ok
+Done.
+
+$ ramplus profile current
+Profile: default — modified by the user, applied 2026-11-16 12:00:23
+  changed by the user: vm.swappiness=80
+
+  PARAMETER                  NOW            PROFILE  ORIGINAL  SOURCE
+  zswap.enabled              N              N        N         RamPlus (ramplus-zswap.service)
+  zswap.compressor           lz4            —        lzo       kernel default
+  zswap.zpool                not in kernel  —        —         not in this kernel
+  zswap.max_pool_percent     20             —        20        kernel default
+  zswap.shrinker_enabled     Y              —        Y         kernel default
+  vm.swappiness              80             80       60        RamPlus (99-ramplus.conf)
+  vm.page-cluster            3              3        3         RamPlus (99-ramplus.conf)
+  vm.watermark_scale_factor  10             10       10        RamPlus (99-ramplus.conf)
+  vm.vfs_cache_pressure      100            100      100       RamPlus (99-ramplus.conf)
+
+Differences from the original values (captured 2026-11-16 12:00:02): zswap.compressor: lzo → lz4; vm.swappiness: 60 → 80
+

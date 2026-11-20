@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 func TestHistory(t *testing.T) {
 	w := newWorld(t)
 	c := New(w.System())
-	h, err := c.History()
+	h, err := c.History(i18n.RU)
 	if err != nil || len(h.Operations) != 0 || h.Operations == nil {
 		t.Fatalf("empty: %+v %v", h, err)
 	}
@@ -18,7 +20,7 @@ func TestHistory(t *testing.T) {
 	mustRun(t, w, rollback)
 	mustRun(t, w, apply4G)
 	before := w.Snap()
-	h, err = c.History()
+	h, err = c.History(i18n.RU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,13 +41,13 @@ func TestHistory(t *testing.T) {
 		t.Errorf("last apply: %+v", ops[2])
 	}
 	// RollbackNext — ровно то, что выберет rollback.
-	p := c.RollbackPlan(context.Background())
+	p := c.RollbackPlan(context.Background(), i18n.RU)
 	if p.Effects.Target == nil || p.Effects.Target.ID != ops[2].ID {
 		t.Errorf("rollback target %+v, history next %s", p.Effects.Target, ops[2].ID)
 	}
 
 	w.Files[StatePath].Data = "{"
-	if _, err := c.History(); err == nil {
+	if _, err := c.History(i18n.RU); err == nil {
 		t.Error("broken journal must be an error")
 	}
 }

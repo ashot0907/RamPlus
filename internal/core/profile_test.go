@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"context"
 	"errors"
@@ -49,7 +51,7 @@ func runReset(t *testing.T, w *fakeWorld) (string, error) {
 	t.Helper()
 	var out bytes.Buffer
 	m := &Manager{Sys: w.System(), Out: &out}
-	_, err := m.ExecuteFunc(context.Background(), func(ctx context.Context) Plan { return PlanProfileReset(ctx, w.System()) }, yes)
+	_, err := m.ExecuteFunc(context.Background(), func(ctx context.Context) Plan { return PlanProfileReset(ctx, w.System(), i18n.RU) }, yes)
 	return out.String(), err
 }
 
@@ -284,10 +286,10 @@ func TestProfileSysctlSources(t *testing.T) {
 		t.Fatal("profile not recorded")
 	}
 	pf := profile.Gather(context.Background(), w.System(), nil)
-	if s := pf.SourceOf("vm.swappiness"); s != "RamPlus (99-ramplus.conf)" {
+	if s := pf.SourceOf("vm.swappiness").Text(i18n.RU); s != "RamPlus (99-ramplus.conf)" {
 		t.Errorf("source after apply = %q", s)
 	}
-	if s := pf.SourceOf("zswap.enabled"); s != "RamPlus (ramplus-zswap.service)" {
+	if s := pf.SourceOf("zswap.enabled").Text(i18n.RU); s != "RamPlus (ramplus-zswap.service)" {
 		t.Errorf("zswap source after apply = %q", s)
 	}
 }

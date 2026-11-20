@@ -1,0 +1,41 @@
+# Install script shared by ramplus-bin and ramplus. Users, groups, the
+# socket directory and the unit reload come from pacman's own hooks
+# (sysusers.d / tmpfiles.d / systemd). Services are never enabled or
+# started by the package.
+
+post_install() {
+	cat <<'MSG'
+
+RamPlus is installed. The services are not started automatically.
+Next steps:
+  sudo ramplus init                                  # set the web UI password
+  sudo systemctl enable --now ramplusd ramplus-web
+  xdg-open http://127.0.0.1:7781                     # or: ssh -L 7781:localhost:7781 user@server
+Terminal only: ramplus status; ramplus recommend; sudo ramplus setup ... --dry-run
+
+MSG
+}
+
+post_upgrade() {
+	# Restart only services that are already running.
+	systemctl try-restart ramplusd.service ramplus-web.service 2>/dev/null || true
+}
+
+pre_remove() {
+	if [ "${RAMPLUS_FORCE_REMOVE:-}" != 1 ] && ! LC_ALL=C.UTF-8 ramplus swap check-clean >/dev/null 2>&1; then
+		echo "ramplus: RamPlus still manages this system:" >&2
+		LC_ALL=C.UTF-8 ramplus swap check-clean >&2 || true
+		echo "Undo the changes first: History → Undo in the web UI, or" >&2
+		echo "  sudo ramplus swap remove      (RamPlus swap)" >&2
+		echo "  sudo ramplus profile reset    (memory mode)" >&2
+		echo "pacman cannot abort a removal from a script: the package will be removed," >&2
+		echo "but swap/settings stay in place. Reinstall ramplus to undo them later." >&2
+	fi
+	systemctl stop ramplus-web.service ramplusd.service 2>/dev/null || true
+	systemctl disable --quiet ramplus-web.service ramplusd.service 2>/dev/null || true
+}
+
+post_remove() {
+	echo "ramplus: /etc/ramplus (web password) and /var/lib/ramplus (journal, needed for rollback) are kept."
+	echo "         System users and groups (ramplus, ramplus-admin, ramplus-web) are kept as well."
+}

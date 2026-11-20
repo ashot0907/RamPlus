@@ -3,6 +3,8 @@
 package fakesys
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"context"
 	"fmt"
@@ -615,7 +617,7 @@ func (f *FS) Lock(name string) (func() error, error) {
 	lockMu.Lock()
 	defer lockMu.Unlock()
 	if f.w.Locked {
-		return nil, fmt.Errorf("%w (%s)", sys.ErrLocked, name)
+		return nil, i18n.Errorf("sys.locked_path", sys.ErrLocked, name)
 	}
 	f.w.Locked = true
 	return func() error {
@@ -695,11 +697,11 @@ func (e *Exec) Run(_ context.Context, name string, args ...string) ([]byte, erro
 		case !ok:
 			return nil, notExist("chattr", last)
 		case !f.Dir && f.Size > 0:
-			return nil, fmt.Errorf("chattr: +C на непустом файле не действует: %s", last)
+			return nil, fmt.Errorf("chattr: +C has no effect on a non-empty file: %s", last)
 		}
 		f.NoCOW = true
 	default:
-		return nil, fmt.Errorf("fakeExec: неожиданная команда %q", cmd)
+		return nil, fmt.Errorf("fakeExec: unexpected command %q", cmd)
 	}
 	return nil, nil
 }

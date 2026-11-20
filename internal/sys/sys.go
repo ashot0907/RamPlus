@@ -4,6 +4,8 @@
 package sys
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"errors"
 	"io/fs"
@@ -27,7 +29,7 @@ var ErrFallocateUnsupported = errors.New("fallocate not supported")
 
 // ErrLocked — блокировка занята: другой процесс RamPlus (CLI или демон)
 // уже выполняет операцию.
-var ErrLocked = errors.New("другой экземпляр ramplus уже выполняет операцию")
+var ErrLocked = i18n.Errorf("sys.locked")
 
 // FS — операции с файлами. Реализация по умолчанию — OSFS.
 type FS interface {

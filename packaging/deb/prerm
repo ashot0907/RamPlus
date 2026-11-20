@@ -1,0 +1,37 @@
+#!/bin/sh
+# prerm for the ramplus package. On remove (not on upgrade): refuse while
+# RamPlus still manages swap or a memory profile, so the system is not left
+# half-configured with no tool to undo it (override: RAMPLUS_FORCE_REMOVE=1).
+# Then stop and disable the services.
+set -e
+
+case "$1" in
+remove)
+	if [ "${RAMPLUS_FORCE_REMOVE:-}" != 1 ] && command -v ramplus >/dev/null; then
+		if ! LC_ALL=C.UTF-8 ramplus swap check-clean >/dev/null 2>&1; then
+			echo "" >&2
+			echo "ramplus: refusing to remove the package: RamPlus still manages this system:" >&2
+			LC_ALL=C.UTF-8 ramplus swap check-clean >&2 || true
+			echo "" >&2
+			echo "Undo the changes first: History → Undo in the web UI, or" >&2
+			echo "  sudo ramplus swap remove      (RamPlus swap)" >&2
+			echo "  sudo ramplus profile reset    (memory mode)" >&2
+			echo "To remove anyway and keep the current swap/settings: sudo RAMPLUS_FORCE_REMOVE=1 apt remove ramplus" >&2
+			exit 1
+		fi
+	fi
+	if [ -d /run/systemd/system ]; then
+		deb-systemd-invoke stop ramplus-web.service ramplusd.service || true
+		# systemctl, not deb-systemd-helper: the admin enabled the units with
+		# systemctl enable, and deb-systemd-helper only removes links it made.
+		systemctl disable --quiet ramplus-web.service ramplusd.service || true
+	fi
+	;;
+upgrade | deconfigure | failed-upgrade) ;;
+*)
+	echo "prerm called with unknown argument '$1'" >&2
+	exit 1
+	;;
+esac
+
+exit 0

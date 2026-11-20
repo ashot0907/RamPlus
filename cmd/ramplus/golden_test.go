@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"flag"
 	"os"
@@ -30,6 +32,28 @@ var (
 	fingerprint = regexp.MustCompile(`"fingerprint": "[0-9a-f]{32}"`)
 )
 
+// goldenLang — язык golden-прогона: русские эталоны (testdata/golden) и
+// английские (testdata/golden/en, TestGoldenEnglish) проверяются оба.
+var goldenLang = i18n.RU
+
+// TestGoldenEnglish — те же сценарии на английском (язык CLI по умолчанию).
+func TestGoldenEnglish(t *testing.T) {
+	tests := map[string]func(*testing.T){
+		"SwapKeep": TestGoldenSwapKeep, "SwapReplaceDeleteOld": TestGoldenSwapReplaceDeleteOld,
+		"SwapLifecycle": TestGoldenSwapLifecycle, "SwapBlocked": TestGoldenSwapBlocked, "NotRoot": TestGoldenNotRoot,
+		"SwapPathBtrfs": TestGoldenSwapPathBtrfs, "RollbackMismatch": TestGoldenRollbackMismatch, "Profile": TestGoldenProfile,
+		"ProfilePreflight": TestGoldenProfilePreflight, "Status": TestGoldenStatus, "JSON": TestGoldenJSON,
+		"History": TestGoldenHistory, "RollbackContext": TestGoldenRollbackContext, "Orphan": TestGoldenOrphan,
+		"Setup": TestGoldenSetup, "WebPassword": TestGoldenWebPassword,
+	}
+	oldDefault := i18n.Default
+	goldenLang, i18n.Default = i18n.EN, i18n.EN
+	t.Cleanup(func() { goldenLang, i18n.Default = i18n.RU, oldDefault })
+	for name, fn := range tests {
+		t.Run(name, fn)
+	}
+}
+
 type session struct {
 	t   *testing.T
 	w   *fakesys.World
@@ -38,8 +62,11 @@ type session struct {
 
 func newSession(t *testing.T, w *fakesys.World) *session {
 	t.Helper()
-	oldSys, oldCollect, oldLocal, oldOrigin := newSystem, collect, time.Local, cliOrigin
-	t.Cleanup(func() { newSystem, collect, time.Local, cliOrigin = oldSys, oldCollect, oldLocal, oldOrigin })
+	oldSys, oldCollect, oldLocal, oldOrigin, oldLang := newSystem, collect, time.Local, cliOrigin, lang
+	t.Cleanup(func() {
+		newSystem, collect, time.Local, cliOrigin, lang = oldSys, oldCollect, oldLocal, oldOrigin, oldLang
+	})
+	lang = goldenLang
 	cliOrigin = func() journal.Origin {
 		return journal.Origin{Source: journal.SourceCLI, RequestedBy: &journal.Requester{UID: 1000, User: "golden"}}
 	}
@@ -87,7 +114,7 @@ func (s *session) runIn(stdin string, args ...string) {
 	s.out.WriteString("$ ramplus " + strings.Join(args, " ") + "\n")
 	s.out.WriteString(out.String())
 	if err != nil {
-		s.out.WriteString("error: " + err.Error() + "\n")
+		s.out.WriteString("error: " + i18n.ErrText(lang, err) + "\n")
 	}
 	s.out.WriteString("\n")
 }
@@ -98,6 +125,9 @@ func (s *session) check(name string) {
 	got = planID.ReplaceAllString(got, `"id": "<PLANID>"`)
 	got = fingerprint.ReplaceAllString(got, `"fingerprint": "<FP>"`)
 	path := filepath.Join("testdata", "golden", name+".golden")
+	if lang == i18n.EN {
+		path = filepath.Join("testdata", "golden", "en", name+".golden")
+	}
 	if *update {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			s.t.Fatal(err)

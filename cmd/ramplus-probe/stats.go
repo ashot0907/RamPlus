@@ -90,7 +90,7 @@ func FillPages(buf []byte, data string, seed uint64) error {
 			}
 		}
 	default:
-		return fmt.Errorf("неизвестный тип данных %q (compressible|random)", data)
+		return fmt.Errorf("unknown data type %q (compressible|random)", data)
 	}
 	return nil
 }
@@ -109,7 +109,7 @@ func ParseSize(s string) (uint64, error) {
 	}
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil || v <= 0 {
-		return 0, fmt.Errorf("неверный размер %q", s)
+		return 0, fmt.Errorf("invalid size %q", s)
 	}
 	return uint64(v * float64(mult)), nil
 }

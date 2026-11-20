@@ -8,7 +8,11 @@ journal stays consistent).
 - Read-only commands (`status`, `recommend`, `history`, every `plan` / `--dry-run`) do not need root.
 - Commands that change the system need root (`sudo`). They always print the plan first and ask for
   confirmation.
-- Messages are in Russian for now; machine-readable output (`--json`) is language-independent.
+- Messages are in English. Russian: `--lang ru`, or a locale whose `LC_ALL` / `LC_MESSAGES` /
+  `LANG` starts with `ru` (e.g. `LANG=ru_RU.UTF-8`); `--lang en|ru` wins over the environment.
+  JSON output (`--json`) keeps the same keys and codes in both languages; only human-readable
+  messages are translated. The history stores codes, so old entries are shown in the current
+  language.
 
 Contents: [status](#status) · [recommend](#recommend) · [setup](#setup) · [swap](#swap) ·
 [profile](#profile) · [rollback](#rollback) · [history](#history) · [init, passwd](#init-and-passwd) ·
@@ -73,6 +77,20 @@ ramplus recommend [--json] [--path /mnt/data/ramplus.swapfile]
 ```
 
 What RamPlus suggests for this machine. Read-only.
+
+```text
+$ ramplus recommend
+RamPlus recommendation
+
+  RAM: 16.0 GiB (MemTotal 16.0 GiB)
+  location: /ramplus.swapfile (ext4 on /, nvme), 300.0 GiB free, up to 280.0 GiB
+  RamPlus swap: 8.0 GiB — RAM 16 GB: SSD swap of half the RAM
+  existing swap: --existing=replace — the existing swap is a file: replace it with ours, the old file is kept for undo
+  profile: zswap-lz4 (experimental) — won our tests: fewer freezes when memory runs short
+  [profile.preliminary] preliminary: profile zswap-lz4 is still being confirmed on a real SSD (scripts/bench.sh)
+
+Plan: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental --dry-run
+```
 
 - **Swap size:** RAM ≤ 8 GB → same as RAM; 8–32 GB → half of RAM; more → 16 GB. RAM is taken from
   `MemTotal` rounded **up** to a whole GB (the kernel reserves part of the installed memory, so a

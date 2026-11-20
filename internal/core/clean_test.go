@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"strings"
 	"testing"
@@ -18,7 +20,7 @@ func TestCleanWithOldHistory(t *testing.T) {
 	if f.StateErr != nil {
 		t.Fatal(f.StateErr)
 	}
-	if p := CleanProblems(f, w.System()); len(p) != 0 {
+	if p := CleanProblems(f, w.System(), i18n.RU); len(p) != 0 {
 		t.Errorf("must be clean, got %v", p)
 	}
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"context"
 	"errors"
@@ -37,13 +39,13 @@ func (f *profileFlags) request(name string) (profile.ProfileRequest, error) {
 	if err != nil {
 		return profile.ProfileRequest{}, err
 	}
-	return profile.ProfileRequest{Name: name, Set: set, Force: f.force, Experimental: f.experimental}, nil
+	return profile.ProfileRequest{Name: name, Set: set, Force: f.force, Experimental: f.experimental, Lang: lang}, nil
 }
 
 func newProfileCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "profile",
-		Short: "Профили RamPlus: zswap и sysctl vm.* (план → apply → rollback/reset)",
+		Short: T("cli.profile.short"),
 	}
 	cmd.AddCommand(newProfileListCmd(), newProfileShowCmd(), newProfilePlanCmd(), newProfileApplyCmd(),
 		newProfileCurrentCmd(), newProfileResetCmd())
@@ -57,27 +59,27 @@ func activeProfile() *profile.AppliedProfile {
 func newProfileListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "Профили и их статусы",
+		Short: T("cli.profile.list_short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			active := activeProfile()
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "  ПРОФИЛЬ\tСТАТУС\tEVIDENCE\tОПИСАНИЕ")
+			fmt.Fprintln(tw, T("cli.profile.list_columns"))
 			for _, p := range profile.All() {
 				mark := " "
 				if active != nil && active.Name == p.Name {
 					mark = "*"
 				}
-				fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\n", mark, p.Name, profile.StatusText(p.Status), dashStr(p.Evidence), p.Title)
+				fmt.Fprintf(tw, "%s %s\t%s\t%s\t%s\n", mark, p.Name, profile.StatusText(lang, p.Status), dashStr(p.Evidence), p.Title(lang))
 			}
 			tw.Flush()
 			if active != nil {
-				fmt.Fprintf(out, "\n* применён: %s (%s)\n", active.Name, profile.StatusText(active.Status))
+				fmt.Fprintf(out, T("cli.profile.list_applied"), active.Name, profile.StatusText(lang, active.Status))
 			} else {
-				fmt.Fprintln(out, "\nПрофиль RamPlus не применялся.")
+				fmt.Fprintln(out, T("cli.profile.list_none"))
 			}
-			fmt.Fprintln(out, "Статус «проверенный» профиль получает только с evidence — результатом scripts/bench.sh на реальном SSD.")
+			fmt.Fprintln(out, T("cli.profile.list_note"))
 			return nil
 		},
 	}
@@ -92,25 +94,25 @@ func dashStr(s string) string {
 
 func newProfileShowCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <имя>",
-		Short: "Параметры профиля, статус и evidence",
+		Use:   T("cli.profile.show_use"),
+		Short: T("cli.profile.show_short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p, ok := profile.Get(args[0])
 			if !ok {
-				return fmt.Errorf("нет профиля %q; доступны: %s", args[0], strings.Join(profile.Names(), ", "))
+				return fmt.Errorf(T("cli.profile.unknown"), args[0], strings.Join(profile.Names(), ", "))
 			}
 			out := cmd.OutOrStdout()
-			fmt.Fprintf(out, "Профиль: %s — %s\n%s\n\n", p.Name, p.Title, p.Description)
-			fmt.Fprintf(out, "Статус:   %s\nEvidence: %s\nОткуда значения: %s\n\n", profile.StatusText(p.Status), dashStr(p.Evidence), p.Comment)
+			fmt.Fprintf(out, T("cli.profile.show_header"), p.Name, p.Title(lang), p.Description(lang))
+			fmt.Fprintf(out, T("cli.profile.show_status"), profile.StatusText(lang, p.Status), dashStr(p.Evidence), T("profile."+p.Name+".comment"))
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "  ПАРАМЕТР\tЗНАЧЕНИЕ\tЧТО ЭТО")
+			fmt.Fprintln(tw, T("cli.profile.show_columns"))
 			for _, pr := range profile.Params {
 				v, ok := p.Params[pr.Key]
 				if !ok {
-					v = "не трогать"
+					v = T("cli.profile.untouched")
 				}
-				fmt.Fprintf(tw, "  %s\t%s\t%s\n", pr.Key, v, pr.Title)
+				fmt.Fprintf(tw, "  %s\t%s\t%s\n", pr.Key, v, profile.ParamTitle(lang, pr.Key))
 			}
 			return tw.Flush()
 		},
@@ -118,22 +120,22 @@ func newProfileShowCmd() *cobra.Command {
 }
 
 func addProfileFlags(cmd *cobra.Command, f *profileFlags, exec bool) {
-	cmd.Flags().StringArrayVar(&f.set, "set", nil, "точечное изменение поверх профиля: ключ=значение (можно несколько раз)")
-	cmd.Flags().BoolVar(&f.force, "force", false, "включить zswap даже при активном/установленном zram")
-	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "показать содержимое записываемых файлов")
+	cmd.Flags().StringArrayVar(&f.set, "set", nil, T("cli.flag.set_repeat"))
+	cmd.Flags().BoolVar(&f.force, "force", false, T("cli.flag.profile_force"))
+	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, T("cli.flag.verbose_files"))
 	addJSONFlag(cmd, &f.json)
 	if exec {
-		cmd.Flags().BoolVar(&f.experimental, "experimental", false, "подтвердить применение экспериментального профиля (для скриптов)")
-		cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "не спрашивать подтверждение")
-		cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "только план")
+		cmd.Flags().BoolVar(&f.experimental, "experimental", false, T("cli.flag.experimental"))
+		cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, T("cli.flag.yes"))
+		cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, T("cli.flag.dry_run_short"))
 	}
 }
 
 func newProfilePlanCmd() *cobra.Command {
 	var f profileFlags
 	cmd := &cobra.Command{
-		Use:   "plan <имя>",
-		Short: "План применения профиля. Ничего не меняет, root не нужен",
+		Use:   T("cli.profile.plan_use"),
+		Short: T("cli.profile.plan_short"),
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, err := f.request(args[0])
@@ -150,11 +152,11 @@ func newProfilePlanCmd() *cobra.Command {
 func newProfileApplyCmd() *cobra.Command {
 	var f profileFlags
 	cmd := &cobra.Command{
-		Use:   "apply <имя>",
-		Short: "Применить профиль (нужен root): сразу и после перезагрузки",
-		Long: "Сначала печатается план и запрашивается подтверждение (--yes — без вопроса).\n" +
-			"Экспериментальный профиль требует отдельного подтверждения (в скриптах — --experimental).\n" +
-			"Отменить: ramplus rollback (общий стек со swap) или ramplus profile reset.",
+		Use:   T("cli.profile.apply_use"),
+		Short: T("cli.profile.apply_short"),
+		Long: T("cli.profile.apply_long1") +
+			T("cli.profile.apply_long2") +
+			T("cli.profile.apply_long3"),
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			r, err := f.request(args[0])
@@ -169,11 +171,11 @@ func newProfileApplyCmd() *cobra.Command {
 				if !f.yes {
 					return errJSONNeedsYes
 				}
-				return executeJSON(cmd, core.Request{Profile: &r}, profileConfirmer(true, f.experimental, nil, nil))
+				return executeJSON(cmd, core.Request{Profile: &r, Lang: lang}, profileConfirmer(true, f.experimental, nil, nil))
 			}
-			err = execute(cmd, core.Request{Profile: &r}, f.verbose, profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), out))
+			err = execute(cmd, core.Request{Profile: &r, Lang: lang}, f.verbose, profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
-				return fmt.Errorf("%w: sudo ramplus profile apply %s (посмотреть план без root: ramplus profile plan %s)", err, args[0], args[0])
+				return i18n.Errorf("cli.profile.apply_need_root", err, args[0], args[0])
 			}
 			return err
 		},
@@ -186,29 +188,29 @@ func newProfileResetCmd() *cobra.Command {
 	var f profileFlags
 	cmd := &cobra.Command{
 		Use:   "reset",
-		Short: "Вернуть значения системы до первого apply и удалить файлы RamPlus (нужен root)",
+		Short: T("cli.profile.reset_short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
 			if f.dryRun {
-				return showPlan(cmd, newCore().ProfileResetPlan(cmd.Context()), f.verbose, f.json)
+				return showPlan(cmd, newCore().ProfileResetPlan(cmd.Context(), lang), f.verbose, f.json)
 			}
 			if f.json {
 				if !f.yes {
 					return errJSONNeedsYes
 				}
-				return executeJSON(cmd, core.Request{ProfileReset: true}, confirmer(true, nil, nil))
+				return executeJSON(cmd, core.Request{ProfileReset: true, Lang: lang}, confirmer(true, nil, nil))
 			}
-			err := execute(cmd, core.Request{ProfileReset: true}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
+			err := execute(cmd, core.Request{ProfileReset: true, Lang: lang}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
-				return fmt.Errorf("%w: sudo ramplus profile reset (план без root: ramplus profile reset --dry-run)", err)
+				return i18n.Errorf("cli.profile.reset_need_root", err)
 			}
 			return err
 		},
 	}
-	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "не спрашивать подтверждение")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "только план")
-	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "подробно")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, T("cli.flag.yes"))
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, T("cli.flag.dry_run_short"))
+	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, T("cli.flag.verbose"))
 	addJSONFlag(cmd, &f.json)
 	return cmd
 }
@@ -226,7 +228,7 @@ func profileConfirmer(yes, experimental bool, in io.Reader, out io.Writer) func(
 			if !ok || !isTerminal(file) {
 				return false, ErrExperimentalNotConfirmed
 			}
-			fmt.Fprint(out, "\nПрофиль экспериментальный: значения не подтверждены scripts/bench.sh на реальном SSD.\nВсё равно применить? Введите yes: ")
+			fmt.Fprint(out, T("cli.profile.confirm_experimental"))
 			line, _ := bufio.NewReader(in).ReadString('\n')
 			if a := strings.ToLower(strings.TrimSpace(line)); a != "yes" && a != "да" {
 				return false, nil
@@ -240,11 +242,11 @@ func profileConfirmer(yes, experimental bool, in io.Reader, out io.Writer) func(
 func newProfileCurrentCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "current",
-		Short: "Что применено сейчас и отличия от исходных значений системы",
+		Short: T("cli.profile.current_short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			pf := newCore().ProfileFacts(cmd.Context())
-			return render.ProfileCurrent(cmd.OutOrStdout(), pf)
+			return render.ProfileCurrent(lang, cmd.OutOrStdout(), pf)
 		},
 	}
 }

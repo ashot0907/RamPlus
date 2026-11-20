@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"context"
 	"io"
@@ -110,8 +112,8 @@ func (m *Manager) exec(ctx context.Context, build func(context.Context) *plan.Pl
 	if out == nil {
 		out = &bytes.Buffer{}
 	}
-	h := render.Exec(out)
-	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{}) }
+	h := render.Exec(i18n.RU, out)
+	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Lang: i18n.RU}) }
 	h.Confirm = confirm
 	_, err := journal.Execute(ctx, m.Sys, func(ctx context.Context) (*plan.Plan, error) { return build(ctx), nil }, h)
 	return err
@@ -201,12 +203,12 @@ func kinds(steps []plan.Step) string {
 func render_(t *testing.T, p Plan, verbose bool) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := render.Plan(&out, &p.Plan, render.Options{Verbose: verbose}); err != nil {
+	if err := render.Plan(&out, &p.Plan, render.Options{Verbose: verbose, Lang: i18n.RU}); err != nil {
 		t.Fatal(err)
 	}
 	return out.String()
 }
 
 func cleanOf(w *fakesys.World) []string {
-	return CleanProblems(swap.Gather(context.Background(), w.System(), ""), w.System())
+	return CleanProblems(swap.Gather(context.Background(), w.System(), ""), w.System(), i18n.RU)
 }

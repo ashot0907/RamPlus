@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"strings"
 	"testing"
@@ -45,7 +47,7 @@ func TestSetupComposition(t *testing.T) {
 	w := setupWorld(t)
 	c := New(w.System())
 	r := setupReq(4*GiB, swap.ExistingReplace, "zswap-lz4")
-	p := c.SetupPlan(context.Background(), r)
+	p := c.SetupPlan(context.Background(), r, i18n.RU)
 	if p.Blocked() || p.Action != ActionSetup || p.ID == "" || p.Fingerprint == "" {
 		t.Fatalf("plan: blocked=%v action=%s id=%q fp=%q %+v", p.Blocked(), p.Action, p.ID, p.Fingerprint, p.Failures())
 	}
@@ -100,7 +102,7 @@ func TestSetupComposition(t *testing.T) {
 	if _, ok := w.Active["/swap.img"]; ok {
 		t.Error("old swap must be replaced")
 	}
-	h, err := c.History()
+	h, err := c.History(i18n.RU)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,21 +119,21 @@ func TestSetupParts(t *testing.T) {
 	ctx := context.Background()
 	t.Run("only swap", func(t *testing.T) {
 		w := setupWorld(t)
-		p := New(w.System()).SetupPlan(ctx, setupReq(4*GiB, swap.ExistingKeep, ""))
+		p := New(w.System()).SetupPlan(ctx, setupReq(4*GiB, swap.ExistingKeep, ""), i18n.RU)
 		if p.Blocked() || p.Profile != nil || p.HasKind(profile.KindSetValue) || !p.HasKind(swap.KindSwapon) {
 			t.Fatalf("%s %+v", kinds(p.Steps), p.Failures())
 		}
 		if res := execSetup(t, w, setupReq(4*GiB, swap.ExistingKeep, "")); res.Status != ResultDone {
 			t.Fatal(res.Status, res.Error)
 		}
-		h, _ := New(w.System()).History()
+		h, _ := New(w.System()).History(i18n.RU)
 		if got := h.Operations[0].Title; got != "Запас 4 GB из SSD" {
 			t.Errorf("title %q", got)
 		}
 	})
 	t.Run("only profile", func(t *testing.T) {
 		w := setupWorld(t)
-		p := New(w.System()).SetupPlan(ctx, setupReq(0, "", "zswap-lz4"))
+		p := New(w.System()).SetupPlan(ctx, setupReq(0, "", "zswap-lz4"), i18n.RU)
 		if p.Blocked() || p.HasKind(swap.KindSwapon) || !p.HasKind(profile.KindSetValue) || p.SwapBefore != 8*GiB || p.SwapAfter != 8*GiB {
 			t.Fatalf("%s %+v", kinds(p.Steps), p.Failures())
 		}
@@ -141,7 +143,7 @@ func TestSetupParts(t *testing.T) {
 		if res := execSetup(t, w, setupReq(4*GiB, swap.ExistingKeep, "zswap-lz4")); res.Status != ResultDone {
 			t.Fatal(res.Status, res.Error)
 		}
-		p := New(w.System()).SetupPlan(ctx, setupReq(4*GiB, swap.ExistingKeep, "zswap-lz4"))
+		p := New(w.System()).SetupPlan(ctx, setupReq(4*GiB, swap.ExistingKeep, "zswap-lz4"), i18n.RU)
 		if p.Blocked() || len(p.Steps) != 0 || !hasCheck(p, "setup.nothing", LevelOK) || !hasCheck(p, "setup.swap_unchanged", LevelOK) {
 			t.Fatalf("want empty plan: %s %+v", kinds(p.Steps), p.Checks)
 		}
@@ -157,17 +159,17 @@ func TestSetupParts(t *testing.T) {
 		if res := execSetup(t, w, setupReq(4*GiB, swap.ExistingKeep, "")); res.Status != ResultDone {
 			t.Fatal(res.Status, res.Error)
 		}
-		p := New(w.System()).SetupPlan(ctx, setupReq(6*GiB, "", ""))
+		p := New(w.System()).SetupPlan(ctx, setupReq(6*GiB, "", ""), i18n.RU)
 		if p.Blocked() || !hasCheck(p, "size.change", LevelInfo) {
 			t.Fatalf("%+v", p.Checks)
 		}
-		p = New(w.System()).SetupPlan(ctx, SetupRequest{Swap: &swap.Options{Size: 6 * GiB, Path: "/mnt/x/ramplus.swapfile"}})
+		p = New(w.System()).SetupPlan(ctx, SetupRequest{Swap: &swap.Options{Size: 6 * GiB, Path: "/mnt/x/ramplus.swapfile"}}, i18n.RU)
 		if !hasCheck(p, "setup.swap_path_change", LevelFail) {
 			t.Errorf("path change must block: %+v", p.Checks)
 		}
 	})
 	t.Run("empty", func(t *testing.T) {
-		p := New(setupWorld(t).System()).SetupPlan(ctx, SetupRequest{})
+		p := New(setupWorld(t).System()).SetupPlan(ctx, SetupRequest{}, i18n.RU)
 		if !hasCheck(p, "setup.empty", LevelFail) {
 			t.Errorf("%+v", p.Checks)
 		}
@@ -197,7 +199,7 @@ func TestSetupAnyPartBlocks(t *testing.T) {
 			w := setupWorld(t)
 			r := mk(w)
 			before := w.Snap()
-			p := New(w.System()).SetupPlan(context.Background(), r)
+			p := New(w.System()).SetupPlan(context.Background(), r, i18n.RU)
 			if !p.Blocked() {
 				t.Fatalf("must be blocked: %+v", p.Checks)
 			}
@@ -254,7 +256,7 @@ func TestSetupRollback(t *testing.T) {
 		t.Fatal(res.Status, res.Error)
 	}
 	c := New(w.System())
-	p := c.RollbackPlan(context.Background())
+	p := c.RollbackPlan(context.Background(), i18n.RU)
 	if p.Blocked() || p.Rollback == nil || p.Rollback.Action != ActionSetup || p.Rollback.Domain != plan.DomainSetup {
 		t.Fatalf("rollback plan: %+v %+v", p.Rollback, p.Failures())
 	}
@@ -280,7 +282,7 @@ func TestSetupRollback(t *testing.T) {
 	if got := cleanOf(w); len(got) != 0 {
 		t.Errorf("not clean: %v", got)
 	}
-	h, _ := c.History()
+	h, _ := c.History(i18n.RU)
 	if got := h.Operations[1].Title; got != "Отмена: запас 4 GB из SSD + режим «Сжатие — быстрое»" {
 		t.Errorf("rollback title %q", got)
 	}
@@ -290,11 +292,11 @@ func TestSetupRollback(t *testing.T) {
 func TestSetupConfirmExperimental(t *testing.T) {
 	w := setupWorld(t)
 	c := New(w.System())
-	p := c.SetupPlan(context.Background(), setupReq(4*GiB, swap.ExistingKeep, "zswap-lz4"))
+	p := c.SetupPlan(context.Background(), setupReq(4*GiB, swap.ExistingKeep, "zswap-lz4"), i18n.RU)
 	if err := ConfirmExperimental(p, false); err == nil {
 		t.Error("experimental profile in setup must need confirmation")
 	}
-	p = c.SetupPlan(context.Background(), setupReq(4*GiB, swap.ExistingKeep, "default"))
+	p = c.SetupPlan(context.Background(), setupReq(4*GiB, swap.ExistingKeep, "default"), i18n.RU)
 	if err := ConfirmExperimental(p, false); err != nil {
 		t.Errorf("default profile: %v", err)
 	}

@@ -57,7 +57,7 @@ func main() {
 		fmt.Print(usage)
 		return
 	default:
-		err = fmt.Errorf("неизвестная команда %q\n%s", os.Args[1], usage)
+		err = fmt.Errorf("unknown command %q\n%s", os.Args[1], usage)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ramplus-probe:", err)

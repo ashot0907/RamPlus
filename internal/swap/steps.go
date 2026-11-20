@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/journal"
 	"github.com/ashot0907/ramplus/internal/monitor"
 	"github.com/ashot0907/ramplus/internal/plan"
@@ -84,21 +85,21 @@ func CheckSwapfile(sys system.System, s Step) (fs.FileInfo, error) {
 		return nil, err
 	}
 	if !st.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s: не обычный файл: %w", s.Path, ErrNotOurs)
+		return nil, i18n.Errorf("swap.err.not_regular", s.Path, ErrNotOurs)
 	}
 	size := uint64(st.Size())
 	switch {
 	case s.Size == 0: // размер не записан (журнал v1, старый swap без наблюдения)
 	case s.SizeAtMost && size <= s.Size:
 	case size != s.Size:
-		return nil, fmt.Errorf("%s: размер %s, по журналу %s: %w", s.Path, FormatSize(size), FormatSize(s.Size), ErrNotOurs)
+		return nil, i18n.Errorf("swap.err.size_mismatch", s.Path, FormatSize(size), FormatSize(s.Size), ErrNotOurs)
 	}
 	head, err := sys.FS.ReadPrefix(s.Path, os.Getpagesize())
 	if err != nil {
 		return nil, err
 	}
 	if !IsSwapHeader(head) && !allZero(head) {
-		return nil, fmt.Errorf("%s: нет сигнатуры swap (SWAPSPACE2) — это не swapfile: %w", s.Path, ErrNotOurs)
+		return nil, i18n.Errorf("swap.err.no_signature", s.Path, ErrNotOurs)
 	}
 	return st, nil
 }
@@ -153,37 +154,37 @@ func activeSwap(sys system.System, path string) (monitor.SwapDevice, bool) {
 
 // swapExpect — swap (не) активен; при активном — приоритет и размер.
 func swapExpect(path string, active bool, priority int, size uint64) journal.Expectation {
-	return journal.Expectation{Key: "swap:" + path, Path: path, Check: func(sys system.System) string {
+	return journal.Expectation{Key: "swap:" + path, Path: path, Check: func(sys system.System) i18n.Text {
 		got, on := activeSwap(sys, path)
 		switch {
 		case active && !on:
-			return fmt.Sprintf("swap %s не активен, а по журналу включён", path)
+			return i18n.Msg("expect.swap_inactive", path)
 		case !active && on:
-			return fmt.Sprintf("swap %s активен, а по журналу отключён", path)
+			return i18n.Msg("expect.swap_active", path)
 		case active && priority >= 0 && got.Priority != priority:
-			return fmt.Sprintf("swap %s: приоритет %d, по журналу %d", path, got.Priority, priority)
+			return i18n.Msg("expect.swap_priority", path, got.Priority, priority)
 		case active && size > 0 && (got.SizeBytes > size || size-got.SizeBytes > swapSizeSlack):
-			return fmt.Sprintf("swap %s: размер %s, по журналу %s", path, FormatSize(got.SizeBytes), FormatSize(size))
+			return i18n.Msg("expect.swap_size", path, FormatSize(got.SizeBytes), FormatSize(size))
 		}
-		return ""
+		return nil
 	}}
 }
 
 // fstabExpect — строка fstab закомментирована RamPlus (marked) или активна.
 func fstabExpect(line string, marked bool) journal.Expectation {
-	return journal.Expectation{Key: "fstab:" + line, Check: func(sys system.System) string {
+	return journal.Expectation{Key: "fstab:" + line, Check: func(sys system.System) i18n.Text {
 		b, err := sys.FS.ReadFile(system.FstabPath)
 		content := string(b)
 		has, plain := hasLine(content, fstabDisabledBy+line), hasLine(content, line)
 		switch {
 		case err != nil:
-			return fmt.Sprintf("%s недоступен: %v", FstabPath, err)
+			return i18n.Msg("expect.fstab_unreadable", FstabPath, err)
 		case marked && (!has || plain):
-			return fmt.Sprintf("%s: строка «%s» должна быть закомментирована RamPlus", FstabPath, strings.TrimSpace(line))
+			return i18n.Msg("expect.fstab_should_be_disabled", FstabPath, strings.TrimSpace(line))
 		case !marked && (has || !plain):
-			return fmt.Sprintf("%s: строка «%s» должна быть активна", FstabPath, strings.TrimSpace(line))
+			return i18n.Msg("expect.fstab_should_be_active", FstabPath, strings.TrimSpace(line))
 		}
-		return ""
+		return nil
 	}}
 }
 
@@ -196,21 +197,19 @@ func recreateSwapfile(path string, size uint64, nocow bool) []Step {
 }
 
 func init() {
-	plan.RegisterAction(ActionApply, plan.ActionInfo{Domain: plan.DomainSwap, Title: "создание swap"})
-	plan.RegisterAction(ActionResize, plan.ActionInfo{Domain: plan.DomainSwap, Title: "изменение размера swap"})
-	plan.RegisterAction(ActionRemove, plan.ActionInfo{Domain: plan.DomainSwap, Title: "удаление swap"})
-	createSwapfileVerify := func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
+	plan.RegisterAction(ActionApply, plan.ActionInfo{Domain: plan.DomainSwap})
+	plan.RegisterAction(ActionResize, plan.ActionInfo{Domain: plan.DomainSwap})
+	plan.RegisterAction(ActionRemove, plan.ActionInfo{Domain: plan.DomainSwap})
+	createSwapfileVerify := func(e *journal.Env, a journal.Applied) (journal.Verdict, i18n.Text) {
 		s := a.Step
 		st, err := e.Sys.FS.Stat(s.Path)
 		switch {
 		case err != nil:
-			return journal.VerdictAbsent, s.Path + " не создан"
+			return journal.VerdictAbsent, i18n.Msg("verify.not_created", s.Path)
 		case st.Mode().IsRegular() && st.Mode().Perm() == 0o600 && uint64(st.Size()) <= s.Size:
-			return journal.VerdictPresent, fmt.Sprintf("%s: путь, права 600 и размер (%s ≤ %s) совпадают с записью",
-				s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
+			return journal.VerdictPresent, i18n.Msg("verify.swapfile_matches", s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
 		default:
-			return journal.VerdictMismatch, fmt.Sprintf("%s существует, но не похож на файл RamPlus (права %o, размер %s, ожидалось ≤ %s)",
-				s.Path, st.Mode().Perm(), FormatSize(uint64(st.Size())), FormatSize(s.Size))
+			return journal.VerdictMismatch, i18n.Msg("verify.swapfile_foreign", s.Path, uint32(st.Mode().Perm()), FormatSize(uint64(st.Size())), FormatSize(s.Size))
 		}
 	}
 	createSwapfilePrepare := func(e *journal.Env, s Step) ([]Step, string, error) {
@@ -224,12 +223,12 @@ func init() {
 	}
 
 	journal.Register(KindAllocate, journal.Handler{
-		Describe: func(s Step) string {
+		Describe: func(s Step) i18n.Text {
 			nocow := ""
 			if s.NoCOW {
 				nocow = ", chattr +C (NOCOW)"
 			}
-			return fmt.Sprintf("создать %s, %s (fallocate; если ФС не умеет — запись нулями), права 600%s", s.Path, FormatSize(s.Size), nocow)
+			return i18n.Msg("step.allocate", s.Path, FormatSize(s.Size), nocow)
 		},
 		Prepare: createSwapfilePrepare,
 		Do: func(ctx context.Context, e *journal.Env, s Step) error {
@@ -260,8 +259,8 @@ func init() {
 	})
 
 	journal.Register(KindBtrfsMkswapfile, journal.Handler{
-		Describe: func(s Step) string {
-			return fmt.Sprintf("btrfs filesystem mkswapfile --size %s %s", sizeFlag(s.Size), s.Path)
+		Describe: func(s Step) i18n.Text {
+			return i18n.Raw(fmt.Sprintf("btrfs filesystem mkswapfile --size %s %s", sizeFlag(s.Size), s.Path))
 		},
 		Prepare: createSwapfilePrepare,
 		Do: func(ctx context.Context, e *journal.Env, s Step) error {
@@ -278,16 +277,16 @@ func init() {
 	})
 
 	journal.Register(KindMkswap, journal.Handler{
-		Describe: func(s Step) string { return "mkswap " + s.Path },
+		Describe: func(s Step) i18n.Text { return i18n.Raw("mkswap " + s.Path) },
 		Do:       func(ctx context.Context, e *journal.Env, s Step) error { return e.Run(ctx, "mkswap", s.Path) },
 	})
 
 	journal.Register(KindSwapon, journal.Handler{
-		Describe: func(s Step) string {
+		Describe: func(s Step) i18n.Text {
 			if s.Priority < 0 {
-				return fmt.Sprintf("swapon %s (приоритет — автоматически)", s.Path)
+				return i18n.Msg("step.swapon_auto", s.Path)
 			}
-			return fmt.Sprintf("swapon %s (приоритет %d)", s.Path, s.Priority)
+			return i18n.Msg("step.swapon", s.Path, s.Priority)
 		},
 		Prepare: func(_ *journal.Env, s Step) ([]Step, string, error) {
 			return []Step{{Kind: KindSwapoff, Path: s.Path, Priority: s.Priority, Size: s.Size}}, "", nil
@@ -298,11 +297,11 @@ func init() {
 			}
 			return nil
 		},
-		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
+		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, i18n.Text) {
 			if _, on := activeSwap(e.Sys, a.Step.Path); on {
-				return journal.VerdictPresent, a.Step.Path + " активен"
+				return journal.VerdictPresent, i18n.Msg("verify.swap_active", a.Step.Path)
 			}
-			return journal.VerdictAbsent, a.Step.Path + " не активен"
+			return journal.VerdictAbsent, i18n.Msg("verify.swap_inactive", a.Step.Path)
 		},
 		Expect: func(s Step) []journal.Expectation {
 			return []journal.Expectation{swapExpect(s.Path, true, s.Priority, s.Size)}
@@ -310,7 +309,7 @@ func init() {
 	})
 
 	journal.Register(KindSwapoff, journal.Handler{
-		Describe: func(s Step) string { return "swapoff " + s.Path },
+		Describe: func(s Step) i18n.Text { return i18n.Raw("swapoff " + s.Path) },
 		Prepare: func(_ *journal.Env, s Step) ([]Step, string, error) {
 			return []Step{{Kind: KindSwapon, Path: s.Path, Priority: s.Priority, Size: s.Size}}, "", nil
 		},
@@ -320,11 +319,11 @@ func init() {
 			}
 			return nil
 		},
-		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
+		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, i18n.Text) {
 			if _, on := activeSwap(e.Sys, a.Step.Path); on {
-				return journal.VerdictAbsent, a.Step.Path + " всё ещё активен"
+				return journal.VerdictAbsent, i18n.Msg("verify.swap_still_active", a.Step.Path)
 			}
-			return journal.VerdictPresent, a.Step.Path + " отключён"
+			return journal.VerdictPresent, i18n.Msg("verify.swap_off", a.Step.Path)
 		},
 		Expect: func(s Step) []journal.Expectation {
 			return []journal.Expectation{swapExpect(s.Path, false, 0, 0)}
@@ -332,7 +331,7 @@ func init() {
 	})
 
 	journal.Register(KindDeleteSwapfile, journal.Handler{
-		Describe: func(s Step) string { return fmt.Sprintf("удалить файл %s (%s)", s.Path, FormatSize(s.Size)) },
+		Describe: func(s Step) i18n.Text { return i18n.Msg("step.delete_swapfile", s.Path, FormatSize(s.Size)) },
 		Prepare: func(e *journal.Env, s Step) ([]Step, string, error) {
 			st, err := CheckSwapfile(e.Sys, s)
 			if err != nil {
@@ -343,16 +342,16 @@ func init() {
 			return recreateSwapfile(s.Path, uint64(st.Size()), s.NoCOW), "", nil
 		},
 		Do: func(_ context.Context, e *journal.Env, s Step) error { return e.Sys.FS.Remove(s.Path) },
-		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
+		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, i18n.Text) {
 			s := a.Step
 			st, err := e.Sys.FS.Stat(s.Path)
 			switch {
 			case err != nil:
-				return journal.VerdictPresent, s.Path + " удалён"
+				return journal.VerdictPresent, i18n.Msg("verify.removed", s.Path)
 			case s.Size == 0 || uint64(st.Size()) == s.Size:
-				return journal.VerdictAbsent, s.Path + " на месте"
+				return journal.VerdictAbsent, i18n.Msg("verify.in_place", s.Path)
 			default:
-				return journal.VerdictMismatch, fmt.Sprintf("%s: размер %s, в записи %s", s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
+				return journal.VerdictMismatch, i18n.Msg("verify.size_mismatch", s.Path, FormatSize(uint64(st.Size())), FormatSize(s.Size))
 			}
 		},
 		Expect: func(s Step) []journal.Expectation {
@@ -365,11 +364,11 @@ func init() {
 	})
 
 	fstabHandler := journal.Handler{
-		Describe: func(s Step) string {
+		Describe: func(s Step) i18n.Text {
 			if s.Kind == KindFstabEnable {
-				return fmt.Sprintf("вернуть в %s строку %q", s.Path, strings.TrimSpace(s.Line))
+				return i18n.Msg("step.fstab_enable", s.Path, strings.TrimSpace(s.Line))
 			}
-			return fmt.Sprintf("закомментировать в %s строку %q (бэкап — в %s)", s.Path, strings.TrimSpace(s.Line), BackupDir)
+			return i18n.Msg("step.fstab_disable", s.Path, strings.TrimSpace(s.Line), BackupDir)
 		},
 		Prepare: func(e *journal.Env, s Step) ([]Step, string, error) {
 			content, err := e.Sys.FS.ReadFile(s.Path)
@@ -400,22 +399,22 @@ func init() {
 			}
 			return e.Sys.FS.WriteFileAtomic(s.Path, []byte(updated), e.Perm(s.Path, 0o644))
 		},
-		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, string) {
+		Verify: func(e *journal.Env, a journal.Applied) (journal.Verdict, i18n.Text) {
 			s := a.Step
 			b, err := e.Sys.FS.ReadFile(s.Path)
 			if err != nil {
-				return journal.VerdictMismatch, s.Path + " недоступен"
+				return journal.VerdictMismatch, i18n.Msg("verify.unavailable", s.Path)
 			}
 			cur := string(b)
 			marked, plain := hasLine(cur, fstabDisabledBy+s.Line), hasLine(cur, s.Line)
 			disabled, enabled := marked && !plain, plain && !marked
 			switch {
 			case (s.Kind == KindFstabDisable && disabled) || (s.Kind == KindFstabEnable && enabled):
-				return journal.VerdictPresent, "строка в " + s.Path + " изменена"
+				return journal.VerdictPresent, i18n.Msg("verify.line_changed", s.Path)
 			case (s.Kind == KindFstabDisable && enabled) || (s.Kind == KindFstabEnable && disabled):
-				return journal.VerdictAbsent, "строка в " + s.Path + " не изменена"
+				return journal.VerdictAbsent, i18n.Msg("verify.line_unchanged", s.Path)
 			default:
-				return journal.VerdictMismatch, "строка «" + strings.TrimSpace(s.Line) + "» в " + s.Path + " не в ожидаемом виде"
+				return journal.VerdictMismatch, i18n.Msg("verify.line_unexpected", strings.TrimSpace(s.Line), s.Path)
 			}
 		},
 		Expect: func(s Step) []journal.Expectation {
@@ -426,16 +425,12 @@ func init() {
 	journal.Register(KindFstabEnable, fstabHandler)
 
 	journal.Register(KindChattrNoCOW, journal.Handler{
-		Describe: func(s Step) string {
-			return "chattr +C " + s.Path + " (NOCOW: обязательно для swap на btrfs)"
-		},
-		Do: func(ctx context.Context, e *journal.Env, s Step) error { return e.Run(ctx, "chattr", "+C", s.Path) },
+		Describe: func(s Step) i18n.Text { return i18n.Msg("step.chattr_nocow", s.Path) },
+		Do:       func(ctx context.Context, e *journal.Env, s Step) error { return e.Run(ctx, "chattr", "+C", s.Path) },
 	})
 
 	journal.Register(KindBtrfsSubvolCreate, journal.Handler{
-		Describe: func(s Step) string {
-			return "btrfs subvolume create " + s.Path + " (отдельный подтом: снапшоты корня не ломаются)"
-		},
+		Describe: func(s Step) i18n.Text { return i18n.Msg("step.btrfs_subvol_create", s.Path) },
 		Prepare: func(_ *journal.Env, s Step) ([]Step, string, error) {
 			return []Step{{Kind: KindBtrfsSubvolDelete, Path: s.Path}}, "", nil
 		},
@@ -449,13 +444,13 @@ func init() {
 	})
 
 	journal.Register(KindBtrfsSubvolDelete, journal.Handler{
-		Describe: func(s Step) string { return "btrfs subvolume delete " + s.Path },
+		Describe: func(s Step) i18n.Text { return i18n.Raw("btrfs subvolume delete " + s.Path) },
 		Prepare: func(e *journal.Env, s Step) ([]Step, string, error) {
 			// btrfs subvolume delete удаляет вместе с содержимым — только пустой.
 			if rest, err := e.Sys.FS.Glob(filepath.Join(s.Path, "*")); err != nil {
 				return nil, "", err
 			} else if len(rest) > 0 {
-				return nil, "", fmt.Errorf("%s не пуст (%s) — подтом не удаляется", s.Path, strings.Join(rest, ", "))
+				return nil, "", i18n.Errorf("swap.err.subvol_not_empty", s.Path, strings.Join(rest, ", "))
 			}
 			return []Step{{Kind: KindBtrfsSubvolCreate, Path: s.Path}, {Kind: KindChattrNoCOW, Path: s.Path}}, "", nil
 		},
@@ -469,7 +464,7 @@ func init() {
 	})
 
 	journal.Register(KindRemoveFile, journal.Handler{ // журнал v1
-		Describe: func(s Step) string { return "удалить " + s.Path },
+		Describe: func(s Step) i18n.Text { return i18n.Msg("step.delete_config", s.Path) },
 		Prepare: func(e *journal.Env, s Step) ([]Step, string, error) {
 			st, err := e.Sys.FS.Stat(s.Path)
 			switch {

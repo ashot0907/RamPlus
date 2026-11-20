@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ashot0907/ramplus/internal/i18n"
 )
 
 // Action — операция.
@@ -92,36 +94,42 @@ type Step struct {
 // DaemonReload — шаг systemctl daemon-reload.
 func DaemonReload() Step { return Step{Kind: KindSystemctl, Args: []string{"daemon-reload"}} }
 
+// Describer — описание шага для человека (сообщение каталога).
+type Describer func(Step) i18n.Text
+
 var (
 	describersMu sync.RWMutex
-	describers   = map[StepKind]func(Step) string{}
+	describers   = map[StepKind]Describer{}
 )
 
 // RegisterDescriber задаёт описание шагов вида kind для человека.
-func RegisterDescriber(kind StepKind, fn func(Step) string) {
+func RegisterDescriber(kind StepKind, fn Describer) {
 	describersMu.Lock()
 	defer describersMu.Unlock()
 	describers[kind] = fn
 }
 
-// Describe — описание шага для человека.
-func (s Step) Describe() string {
+// Description — описание шага (переводится при выводе).
+func (s Step) Description() i18n.Text {
 	describersMu.RLock()
 	fn := describers[s.Kind]
 	describersMu.RUnlock()
 	if fn != nil {
 		return fn(s)
 	}
-	return string(s.Kind) + " " + s.Path
+	return i18n.Raw(string(s.Kind) + " " + s.Path)
 }
 
+// Describe — описание шага на языке l.
+func (s Step) Describe(l i18n.Lang) string { return s.Description().Text(l) }
+
 func init() {
-	RegisterDescriber(KindWriteFile, func(s Step) string { return "записать " + s.Path })
-	RegisterDescriber(KindDeleteConfig, func(s Step) string { return "удалить " + s.Path })
-	RegisterDescriber(KindSystemctl, func(s Step) string { return "systemctl " + strings.Join(s.Args, " ") })
-	RegisterDescriber(KindMkdir, func(s Step) string { return "создать каталог " + s.Path })
-	RegisterDescriber(KindRmdir, func(s Step) string { return "удалить каталог " + s.Path })
-	RegisterDescriber(KindChmod, func(s Step) string { return fmt.Sprintf("chmod %o %s", s.Mode, s.Path) })
+	RegisterDescriber(KindWriteFile, func(s Step) i18n.Text { return i18n.Msg("step.write_file", s.Path) })
+	RegisterDescriber(KindDeleteConfig, func(s Step) i18n.Text { return i18n.Msg("step.delete_config", s.Path) })
+	RegisterDescriber(KindSystemctl, func(s Step) i18n.Text { return i18n.Raw("systemctl " + strings.Join(s.Args, " ")) })
+	RegisterDescriber(KindMkdir, func(s Step) i18n.Text { return i18n.Msg("step.mkdir", s.Path) })
+	RegisterDescriber(KindRmdir, func(s Step) i18n.Text { return i18n.Msg("step.rmdir", s.Path) })
+	RegisterDescriber(KindChmod, func(s Step) i18n.Text { return i18n.Raw(fmt.Sprintf("chmod %o %s", s.Mode, s.Path)) })
 }
 
 // Summary — итог плана.
@@ -160,6 +168,9 @@ type Effects struct {
 
 // Plan — что будет сделано и почему.
 type Plan struct {
+	// Lang — язык текстов проверок и описаний шагов (задаёт тот, кто строит
+	// план; коды от языка не зависят).
+	Lang i18n.Lang `json:"-"`
 	// ID — идентификатор построенного плана (задаёт core; по нему Apply).
 	ID string `json:"id,omitempty"`
 	// Fingerprint — отпечаток фактов, на которых построен план (Seal).
@@ -192,10 +203,25 @@ func (p Plan) Failures() []Check {
 	return out
 }
 
-// Add добавляет проверку с машинным кодом code.
-func (p *Plan) Add(l Level, code, title, format string, a ...any) {
-	p.Checks = append(p.Checks, Check{Level: l, Code: code, Title: title, Message: fmt.Sprintf(format, a...)})
+// Add добавляет проверку с машинным кодом code. Заголовок — сообщение
+// каталога "check.<code>.title", текст — "check.<code>" с параметрами a.
+func (p *Plan) Add(l Level, code string, a ...any) {
+	p.AddMsg(l, code, i18n.Msg("check."+code+".title"), i18n.Msg("check."+code, a...))
 }
+
+// AddKey — то же, текст по ключу "check.<key>" (у кода несколько вариантов
+// текста: например, с --force и без).
+func (p *Plan) AddKey(l Level, code, key string, a ...any) {
+	p.AddMsg(l, code, i18n.Msg("check."+code+".title"), i18n.Msg("check."+key, a...))
+}
+
+// AddMsg — проверка с заголовком title и текстом msg на языке плана.
+func (p *Plan) AddMsg(l Level, code string, title, msg i18n.Text) {
+	p.Checks = append(p.Checks, Check{Level: l, Code: code, Title: title.Text(p.Lang), Message: msg.Text(p.Lang)})
+}
+
+// T — сообщение каталога на языке плана.
+func (p *Plan) T(key string, a ...any) string { return i18n.T(p.Lang, key, a...) }
 
 // HasKind — есть ли в плане шаг вида k.
 func (p Plan) HasKind(k StepKind) bool {

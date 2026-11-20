@@ -1,0 +1,41 @@
+#!/bin/sh
+# postinst for the ramplus package: system groups and user, the socket
+# directory, reload units. Services are NOT enabled or started; the next
+# steps are printed instead. On upgrade, services that are already running
+# are restarted so they pick up the new binaries.
+set -e
+
+case "$1" in
+configure)
+	systemd-sysusers /usr/lib/sysusers.d/ramplus.conf
+	systemd-tmpfiles --create /usr/lib/tmpfiles.d/ramplus.conf
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload
+	fi
+	if [ -n "$2" ]; then
+		# Upgrade: restart only what is already running (try-restart does
+		# not start stopped services).
+		if [ -d /run/systemd/system ]; then
+			deb-systemd-invoke try-restart ramplusd.service ramplus-web.service || true
+		fi
+	else
+		cat <<'MSG'
+
+RamPlus is installed. The services are not started automatically.
+Next steps:
+  sudo ramplus init                                  # set the web UI password
+  sudo systemctl enable --now ramplusd ramplus-web
+  xdg-open http://127.0.0.1:7781                     # or: ssh -L 7781:localhost:7781 user@server
+Terminal only: ramplus status; ramplus recommend; sudo ramplus setup ... --dry-run
+
+MSG
+	fi
+	;;
+abort-upgrade | abort-remove | abort-deconfigure) ;;
+*)
+	echo "postinst called with unknown argument '$1'" >&2
+	exit 1
+	;;
+esac
+
+exit 0

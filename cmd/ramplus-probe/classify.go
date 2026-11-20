@@ -50,16 +50,16 @@ func Classify(in ClassifyInput) (status, note string) {
 	case in.ExitCode == 0:
 		return StatusOK, ""
 	case !stressNg && in.ExitCode == ExitRefused:
-		return StatusRefused, "система отказала в выделении памяти: " + logLine(in.Log, "недостаточно памяти")
+		return StatusRefused, "the system refused to allocate memory: " + logLine(in.Log, "not enough memory", "недостаточно памяти")
 	case stressNg && (in.ExitCode == stressNgNoResource || refusal != ""):
-		return StatusRefused, fmt.Sprintf("stress-ng: нет ресурсов (код %d): %s", in.ExitCode, logLine(in.Log, refusal))
+		return StatusRefused, fmt.Sprintf("stress-ng: out of resources (code %d): %s", in.ExitCode, logLine(in.Log, refusal))
 	case in.ExitCode == 137 || in.ExitCode == -9:
 		if in.LimitS > 0 && in.DurationS >= in.LimitS-1 {
-			return StatusTimeout, fmt.Sprintf("убит по таймауту %.0f с", in.LimitS)
+			return StatusTimeout, fmt.Sprintf("killed by the timeout of %.0f s", in.LimitS)
 		}
-		return StatusOOM, "SIGKILL (вероятно OOM killer)"
+		return StatusOOM, "SIGKILL (probably the OOM killer)"
 	default:
-		return StatusFailed, fmt.Sprintf("код выхода %d: %s", in.ExitCode, logLine(in.Log, "fatal error", "panic:", "ramplus-probe:", "error"))
+		return StatusFailed, fmt.Sprintf("exit code %d: %s", in.ExitCode, logLine(in.Log, "fatal error", "panic:", "ramplus-probe:", "error"))
 	}
 }
 
@@ -96,10 +96,10 @@ func runClassify(args []string) error {
 	fs := flag.NewFlagSet("classify", flag.ContinueOnError)
 	in := ClassifyInput{}
 	fs.StringVar(&in.Workload, "workload", "", "hot | hot-probe | cold")
-	fs.IntVar(&in.ExitCode, "rc", 0, "код выхода нагрузки")
-	logPath := fs.String("log", "", "лог нагрузки")
-	fs.Float64Var(&in.DurationS, "duration", 0, "длительность, с")
-	fs.Float64Var(&in.LimitS, "limit", 0, "страховочный таймаут, с")
+	fs.IntVar(&in.ExitCode, "rc", 0, "workload exit code")
+	logPath := fs.String("log", "", "workload log")
+	fs.Float64Var(&in.DurationS, "duration", 0, "duration, s")
+	fs.Float64Var(&in.LimitS, "limit", 0, "safety timeout, s")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -143,15 +143,15 @@ func ReadZswapCounters(dir string) ZswapCounters {
 	}
 	z.Available = len(z.Counters) > 0
 	if !z.Available && z.Error == "" {
-		z.Error = "нет числовых счётчиков"
+		z.Error = "no numeric counters"
 	}
 	return z
 }
 
 func runZswapStat(args []string) error {
 	fs := flag.NewFlagSet("zswapstat", flag.ContinueOnError)
-	dir := fs.String("dir", "/sys/kernel/debug/zswap", "каталог debugfs zswap")
-	out := fs.String("out", "", "JSON (по умолчанию stdout)")
+	dir := fs.String("dir", "/sys/kernel/debug/zswap", "zswap debugfs directory")
+	out := fs.String("out", "", "JSON (default stdout)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

@@ -33,11 +33,11 @@ const defaultMemLimit = 64 << 20
 func main() { os.Exit(run()) }
 
 func run() int {
-	socket := flag.String("socket", api.DefaultSocket, "путь unix-сокета")
-	readGroup := flag.String("group", "ramplus", "группа с правом чтения (status, history, plan); владелец-группа сокета")
-	adminGroup := flag.String("admin-group", "ramplus-admin", "группа с правом изменений (apply)")
-	webUser := flag.String("web-user", "ramplus-web", "пользователь веб-интерфейса: его операции помечаются в журнале «через веб-интерфейс»")
-	showVersion := flag.Bool("version", false, "показать версию")
+	socket := flag.String("socket", api.DefaultSocket, "unix socket path")
+	readGroup := flag.String("group", "ramplus", "group with read access (status, history, plan); group owner of the socket")
+	adminGroup := flag.String("admin-group", "ramplus-admin", "group with change access (apply)")
+	webUser := flag.String("web-user", "ramplus-web", "web interface user: its operations are recorded in the journal as «via the web interface»")
+	showVersion := flag.Bool("version", false, "print the version")
 	flag.Parse()
 	if *showVersion {
 		fmt.Println(version)
@@ -59,7 +59,7 @@ func run() int {
 	}
 	lockMemory(log)
 	if os.Geteuid() != 0 {
-		log.Warn("демон запущен не от root: планы строятся, apply будет отказывать", "euid", os.Geteuid())
+		log.Warn("daemon is not running as root: plans work, apply will fail", "euid", os.Geteuid())
 	}
 
 	pol := api.Policy{ReadGID: lookupGroup(log, *readGroup), AdminGID: lookupGroup(log, *adminGroup)}
@@ -76,7 +76,7 @@ func run() int {
 
 	l, err := api.Listen(*socket, pol.ReadGID)
 	if err != nil {
-		log.Error("сокет", "path", *socket, "err", err)
+		log.Error("socket", "path", *socket, "err", err)
 		return 1
 	}
 	base, cancel := context.WithCancel(context.Background())
@@ -84,14 +84,14 @@ func run() int {
 	hs := srv.HTTPServer(api.PeerCred{}, base)
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- hs.Serve(l) }()
-	log.Info("ramplusd запущен", "version", version, "socket", *socket, "pid", os.Getpid(),
+	log.Info("ramplusd started", "version", version, "socket", *socket, "pid", os.Getpid(),
 		"read_group", *readGroup, "admin_group", *adminGroup)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	select {
 	case s := <-sig:
-		log.Info("остановка", "signal", s.String())
+		log.Info("stopping", "signal", s.String())
 	case err := <-serveErr:
 		if !errors.Is(err, http.ErrServerClosed) {
 			log.Error("serve", "err", err)
@@ -108,9 +108,9 @@ func run() int {
 	if err := hs.Shutdown(ctx); err != nil {
 		log.Warn("shutdown", "err", err)
 	}
-	log.Info("ожидание текущей операции")
+	log.Info("waiting for the current operation")
 	c.Wait()
-	log.Info("ramplusd остановлен")
+	log.Info("ramplusd stopped")
 	return 0
 }
 
@@ -124,7 +124,7 @@ func run() int {
 // память не закрепляется.
 func lockMemory(log *slog.Logger) {
 	if os.Geteuid() != 0 {
-		log.Warn("не root: mlockall пропущен (лимит RLIMIT_MEMLOCK)")
+		log.Warn("not root: mlockall skipped (RLIMIT_MEMLOCK)")
 		return
 	}
 	err := unix.Mlockall(unix.MCL_CURRENT | unix.MCL_FUTURE | unix.MCL_ONFAULT)
@@ -132,21 +132,21 @@ func lockMemory(log *slog.Logger) {
 		err = unix.Mlockall(unix.MCL_CURRENT | unix.MCL_FUTURE)
 	}
 	if err != nil {
-		log.Warn("mlockall не удался: демон может уйти в swap", "err", err)
+		log.Warn("mlockall failed: the daemon may be swapped out", "err", err)
 		return
 	}
-	log.Info("память демона закреплена (mlockall)")
+	log.Info("daemon memory locked (mlockall)")
 }
 
 func lookupGroup(log *slog.Logger, name string) *uint32 {
 	g, err := user.LookupGroup(name)
 	if err != nil {
-		log.Warn("группы нет: доступ только у root (sudo systemd-sysusers)", "group", name, "err", err)
+		log.Warn("group does not exist: only root has access (sudo systemd-sysusers)", "group", name, "err", err)
 		return nil
 	}
 	id, err := strconv.ParseUint(g.Gid, 10, 32)
 	if err != nil {
-		log.Warn("gid группы", "group", name, "err", err)
+		log.Warn("group gid", "group", name, "err", err)
 		return nil
 	}
 	v := uint32(id)

@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { setApiLang } from '../api'
 import { en } from './en'
 import { ru } from './ru'
 
@@ -68,6 +69,7 @@ export function makeI18n(lang: Lang, setLang: (l: Lang) => void = () => {}): I18
 
 export function I18nProvider({ initial, children }: { initial?: Lang; children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(initial ?? detectLang())
+  setApiLang(lang)
   const setLang = useCallback((l: Lang) => {
     setLangState(l)
     try {

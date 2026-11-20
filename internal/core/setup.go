@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"fmt"
 	"sort"
@@ -18,7 +20,7 @@ import (
 const ActionSetup plan.Action = "setup"
 
 func init() {
-	plan.RegisterAction(ActionSetup, plan.ActionInfo{Domain: plan.DomainSetup, Title: "настройка памяти"})
+	plan.RegisterAction(ActionSetup, plan.ActionInfo{Domain: plan.DomainSetup})
 }
 
 // SetupRequest — желаемое состояние: swap RamPlus нужного размера и/или
@@ -31,8 +33,8 @@ type SetupRequest struct {
 }
 
 // SetupPlan — план setup.
-func (c *Core) SetupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
-	return c.Plan(ctx, Request{Setup: &r})
+func (c *Core) SetupPlan(ctx context.Context, r SetupRequest, l i18n.Lang) *plan.Plan {
+	return c.Plan(ctx, Request{Setup: &r, Lang: l})
 }
 
 // setupSwapOptions — какая операция swap приведёт систему к желаемому
@@ -46,12 +48,11 @@ func setupSwapOptions(p *plan.Plan, f swap.Facts, want swap.Options) *swap.Optio
 		return &o
 	}
 	if want.Path != "" && want.Path != m.Path {
-		p.Add(plan.LevelFail, "setup.swap_path_change", "swap RamPlus",
-			"swap RamPlus уже создан на %s; перенести на %s можно так: сначала ramplus swap remove, затем создать заново", m.Path, want.Path)
+		p.Add(plan.LevelFail, "setup.swap_path_change", m.Path, want.Path)
 		return nil
 	}
 	if want.Size == m.SizeBytes {
-		p.Add(plan.LevelOK, "setup.swap_unchanged", "swap RamPlus", "уже %s (%s) — без изменений", swap.FormatSize(m.SizeBytes), m.Path)
+		p.Add(plan.LevelOK, "setup.swap_unchanged", swap.FormatSize(m.SizeBytes), m.Path)
 		return nil
 	}
 	return &swap.Options{Action: swap.ActionResize, Size: want.Size, Force: want.Force}
@@ -60,24 +61,27 @@ func setupSwapOptions(p *plan.Plan, f swap.Facts, want swap.Options) *swap.Optio
 // setupPlan — композиция планировщиков swap и профилей: проверки обеих
 // частей, шаги подряд (сначала swap, потом профиль), один отпечаток, одна
 // операция в журнале. Отказ любой части блокирует весь план.
-func (c *Core) setupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
+func (c *Core) setupPlan(ctx context.Context, r SetupRequest, lang i18n.Lang) *plan.Plan {
 	path := ""
 	if r.Swap != nil {
 		path = r.Swap.Path
 	}
 	sf := swap.Gather(ctx, c.Sys, path)
-	p := &plan.Plan{Action: ActionSetup}
+	p := &plan.Plan{Action: ActionSetup, Lang: lang}
 
 	var sp *swap.Plan
 	if r.Swap != nil {
 		if o := setupSwapOptions(p, sf, *r.Swap); o != nil {
+			o.Lang = lang
 			x := swap.BuildPlan(sf, *o)
 			sp = &x
 		}
 	}
 	var pp *profile.Plan
 	if r.Profile != nil {
-		x := profile.PlanProfile(ctx, c.Sys, *r.Profile)
+		pr := *r.Profile
+		pr.Lang = lang
+		x := profile.PlanProfile(ctx, c.Sys, pr)
 		pp = &x
 	}
 
@@ -86,7 +90,7 @@ func (c *Core) setupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
 	switch {
 	case r.Swap == nil && r.Profile == nil:
 		journal.CommonChecks(p, sf.Basics)
-		p.Add(plan.LevelFail, "setup.empty", "setup", "не выбрано ни swap, ни профиль — укажите --size и/или --profile")
+		p.Add(plan.LevelFail, "setup.empty")
 	case sp == nil && pp == nil:
 		journal.CommonChecks(p, sf.Basics)
 	}
@@ -96,7 +100,7 @@ func (c *Core) setupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
 		p.Steps = append(p.Steps, sp.Steps...)
 		p.Swap = sp.Swap
 	} else {
-		p.Swap = swap.View(sf)
+		p.Swap = swap.View(sf, lang)
 	}
 	p.Checks = append(p.Checks, own...)
 	if pp != nil {
@@ -115,7 +119,7 @@ func (c *Core) setupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
 		p.Steps = []plan.Step{}
 	}
 	if len(p.Steps) == 0 && !p.Blocked() {
-		p.Add(plan.LevelOK, "setup.nothing", "setup", "система уже в выбранном состоянии — нечего делать")
+		p.Add(plan.LevelOK, "setup.nothing")
 	}
 
 	// Итог.
@@ -163,7 +167,7 @@ func (c *Core) setupPlan(ctx context.Context, r SetupRequest) *plan.Plan {
 	p.Command = setupCommand(r, sp)
 	if p.Swap != nil {
 		v := *p.Swap
-		v.ApplyCommand, v.Title = p.Command, "настройка памяти"
+		v.ApplyCommand, v.Title = p.Command, plan.ActionTitle(lang, ActionSetup)
 		p.Swap = &v
 	}
 	fp := []any{sf.Basics.FingerprintPart(), sf.FingerprintPart()}
@@ -252,7 +256,7 @@ func setupCommand(r SetupRequest, sp *swap.Plan) string {
 }
 
 // gbText — размер для человека в «GB» интерфейса (двоичные гигабайты):
-// «16 GB», «1.5 GB».
+// «16 GB», «1.5 GB» (одинаково на всех языках).
 func gbText(b uint64) string {
 	if b%swap.GiB == 0 {
 		return fmt.Sprintf("%d GB", b/swap.GiB)

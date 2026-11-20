@@ -1,0 +1,321 @@
+$ ramplus swap apply --size 4G --yes
+Plan: swapfile creation
+Command: ramplus swap apply --size 4G
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB
+  Size (--size): 4.0 GiB  [given]
+      up to 280.0 GiB allowed on /
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [ok]   disk: NVMe (nvme)
+  [info] priority: the new swap gets priority 10 (no other swap)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 296.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+
+Steps
+   1. create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 4.0 GiB
+  created: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus swap apply --size 4G
+
+Running (operation <OPID>)
+  [1/7] create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [2/7] chmod 600 /ramplus.swapfile ... ok
+  [3/7] mkswap /ramplus.swapfile ... ok
+  [4/7] swapon /ramplus.swapfile (priority 10) ... ok
+  [5/7] write /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/7] systemctl daemon-reload ... ok
+  [7/7] systemctl enable ramplus.swapfile.swap ... ok
+Done.
+
+$ ramplus swap resize --size 6G --dry-run
+Plan: swapfile resize
+Command: ramplus swap resize --size 6G
+
+Now
+  swap        /ramplus.swapfile  file  4.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] size: 4.0 GiB → 6.0 GiB
+  [ok]   disk: NVMe (nvme)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 298.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. delete file /ramplus.swapfile (4.0 GiB)
+   3. create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (priority 10)
+
+Summary
+  swap: 4.0 GiB → 6.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus swap resize --size 6G
+
+$ ramplus swap resize --size 6G --yes
+Plan: swapfile resize
+Command: ramplus swap resize --size 6G
+
+Now
+  swap        /ramplus.swapfile  file  4.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] size: 4.0 GiB → 6.0 GiB
+  [ok]   disk: NVMe (nvme)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 298.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. delete file /ramplus.swapfile (4.0 GiB)
+   3. create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (priority 10)
+
+Summary
+  swap: 4.0 GiB → 6.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus swap resize --size 6G
+
+Running (operation <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] delete file /ramplus.swapfile (4.0 GiB) ... ok
+  [3/6] create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (priority 10) ... ok
+Done.
+
+$ ramplus swap remove --yes
+Plan: swapfile removal
+Command: ramplus swap remove
+
+Now
+  swap        /ramplus.swapfile  file  6.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 6.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [warn] swap: after removal the system will have no swap
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. systemctl disable ramplus.swapfile.swap
+   3. delete /etc/systemd/system/ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. delete file /ramplus.swapfile (6.0 GiB)
+
+Summary
+  swap: 6.0 GiB → 0 B
+  created: —
+  disabled: /ramplus.swapfile
+  deleted: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Result: the plan can be applied. Apply: sudo ramplus swap remove
+
+Running (operation <OPID>)
+  [1/5] swapoff /ramplus.swapfile ... ok
+  [2/5] systemctl disable ramplus.swapfile.swap ... ok
+  [3/5] delete /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [4/5] systemctl daemon-reload ... ok
+  [5/5] delete file /ramplus.swapfile (6.0 GiB) ... ok
+Done.
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:48: ramplus swap remove
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 294.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+
+Steps
+   1. create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. write /etc/systemd/system/ramplus.swapfile.swap
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus.swapfile.swap
+   7. swapon /ramplus.swapfile (priority 10)
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 6.0 GiB
+  created: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/7] create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [2/7] chmod 600 /ramplus.swapfile ... ok
+  [3/7] mkswap /ramplus.swapfile ... ok
+  [4/7] write /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [5/7] systemctl daemon-reload ... ok
+  [6/7] systemctl enable ramplus.swapfile.swap ... ok
+  [7/7] swapon /ramplus.swapfile (priority 10) ... ok
+Done.
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        /ramplus.swapfile  file  6.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 6.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:26: ramplus swap resize --size 6G
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. delete file /ramplus.swapfile (6.0 GiB)
+   3. create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (priority 10)
+
+Summary
+  swap: 6.0 GiB → 4.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] delete file /ramplus.swapfile (6.0 GiB) ... ok
+  [3/6] create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (priority 10) ... ok
+Done.
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        /ramplus.swapfile  file  4.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:01: ramplus swap apply --size 4G
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. systemctl disable ramplus.swapfile.swap
+   2. delete /etc/systemd/system/ramplus.swapfile.swap
+   3. systemctl daemon-reload
+   4. swapoff /ramplus.swapfile
+   5. delete file /ramplus.swapfile (4.0 GiB)
+
+Summary
+  swap: 4.0 GiB → 0 B
+  created: —
+  disabled: /ramplus.swapfile
+  deleted: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/5] systemctl disable ramplus.swapfile.swap ... ok
+  [2/5] delete /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [3/5] systemctl daemon-reload ... ok
+  [4/5] swapoff /ramplus.swapfile ... ok
+  [5/5] delete file /ramplus.swapfile (4.0 GiB) ... ok
+Done.
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Checks
+  [ok]   root: running as root
+  [FAIL] rollback: nothing to undo: /var/lib/ramplus/state.json has no completed operations
+
+Steps
+  (none)
+
+Summary
+  swap: 0 B → 0 B
+  created: —
+  disabled: —
+  deleted: —
+
+Result: PLAN BLOCKED — failed checks: 1. Nothing changed.
+error: the plan is blocked by checks — nothing changed
+

@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"testing"
 
@@ -54,7 +56,7 @@ func TestOriginInJournal(t *testing.T) {
 		t.Fatal(res.Status, res.Error)
 	}
 	web := uint32(997)
-	p := c.RollbackPlan(context.Background())
+	p := c.RollbackPlan(context.Background(), i18n.RU)
 	op, res := c.Start(p.ID, StartOptions{RequestedBy: DaemonRequester(997, &web, names)})
 	if op == nil {
 		t.Fatalf("start: %+v", res)
@@ -71,7 +73,7 @@ func TestOriginInJournal(t *testing.T) {
 	if dmn.Source != journal.SourceDaemon || dmn.RequestedBy == nil || dmn.RequestedBy.UID != 997 || dmn.RequestedBy.Via != journal.ViaWeb {
 		t.Errorf("daemon op: %s %+v", dmn.Source, dmn.RequestedBy)
 	}
-	hist, _ := c.History()
+	hist, _ := c.History(i18n.RU)
 	if hist.Operations[0].Source != "cli" || hist.Operations[1].Source != "daemon" || hist.Operations[1].RequestedBy.Via != "web" {
 		t.Errorf("history: %+v", hist.Operations)
 	}

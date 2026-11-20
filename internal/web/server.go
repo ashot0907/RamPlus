@@ -6,6 +6,8 @@
 package web
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -144,9 +146,9 @@ func New(cfg Config) *Server {
 			if errors.Is(err, context.Canceled) {
 				return // клиент ушёл
 			}
-			s.cfg.Log.Warn("демон недоступен", "event", EventDaemonUnavailable, "path", r.URL.Path, "err", err)
+			s.cfg.Log.Warn("daemon unavailable", "event", EventDaemonUnavailable, "path", r.URL.Path, "err", err)
 			writeError(w, http.StatusBadGateway, "daemon.unavailable",
-				"демон ramplusd недоступен: "+err.Error()+" — sudo systemctl start ramplusd")
+				i18n.T(langOf(r), "web.err.daemon_unavailable", err))
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			resp.Header.Del("Set-Cookie")
@@ -166,7 +168,7 @@ func (s *Server) routes() {
 		m.Handle(pat, s.authed(http.HandlerFunc(s.proxyAPI)))
 	}
 	m.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, "request.not_found", "нет такого пути: "+r.URL.Path)
+		writeError(w, http.StatusNotFound, "request.not_found", i18n.T(langOf(r), "web.err.not_found", r.URL.Path))
 	})
 	m.HandleFunc("/", s.static)
 	s.mux = m
@@ -197,11 +199,11 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case !s.hostAllowed(r.Host):
 		// Защита от DNS rebinding: чужое имя в Host — не наш сайт.
-		s.cfg.Log.Warn("чужой Host", "event", EventHostRejected, "host", r.Host, "ip", clientIP(r))
+		s.cfg.Log.Warn("host rejected", "event", EventHostRejected, "host", r.Host, "ip", clientIP(r))
 		writeError(sw, http.StatusMisdirectedRequest, "host.not_allowed",
-			"Host "+strconv.Quote(r.Host)+" не разрешён: используйте http://127.0.0.1:7781 или добавьте имя через --host")
+			i18n.T(langOf(r), "web.err.host", r.Host))
 	case r.URL.RawPath != "":
-		writeError(sw, http.StatusBadRequest, "request.invalid", "закодированные символы в пути не поддерживаются")
+		writeError(sw, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "web.err.encoded_path"))
 	default:
 		s.mux.ServeHTTP(sw, r)
 	}
@@ -209,7 +211,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.URL.Path, "/api/") {
 		lvl = slog.LevelDebug
 	}
-	s.cfg.Log.Log(r.Context(), lvl, "запрос", "event", EventRequest, "method", r.Method, "path", r.URL.Path, "status", sw.status,
+	s.cfg.Log.Log(r.Context(), lvl, "request", "event", EventRequest, "method", r.Method, "path", r.URL.Path, "status", sw.status,
 		"ip", clientIP(r), "ms", s.cfg.Now().Sub(start).Milliseconds())
 }
 
@@ -250,6 +252,11 @@ type Error struct {
 	AttemptsLeft *int   `json:"attempts_left,omitempty"`
 }
 
+// langOf — язык текстов ответа (Accept-Language, по умолчанию английский).
+func langOf(r *http.Request) i18n.Lang {
+	return i18n.FromAcceptLanguage(r.Header.Get("Accept-Language"))
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
@@ -263,7 +270,7 @@ func writeError(w http.ResponseWriter, code int, errCode, msg string) {
 
 // --- пароль и сессии ---
 
-var errNotConfigured = errors.New("пароль не задан")
+var errNotConfigured = errors.New("password not set")
 
 // authState — хеш пароля и его версия (меняется при passwd).
 func (s *Server) authState() (hash, version string, err error) {
@@ -294,14 +301,14 @@ func (s *Server) setCookie(w http.ResponseWriter, value string, maxAge int) {
 		HttpOnly: true, Secure: s.cfg.TLS, SameSite: http.SameSiteStrictMode})
 }
 
-func (s *Server) authError(w http.ResponseWriter, err error) {
+func (s *Server) authError(w http.ResponseWriter, l i18n.Lang, err error) {
 	if errors.Is(err, errNotConfigured) {
-		writeError(w, http.StatusServiceUnavailable, "auth.not_configured", "пароль веб-интерфейса не задан: выполните sudo ramplus init")
+		writeError(w, http.StatusServiceUnavailable, "auth.not_configured", i18n.T(l, "web.err.not_configured"))
 		return
 	}
-	s.cfg.Log.Error("файл пароля не читается", "event", EventAuthUnreadable, "file", s.cfg.AuthFile, "err", err)
+	s.cfg.Log.Error("password file unreadable", "event", EventAuthUnreadable, "file", s.cfg.AuthFile, "err", err)
 	writeError(w, http.StatusInternalServerError, "auth.unreadable",
-		"не удалось прочитать файл пароля: "+err.Error()+" (ramplus-web должен быть в группе "+webauth.Group+")")
+		i18n.T(l, "web.err.auth_unreadable", err, webauth.Group))
 }
 
 // current — сессия запроса (nil — не вошёл).
@@ -320,22 +327,22 @@ func (s *Server) authed(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, version, err := s.authState()
 		if err != nil {
-			s.authError(w, err)
+			s.authError(w, langOf(r), err)
 			return
 		}
 		id, ss := s.current(r, version)
 		if ss == nil {
-			writeError(w, http.StatusUnauthorized, "auth.required", "нужно войти")
+			writeError(w, http.StatusUnauthorized, "auth.required", i18n.T(langOf(r), "web.err.login_required"))
 			return
 		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			if !s.sameOrigin(r) {
-				writeError(w, http.StatusForbidden, "origin.forbidden", "запрос с другого сайта отклонён")
+				writeError(w, http.StatusForbidden, "origin.forbidden", i18n.T(langOf(r), "web.err.cross_site"))
 				return
 			}
 			if !csrfOK(ss, r.Header.Get("X-CSRF-Token")) {
-				s.cfg.Log.Warn("неверный CSRF-токен", "event", EventCSRFInvalid, "path", r.URL.Path, "ip", clientIP(r))
-				writeError(w, http.StatusForbidden, "csrf.invalid", "нет или неверный CSRF-токен (X-CSRF-Token)")
+				s.cfg.Log.Warn("invalid CSRF token", "event", EventCSRFInvalid, "path", r.URL.Path, "ip", clientIP(r))
+				writeError(w, http.StatusForbidden, "csrf.invalid", i18n.T(langOf(r), "web.err.csrf"))
 				return
 			}
 		}
@@ -372,7 +379,7 @@ func (s *Server) sessionInfo(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, errNotConfigured):
 	case err != nil:
-		s.authError(w, err)
+		s.authError(w, langOf(r), err)
 		return
 	default:
 		info.PasswordSet = true
@@ -391,28 +398,28 @@ type LoginRequest struct {
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ip, now := clientIP(r), s.cfg.Now()
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
-		writeError(w, http.StatusUnsupportedMediaType, "request.invalid", "ожидается Content-Type: application/json")
+		writeError(w, http.StatusUnsupportedMediaType, "request.invalid", i18n.T(langOf(r), "web.err.content_type"))
 		return
 	}
 	if !s.sameOrigin(r) {
-		writeError(w, http.StatusForbidden, "origin.forbidden", "запрос с другого сайта отклонён")
+		writeError(w, http.StatusForbidden, "origin.forbidden", i18n.T(langOf(r), "web.err.cross_site"))
 		return
 	}
 	hash, version, err := s.authState()
 	if err != nil {
-		s.authError(w, err)
+		s.authError(w, langOf(r), err)
 		return
 	}
 	if wait := s.limiter.blocked(ip, now); wait > 0 {
-		s.cfg.Log.Warn("вход на паузе", "event", EventLoginRateLimited, "ip", ip, "retry_after_seconds", int(wait.Seconds()))
-		retryAfter(w, wait)
+		s.cfg.Log.Warn("login paused", "event", EventLoginRateLimited, "ip", ip, "retry_after_seconds", int(wait.Seconds()))
+		retryAfter(w, langOf(r), wait)
 		return
 	}
 	var req LoginRequest
 	dec := json.NewDecoder(io.LimitReader(r.Body, maxLoginBytes))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "request.invalid", "неверный JSON")
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "web.err.bad_json"))
 		return
 	}
 	select {
@@ -423,17 +430,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	ok, verr := webauth.Verify(hash, req.Password)
 	<-s.verify
 	if verr != nil {
-		s.authError(w, verr)
+		s.authError(w, langOf(r), verr)
 		return
 	}
 	if !ok {
 		lock, left := s.limiter.fail(ip, now)
 		// В журнал — без пароля.
-		s.cfg.Log.Warn("неудачный вход", "event", EventLoginFailed, "ip", ip, "attempts_left", left, "lockout_seconds", int(lock.Seconds()))
-		e := Error{Code: "auth.invalid", Message: "неверный пароль", AttemptsLeft: &left}
+		s.cfg.Log.Warn("login failed", "event", EventLoginFailed, "ip", ip, "attempts_left", left, "lockout_seconds", int(lock.Seconds()))
+		e := Error{Code: "auth.invalid", Message: i18n.T(langOf(r), "web.err.bad_password"), AttemptsLeft: &left}
 		if lock > 0 {
 			e.RetryAfter = int((lock + time.Second - 1) / time.Second)
-			e.Message = fmt.Sprintf("неверный пароль; слишком много попыток — пауза %d с", e.RetryAfter)
+			e.Message = i18n.T(langOf(r), "web.err.bad_password_pause", e.RetryAfter)
 		}
 		writeJSON(w, http.StatusUnauthorized, e)
 		return
@@ -441,15 +448,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.limiter.success(ip)
 	id, ss := s.sessions.create(now, SessionTTL, version)
 	s.setCookie(w, id, int(SessionTTL/time.Second))
-	s.cfg.Log.Info("вход", "event", EventLoginOK, "ip", ip)
+	s.cfg.Log.Info("login ok", "event", EventLoginOK, "ip", ip)
 	writeJSON(w, http.StatusOK, SessionInfo{PasswordSet: true, Authenticated: true, CSRFToken: ss.csrf, ExpiresAt: ss.expires, Version: s.cfg.Version})
 }
 
-func retryAfter(w http.ResponseWriter, wait time.Duration) {
+func retryAfter(w http.ResponseWriter, l i18n.Lang, wait time.Duration) {
 	sec := int((wait + time.Second - 1) / time.Second)
 	w.Header().Set("Retry-After", strconv.Itoa(sec))
 	writeJSON(w, http.StatusTooManyRequests, Error{Code: "auth.rate_limited", RetryAfter: sec,
-		Message: fmt.Sprintf("слишком много неудачных попыток — попробуйте через %d с", sec)})
+		Message: i18n.T(l, "web.err.rate_limited", sec)})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -464,7 +471,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) proxyAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodPost && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") && r.ContentLength != 0 {
-		writeError(w, http.StatusUnsupportedMediaType, "request.invalid", "ожидается Content-Type: application/json")
+		writeError(w, http.StatusUnsupportedMediaType, "request.invalid", i18n.T(langOf(r), "web.err.content_type"))
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
@@ -479,7 +486,7 @@ const notBuilt = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><ti
 
 func (s *Server) static(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		writeError(w, http.StatusMethodNotAllowed, "request.method_not_allowed", "метод не поддерживается")
+		writeError(w, http.StatusMethodNotAllowed, "request.method_not_allowed", i18n.T(langOf(r), "web.err.method"))
 		return
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/")

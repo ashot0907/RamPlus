@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 
 	"github.com/ashot0907/ramplus/internal/profile"
@@ -48,20 +50,20 @@ type ProfileCatalog struct {
 
 // Profiles — каталог профилей, параметры и их текущие значения. Только
 // чтение.
-func (c *Core) Profiles(ctx context.Context) ProfileCatalog {
+func (c *Core) Profiles(ctx context.Context, l i18n.Lang) ProfileCatalog {
 	pf := profile.Gather(ctx, c.Sys, nil)
 	cat := ProfileCatalog{SchemaVersion: ProfilesSchemaVersion, Profiles: []ProfileEntry{}, Params: []ParamEntry{}, ZswapPresent: pf.ZswapPresent}
 	if pf.Profile != nil {
 		cat.Active = pf.Profile.Name
 	}
 	for _, p := range profile.All() {
-		cat.Profiles = append(cat.Profiles, ProfileEntry{Name: p.Name, Title: p.Title, Friendly: p.Friendly, Description: p.Description,
-			Status: p.Status, StatusText: profile.StatusText(p.Status), Evidence: p.Evidence, Params: p.Params,
+		cat.Profiles = append(cat.Profiles, ProfileEntry{Name: p.Name, Title: p.Title(l), Friendly: p.Friendly(l), Description: p.Description(l),
+			Status: p.Status, StatusText: profile.StatusText(l, p.Status), Evidence: p.Evidence, Params: p.Params,
 			Recommended: p.Name == RecommendedProfile, Active: p.Name == cat.Active})
 	}
 	types := map[profile.Kind]string{profile.KindBool: "bool", profile.KindInt: "int", profile.KindWord: "word"}
 	for _, pr := range profile.Params {
-		e := ParamEntry{Key: pr.Key, Title: pr.Title, Path: pr.Path, Group: pr.Group, Type: types[pr.Kind], Words: pr.Words}
+		e := ParamEntry{Key: pr.Key, Title: profile.ParamTitle(l, pr.Key), Path: pr.Path, Group: pr.Group, Type: types[pr.Kind], Words: pr.Words}
 		if pr.Kind == profile.KindInt {
 			lo, hi := pr.Min, pr.Max
 			e.Min, e.Max = &lo, &hi

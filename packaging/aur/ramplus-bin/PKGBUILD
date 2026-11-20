@@ -1,0 +1,39 @@
+# Maintainer: RamPlus maintainers <ashot0907@users.noreply.github.com>
+#
+# Prebuilt static binaries from the GitHub release. Update: set _ver, then
+# copy the two sha256 sums for the tar.gz files from SHA256SUMS of that
+# release (see ../README.md).
+pkgname=ramplus-bin
+# Release tag without "v". Prereleases are fine: "-" is dropped for pkgver
+# (0.2.0-alpha.3 → 0.2.0alpha.3, which pacman sorts before 0.2.0).
+_ver=0.2.0-alpha.3
+pkgver=${_ver//-/}
+pkgrel=1
+pkgdesc="Virtual memory manager: SSD swapfile, zswap, memory pressure monitoring, rollback"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ashot0907/ramplus"
+license=('Apache-2.0')
+depends=('systemd')
+provides=('ramplus')
+conflicts=('ramplus')
+install=ramplus.install
+options=('!strip' '!debug')
+_dl="$url/releases/download/v$_ver"
+source_x86_64=("$_dl/ramplus_${_ver}_linux_amd64.tar.gz")
+source_aarch64=("$_dl/ramplus_${_ver}_linux_arm64.tar.gz")
+# From SHA256SUMS of the release: replace SKIP before publishing.
+sha256sums_x86_64=('SKIP')
+sha256sums_aarch64=('SKIP')
+
+package() {
+	install -Dm755 ramplus ramplusd ramplus-web -t "$pkgdir/usr/bin/"
+	install -d "$pkgdir/usr/lib/systemd/system"
+	for u in ramplusd ramplus-web; do
+		sed 's|@BINDIR@|/usr/bin|g' "packaging/systemd/$u.service" >"$pkgdir/usr/lib/systemd/system/$u.service"
+		chmod 644 "$pkgdir/usr/lib/systemd/system/$u.service"
+	done
+	install -Dm644 packaging/sysusers.d/ramplus.conf "$pkgdir/usr/lib/sysusers.d/ramplus.conf"
+	install -Dm644 packaging/tmpfiles.d/ramplus.conf "$pkgdir/usr/lib/tmpfiles.d/ramplus.conf"
+	install -Dm644 README.md "$pkgdir/usr/share/doc/ramplus/README.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

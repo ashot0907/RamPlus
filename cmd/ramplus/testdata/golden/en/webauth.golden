@@ -1,0 +1,28 @@
+$ ramplus passwd --password-stdin
+error: the web interface password is not set — to set it: sudo ramplus init
+
+$ ramplus init --password-stdin
+error: the password is shorter than 8 characters
+
+$ ramplus init --password-stdin --dry-run
+dry-run: /etc/ramplus/web-auth would be written (argon2id hash, owner root:977, mode 0640); nothing changed
+
+$ ramplus init --password-stdin
+The web interface password is set (/etc/ramplus/web-auth).
+Start: sudo systemctl enable --now ramplusd ramplus-web, then open http://127.0.0.1:7781
+
+$ ramplus init --password-stdin
+error: the web interface password is already set — to change it: sudo ramplus passwd
+
+$ ramplus passwd --password-stdin
+The web interface password was changed (/etc/ramplus/web-auth). Open sessions have ended.
+
+$ ramplus passwd --disable
+The web interface password was removed (/etc/ramplus/web-auth). To set it again: sudo ramplus init
+
+$ ramplus init
+error: no terminal to enter the password: use --password-stdin
+
+$ ramplus init --password-stdin
+error: root privileges required: run it with sudo: sudo ramplus init
+

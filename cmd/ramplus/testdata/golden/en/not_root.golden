@@ -1,0 +1,9 @@
+$ ramplus swap apply --size 4G --yes
+error: root privileges required: run it with sudo: sudo ramplus swap apply --size 4G (to see the plan without root: --dry-run)
+
+$ ramplus rollback --yes
+error: root privileges required: run it with sudo: sudo ramplus rollback (to see the plan without root: --dry-run)
+
+$ ramplus profile reset --yes
+error: root privileges required: run it with sudo: sudo ramplus profile reset (plan without root: ramplus profile reset --dry-run)
+

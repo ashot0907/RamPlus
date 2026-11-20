@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"errors"
 
@@ -11,7 +13,7 @@ import (
 
 // ErrExperimentalNotConfirmed — экспериментальный профиль без явного
 // подтверждения.
-var ErrExperimentalNotConfirmed = errors.New("профиль экспериментальный (не подтверждён бенчмарком на SSD): для скриптов добавьте --experimental")
+var ErrExperimentalNotConfirmed = i18n.Errorf("core.experimental_not_confirmed")
 
 // ConfirmExperimental — проверка перед выполнением: экспериментальный
 // профиль применяется только с явным подтверждением.
@@ -67,6 +69,9 @@ func (r Result) OK() bool { return r.Status == ResultDone || r.Status == ResultN
 // Execute — Run с итогом в виде данных: хуки h вызываются как обычно,
 // дополнительно собираются ID операции и события шагов.
 func (c *Core) Execute(ctx context.Context, r Request, h journal.Hooks) Result {
+	if h.Lang == "" {
+		h.Lang = r.Lang
+	}
 	return c.result(h, func(h journal.Hooks) (*plan.Plan, error) { return c.Run(ctx, r, h) })
 }
 
@@ -81,7 +86,7 @@ func (c *Core) result(h journal.Hooks, run func(journal.Hooks) (*plan.Plan, erro
 		}
 	}
 	h.Progress = func(ev journal.Event) {
-		res.Events = append(res.Events, eventView(ev))
+		res.Events = append(res.Events, eventView(ev, h.Lang))
 		if progress != nil {
 			progress(ev)
 		}
@@ -90,7 +95,7 @@ func (c *Core) result(h journal.Hooks, run func(journal.Hooks) (*plan.Plan, erro
 	res.Plan = p
 	res.Status = statusOf(p, err)
 	if err != nil {
-		res.Error = err.Error()
+		res.Error = i18n.ErrText(h.Lang, err)
 	}
 	return res
 }

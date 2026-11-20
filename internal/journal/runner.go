@@ -2,9 +2,8 @@ package journal
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/sys"
 )
@@ -43,17 +42,30 @@ type StepError struct {
 	RollbackErrors []error
 }
 
-func (e *StepError) Error() string {
-	msg := fmt.Sprintf("шаг %d/%d (%s): %v", e.Index, e.Total, e.Step.Describe(), e.Err)
+func (e *StepError) Error() string { return e.Text(i18n.Default) }
+
+// Text — сообщение об ошибке шага на языке l.
+func (e *StepError) Text(l i18n.Lang) string { return e.Message().Text(l) }
+
+// Message — сообщение об ошибке шага как данные каталога (для журнала).
+func (e *StepError) Message() i18n.Text {
+	parts := []i18n.Text{i18n.Msg("journal.step_failed", e.Index, e.Total, e.Step.Description(), e.Err)}
 	if len(e.RollbackErrors) == 0 {
-		return msg + "; выполненные шаги откачены, система в исходном состоянии"
+		return i18n.Join{Parts: append(parts, i18n.Msg("journal.step_failed_rolled_back"))}
 	}
-	var b strings.Builder
-	b.WriteString(msg + "; ОТКАТ ВЫПОЛНЕН НЕ ПОЛНОСТЬЮ, нужна ручная проверка:")
+	parts = append(parts, i18n.Msg("journal.step_failed_rollback_incomplete"))
 	for _, re := range e.RollbackErrors {
-		b.WriteString("\n  - " + re.Error())
+		parts = append(parts, i18n.Raw("\n  - "), errMessage(re))
 	}
-	return b.String()
+	return i18n.Join{Parts: parts}
+}
+
+// errMessage — ошибка как переводимый текст.
+func errMessage(err error) i18n.Text {
+	if t, ok := err.(i18n.Text); ok {
+		return t
+	}
+	return i18n.Raw(err.Error())
 }
 
 func (e *StepError) Unwrap() error { return e.Err }
@@ -71,7 +83,7 @@ func (r *Runner) journal(entries []Applied) error {
 		return nil
 	}
 	if err := r.Journal(entries); err != nil {
-		return fmt.Errorf("запись журнала %s: %w", StatePath, err)
+		return i18n.Errorf("journal.write_failed", StatePath, err)
 	}
 	return nil
 }
@@ -128,7 +140,7 @@ func (r *Runner) undo(ctx context.Context, entries []Applied) []error {
 			r.progress(Event{Undo: true, Index: n, Total: total, Step: s, Err: err})
 			if err != nil {
 				ok = false
-				errs = append(errs, fmt.Errorf("%s: %w", s.Describe(), err))
+				errs = append(errs, i18n.Errorf("journal.undo_failed", s.Description(), err))
 			}
 		}
 		if ok && r.Journal != nil {

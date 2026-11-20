@@ -87,7 +87,7 @@ func (s *Server) HTTPServer(peers PeerSource, base context.Context) *http.Server
 // демона сокет удаляется; если на нём кто-то слушает — ошибка.
 func Listen(path string, gid *uint32) (net.Listener, error) {
 	if len(path) >= maxSocketPath {
-		return nil, fmt.Errorf("путь сокета %s длиннее %d байт (ограничение unix-сокетов)", path, maxSocketPath-1)
+		return nil, fmt.Errorf("socket path %s is longer than %d bytes (unix socket limit)", path, maxSocketPath-1)
 	}
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, SocketDirMode); err != nil {
@@ -100,11 +100,11 @@ func Listen(path string, gid *uint32) (net.Listener, error) {
 	}
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode()&os.ModeSocket == 0 {
-			return nil, fmt.Errorf("%s существует и это не сокет", path)
+			return nil, fmt.Errorf("%s exists and is not a socket", path)
 		}
 		if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
 			c.Close()
-			return nil, fmt.Errorf("%s: демон уже запущен", path)
+			return nil, fmt.Errorf("%s: the daemon is already running", path)
 		}
 		if err := os.Remove(path); err != nil {
 			return nil, err
@@ -137,7 +137,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	s.mux.ServeHTTP(rw, r)
 	p, _ := PeerFrom(r.Context())
-	s.Log.Info("запрос", "event", EventRequest, "method", r.Method, "path", r.URL.Path, "status", rw.status,
+	s.Log.Info("request", "event", EventRequest, "method", r.Method, "path", r.URL.Path, "status", rw.status,
 		"uid", p.UID, "pid", p.PID, "ms", time.Since(start).Milliseconds())
 }
 

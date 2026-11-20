@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -221,43 +223,43 @@ func cmdlineParams(cmdline, prefix string) map[string]string {
 }
 
 // SourceOf — откуда текущее значение параметра.
-func (pf Facts) SourceOf(key string) string {
+func (pf Facts) SourceOf(key string) i18n.Text {
 	p, _ := Lookup(key)
 	cur, present := pf.Values[key]
 	if !present {
-		return "нет в этом ядре"
+		return i18n.Msg("profile.source.absent")
 	}
 	if p.Group == GroupSysctl {
 		setters := Setters(pf.SysctlFiles, key)
 		if n := len(setters); n > 0 {
 			last := setters[n-1]
-			label := last.Path
+			var label i18n.Text = i18n.Raw(last.Path)
 			if last.Ours {
-				label = "RamPlus (" + SysctlFileName + ")"
+				label = i18n.Raw("RamPlus (" + SysctlFileName + ")")
 			}
 			if v := last.Values[key]; v != cur {
-				return "изменено вручную (в " + label + ": " + v + ")"
+				return i18n.Msg("profile.source.changed_in", label, v)
 			}
 			return label
 		}
 		if v, ok := cmdlineParams(pf.Cmdline, "sysctl.")["sysctl."+key]; ok {
 			if v != cur {
-				return "изменено вручную (cmdline: " + v + ")"
+				return i18n.Msg("profile.source.changed_cmdline", v)
 			}
-			return "cmdline"
+			return i18n.Raw("cmdline")
 		}
-		return "ядро по умолчанию"
+		return i18n.Msg("profile.source.kernel_default")
 	}
 	if v, ok := unitValues(pf.OurUnit)[p.Path]; ok {
 		if v != cur {
-			return "изменено вручную (RamPlus: " + v + ")"
+			return i18n.Msg("profile.source.changed_ramplus", v)
 		}
-		return "RamPlus (" + ZswapUnitName + ")"
+		return i18n.Raw("RamPlus (" + ZswapUnitName + ")")
 	}
 	if v, ok := cmdlineParams(pf.Cmdline, "zswap.")[key]; ok {
-		return "cmdline (" + key + "=" + v + ")"
+		return i18n.Raw("cmdline (" + key + "=" + v + ")")
 	}
-	return "ядро по умолчанию"
+	return i18n.Msg("profile.source.kernel_default")
 }
 
 // fingerprintPart — часть отпечатка плана от фактов профиля: текущие

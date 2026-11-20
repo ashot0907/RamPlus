@@ -1,0 +1,475 @@
+$ ramplus recommend
+RamPlus recommendation
+
+  RAM: 16.0 GiB (MemTotal 16.0 GiB)
+  location: /ramplus.swapfile (ext4 on /, nvme), 300.0 GiB free, up to 280.0 GiB
+  RamPlus swap: 8.0 GiB — RAM 16 GB: SSD swap of half the RAM
+  existing swap: --existing=replace — the existing swap is a file: replace it with ours, the old file is kept for undo
+  profile: zswap-lz4 (experimental) — won our tests: fewer freezes when memory runs short
+  [profile.preliminary] preliminary: profile zswap-lz4 is still being confirmed on a real SSD (scripts/bench.sh)
+
+Plan: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental --dry-run
+
+$ ramplus recommend --json
+{
+  "schema_version": 1,
+  "ram_bytes": 17179869184,
+  "ram_rounded_bytes": 17179869184,
+  "swap_size_bytes": 8589934592,
+  "swap_reason": "RAM 16 GB: SSD swap of half the RAM",
+  "swap_reason_code": "ram.medium",
+  "swap_max_bytes": 300647710720,
+  "swap_blocked": [],
+  "target": {
+    "path": "/ramplus.swapfile",
+    "mount_point": "/",
+    "fs_type": "ext4",
+    "disk_kind": "nvme",
+    "transport": "nvme",
+    "total_bytes": 536870912000,
+    "available_bytes": 322122547200,
+    "max_bytes": 300647710720,
+    "usable": true,
+    "selected": true
+  },
+  "targets": [
+    {
+      "path": "/ramplus.swapfile",
+      "mount_point": "/",
+      "fs_type": "ext4",
+      "disk_kind": "nvme",
+      "transport": "nvme",
+      "total_bytes": 536870912000,
+      "available_bytes": 322122547200,
+      "max_bytes": 300647710720,
+      "usable": true,
+      "selected": true
+    }
+  ],
+  "managed_bytes": null,
+  "existing": "replace",
+  "existing_reason": "the existing swap is a file: replace it with ours, the old file is kept for undo",
+  "profile": "zswap-lz4",
+  "profile_status": "experimental",
+  "profile_reason": "won our tests: fewer freezes when memory runs short",
+  "notes": [
+    {
+      "code": "profile.preliminary",
+      "message": "preliminary: profile zswap-lz4 is still being confirmed on a real SSD (scripts/bench.sh)"
+    }
+  ]
+}
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --dry-run
+Plan: memory setup — swap and profile in one operation (one rollback)
+Command: ramplus setup --size 8G --existing=replace --profile zswap-lz4
+
+Now
+  swap        /swap.img  file  8.0 GiB  used 0 B  priority -2  in /etc/fstab
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB
+  Size (--size): 8.0 GiB  [given]
+      up to 280.0 GiB allowed on /
+  Existing swap (--existing): replace  [given]
+      keep      total swap 16.0 GiB: /swap.img stays, the new one is added with priority 10 and used first
+    * replace   total swap 8.0 GiB: /swap.img — swapoff and commented out in /etc/fstab; the file stays on disk (to delete: --delete-old)
+  Old swap files (--delete-old): keep  [default — flag not given]
+    * keep      /swap.img (8.0 GiB) stays on disk: rollback can restore it
+      delete    frees 8.0 GiB; rollback recreates empty swap files of the same size
+
+Profile: zswap-lz4 — experimental: not confirmed by an SSD benchmark
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [ok]   disk: NVMe (nvme)
+  [info] existing swap: /swap.img (file, 8.0 GiB, used 0 B, priority -2): --existing=replace selected
+  [info] priority: the new swap gets priority 10 (above the existing swap (-2): the new one is used first)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 292.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /swap.img: /swap.img is not in use — swapoff is safe
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. create /ramplus.swapfile, 8.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. comment out line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab (backup in /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+  13. write /etc/sysctl.d/99-ramplus.conf
+  14. write /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  profile: zswap-lz4
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: /swap.img, fstab line «/swap.img none swap sw 0 0»
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4   (experimental profile: confirmation or --experimental will be required)
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --yes
+Plan: memory setup — swap and profile in one operation (one rollback)
+Command: ramplus setup --size 8G --existing=replace --profile zswap-lz4
+
+Now
+  swap        /swap.img  file  8.0 GiB  used 0 B  priority -2  in /etc/fstab
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB
+  Size (--size): 8.0 GiB  [given]
+      up to 280.0 GiB allowed on /
+  Existing swap (--existing): replace  [given]
+      keep      total swap 16.0 GiB: /swap.img stays, the new one is added with priority 10 and used first
+    * replace   total swap 8.0 GiB: /swap.img — swapoff and commented out in /etc/fstab; the file stays on disk (to delete: --delete-old)
+  Old swap files (--delete-old): keep  [default — flag not given]
+    * keep      /swap.img (8.0 GiB) stays on disk: rollback can restore it
+      delete    frees 8.0 GiB; rollback recreates empty swap files of the same size
+
+Profile: zswap-lz4 — experimental: not confirmed by an SSD benchmark
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [ok]   disk: NVMe (nvme)
+  [info] existing swap: /swap.img (file, 8.0 GiB, used 0 B, priority -2): --existing=replace selected
+  [info] priority: the new swap gets priority 10 (above the existing swap (-2): the new one is used first)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 292.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /swap.img: /swap.img is not in use — swapoff is safe
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. create /ramplus.swapfile, 8.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. comment out line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab (backup in /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+  13. write /etc/sysctl.d/99-ramplus.conf
+  14. write /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  profile: zswap-lz4
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: /swap.img, fstab line «/swap.img none swap sw 0 0»
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4   (experimental profile: confirmation or --experimental will be required)
+error: experimental profile (not confirmed by an SSD benchmark): in scripts add --experimental
+
+$ ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental --yes
+Plan: memory setup — swap and profile in one operation (one rollback)
+Command: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+Now
+  swap        /swap.img  file  8.0 GiB  used 0 B  priority -2  in /etc/fstab
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB
+  Size (--size): 8.0 GiB  [given]
+      up to 280.0 GiB allowed on /
+  Existing swap (--existing): replace  [given]
+      keep      total swap 16.0 GiB: /swap.img stays, the new one is added with priority 10 and used first
+    * replace   total swap 8.0 GiB: /swap.img — swapoff and commented out in /etc/fstab; the file stays on disk (to delete: --delete-old)
+  Old swap files (--delete-old): keep  [default — flag not given]
+    * keep      /swap.img (8.0 GiB) stays on disk: rollback can restore it
+      delete    frees 8.0 GiB; rollback recreates empty swap files of the same size
+
+Profile: zswap-lz4 — experimental: not confirmed by an SSD benchmark
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [ok]   disk: NVMe (nvme)
+  [info] existing swap: /swap.img (file, 8.0 GiB, used 0 B, priority -2): --existing=replace selected
+  [info] priority: the new swap gets priority 10 (above the existing swap (-2): the new one is used first)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 292.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /swap.img: /swap.img is not in use — swapoff is safe
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. create /ramplus.swapfile, 8.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+   8. swapoff /swap.img
+   9. comment out line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab (backup in /var/lib/ramplus/backups)
+  10. systemctl daemon-reload
+  11. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+  12. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+  13. write /etc/sysctl.d/99-ramplus.conf
+  14. write /etc/systemd/system/ramplus-zswap.service
+  15. systemctl daemon-reload
+  16. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  profile: zswap-lz4
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: /swap.img, fstab line «/swap.img none swap sw 0 0»
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+Running (operation <OPID>)
+  [1/16] create /ramplus.swapfile, 8.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [2/16] chmod 600 /ramplus.swapfile ... ok
+  [3/16] mkswap /ramplus.swapfile ... ok
+  [4/16] swapon /ramplus.swapfile (priority 10) ... ok
+  [5/16] write /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/16] systemctl daemon-reload ... ok
+  [7/16] systemctl enable ramplus.swapfile.swap ... ok
+  [8/16] swapoff /swap.img ... ok
+  [9/16] comment out line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab (backup in /var/lib/ramplus/backups) ... ok
+  [10/16] systemctl daemon-reload ... ok
+  [11/16] zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor) ... ok
+  [12/16] zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled) ... ok
+  [13/16] write /etc/sysctl.d/99-ramplus.conf ... ok
+  [14/16] write /etc/systemd/system/ramplus-zswap.service ... ok
+  [15/16] systemctl daemon-reload ... ok
+  [16/16] systemctl enable ramplus-zswap.service ... ok
+Done.
+
+$ ramplus setup --size 8G --profile zswap-lz4 --dry-run
+Plan: memory setup — swap and profile in one operation (one rollback)
+Command: ramplus setup --size 8G --profile zswap-lz4
+
+Now
+  swap        /ramplus.swapfile  file  8.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Profile: zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Currently applied: zswap-lz4 (experimental: not confirmed by an SSD benchmark)
+
+Parameters
+  PARAMETER    NOW    NEW       CURRENT SOURCE
+  zswap.zpool  —      zsmalloc  not in this kernel — skipped
+  unchanged: zswap.enabled=Y, zswap.compressor=lz4, zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   RamPlus swap: already 8.0 GiB (/ramplus.swapfile) — no change
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [ok]   profile: the system already matches profile zswap-lz4 — nothing to change
+  [ok]   setup: the system is already in the selected state — nothing to do
+
+Steps
+  (none)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  profile: zswap-lz4
+  created: —
+  disabled: —
+  deleted: —
+
+Result: nothing to change.
+
+$ ramplus history
+Journal: /var/lib/ramplus/state.json (operations: 1)
+
+  ID                                 TIME                 STATUS     UNDO  OPERATION                                         SOURCE                      COMMAND
+  <OPID>  2026-11-16 12:00:02  completed  next  8 GB swap from the SSD + mode «Fast compression»  from the terminal (golden)  ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+
+UNDO: «next» — ramplus rollback will undo this operation; «yes» — repeated rollbacks will reach it.
+
+$ ramplus rollback --dry-run
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        /ramplus.swapfile  file  8.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:02: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. systemctl disable ramplus-zswap.service
+   2. delete /etc/systemd/system/ramplus-zswap.service
+   3. systemctl daemon-reload
+   4. delete /etc/sysctl.d/99-ramplus.conf
+   5. zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)
+   6. zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)
+   7. restore line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab
+   8. systemctl daemon-reload
+   9. swapon /swap.img (priority — automatic)
+  10. systemctl disable ramplus.swapfile.swap
+  11. delete /etc/systemd/system/ramplus.swapfile.swap
+  12. systemctl daemon-reload
+  13. swapoff /ramplus.swapfile
+  14. delete file /ramplus.swapfile (8.0 GiB)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  created: —
+  disabled: /ramplus.swapfile
+  deleted: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        /ramplus.swapfile  file  8.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 8.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:02: ramplus setup --size 8G --existing=replace --profile zswap-lz4 --experimental
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. systemctl disable ramplus-zswap.service
+   2. delete /etc/systemd/system/ramplus-zswap.service
+   3. systemctl daemon-reload
+   4. delete /etc/sysctl.d/99-ramplus.conf
+   5. zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)
+   6. zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)
+   7. restore line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab
+   8. systemctl daemon-reload
+   9. swapon /swap.img (priority — automatic)
+  10. systemctl disable ramplus.swapfile.swap
+  11. delete /etc/systemd/system/ramplus.swapfile.swap
+  12. systemctl daemon-reload
+  13. swapoff /ramplus.swapfile
+  14. delete file /ramplus.swapfile (8.0 GiB)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  created: —
+  disabled: /ramplus.swapfile
+  deleted: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service, /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/14] systemctl disable ramplus-zswap.service ... ok
+  [2/14] delete /etc/systemd/system/ramplus-zswap.service ... ok
+  [3/14] systemctl daemon-reload ... ok
+  [4/14] delete /etc/sysctl.d/99-ramplus.conf ... ok
+  [5/14] zswap.enabled = N (write to /sys/module/zswap/parameters/enabled) ... ok
+  [6/14] zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor) ... ok
+  [7/14] restore line "/swap.img\tnone\tswap\tsw\t0\t0" in /etc/fstab ... ok
+  [8/14] systemctl daemon-reload ... ok
+  [9/14] swapon /swap.img (priority — automatic) ... ok
+  [10/14] systemctl disable ramplus.swapfile.swap ... ok
+  [11/14] delete /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [12/14] systemctl daemon-reload ... ok
+  [13/14] swapoff /ramplus.swapfile ... ok
+  [14/14] delete file /ramplus.swapfile (8.0 GiB) ... ok
+Done.
+
+$ ramplus swap check-clean
+clean: no RamPlus traces
+
+$ ramplus setup --dry-run
+Plan: memory setup — swap and profile in one operation (one rollback)
+Command: ramplus setup
+
+Now
+  swap        /swap.img  file  8.0 GiB  used 0 B  priority -2  in /etc/fstab
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Checks
+  [ok]   root: running as root
+  [FAIL] setup: neither swap nor a profile selected — give --size and/or --profile
+
+Steps
+  (none)
+
+Summary
+  swap: 8.0 GiB → 8.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: PLAN BLOCKED — failed checks: 1. Nothing changed.
+

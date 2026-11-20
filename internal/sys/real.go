@@ -1,6 +1,8 @@
 package sys
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"errors"
 	"fmt"
@@ -157,7 +159,7 @@ func (OSFS) Lock(name string) (func() error, error) {
 	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		f.Close()
 		if errors.Is(err, unix.EWOULDBLOCK) {
-			return nil, fmt.Errorf("%w (%s)", ErrLocked, name)
+			return nil, i18n.Errorf("sys.locked_path", ErrLocked, name)
 		}
 		return nil, err
 	}

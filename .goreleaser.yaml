@@ -1,0 +1,125 @@
+# GoReleaser config: static binaries for linux/amd64 and linux/arm64, tar.gz
+# archives, SHA256SUMS, a .deb (nfpm) and the GitHub Release.
+#
+#   goreleaser check                         validate this file
+#   make deb                                 local snapshot .deb in dist/
+#   (tag v*)  .github/workflows/release.yml  real release
+version: 2
+
+project_name: ramplus
+
+before:
+  hooks:
+    # The web UI is embedded into ramplus-web via go:embed: build it first.
+    - sh -c 'cd web && npm ci --no-audit --no-fund && npm run build'
+    - go mod download
+    # systemd units with /usr/bin and the Debian changelog → build/deb/.
+    - packaging/deb/prepare.sh {{ .Version }}
+
+builds:
+  - &bin
+    id: ramplus
+    main: ./cmd/ramplus
+    binary: ramplus
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X main.version={{ .Version }}"]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - <<: *bin
+    id: ramplusd
+    main: ./cmd/ramplusd
+    binary: ramplusd
+  - <<: *bin
+    id: ramplus-web
+    main: ./cmd/ramplus-web
+    binary: ramplus-web
+
+archives:
+  - id: default
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - packaging/systemd/*
+      - packaging/sysusers.d/*
+      - packaging/tmpfiles.d/*
+
+checksum:
+  name_template: SHA256SUMS
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev+{{ .ShortCommit }}"
+
+nfpms:
+  - id: deb
+    package_name: ramplus
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    ids: [ramplus, ramplusd, ramplus-web]
+    formats: [deb]
+    bindir: /usr/bin
+    vendor: RamPlus
+    homepage: https://github.com/ashot0907/ramplus
+    maintainer: RamPlus maintainers <ashot0907@users.noreply.github.com>
+    license: Apache-2.0
+    section: admin
+    priority: optional
+    description: |-
+      virtual memory manager: SSD swapfile, zswap, memory pressure
+      RamPlus sets up a swapfile on SSD and zswap with a plan you can read
+      before anything changes, monitors memory pressure (PSI) and keeps a
+      journal so every change can be rolled back. It is driven by a CLI
+      (ramplus), a root daemon with a unix-socket API (ramplusd) and a
+      password-protected web interface (ramplus-web) that never runs as root.
+    dependencies:
+      - systemd
+    contents:
+      - src: build/deb/ramplusd.service
+        dst: /usr/lib/systemd/system/ramplusd.service
+        file_info: { mode: 0644 }
+      - src: build/deb/ramplus-web.service
+        dst: /usr/lib/systemd/system/ramplus-web.service
+        file_info: { mode: 0644 }
+      - src: packaging/sysusers.d/ramplus.conf
+        dst: /usr/lib/sysusers.d/ramplus.conf
+        file_info: { mode: 0644 }
+      - src: packaging/tmpfiles.d/ramplus.conf
+        dst: /usr/lib/tmpfiles.d/ramplus.conf
+        file_info: { mode: 0644 }
+      - src: packaging/deb/copyright
+        dst: /usr/share/doc/ramplus/copyright
+        file_info: { mode: 0644 }
+      - src: build/deb/changelog.gz
+        dst: /usr/share/doc/ramplus/changelog.gz
+        file_info: { mode: 0644 }
+      - src: packaging/deb/lintian-overrides
+        dst: /usr/share/lintian/overrides/ramplus
+        file_info: { mode: 0644 }
+    scripts:
+      postinstall: packaging/deb/postinst
+      preremove: packaging/deb/prerm
+      postremove: packaging/deb/postrm
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "
+
+release:
+  github:
+    owner: ashot0907
+    name: ramplus
+  # v1.2.3-alpha.1 / -beta / -rc → marked as a prerelease.
+  prerelease: auto
+  footer: |
+    ---
+    **Install:** `sudo apt install ./ramplus_<version>_amd64.deb` (Debian/Ubuntu), `yay -S ramplus-bin` (Arch), or unpack the tar.gz — see the README.
+
+    **arm64:** binaries and the arm64 .deb are built but **not tested** on real arm64 hardware yet. Reports are welcome.
+
+    Verify downloads: `sha256sum -c SHA256SUMS --ignore-missing`.

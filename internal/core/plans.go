@@ -1,18 +1,19 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"crypto/rand"
 	"encoding/hex"
-	"errors"
 	"sync"
 	"time"
 )
 
 // Ошибки Apply по ID плана.
 var (
-	ErrPlanStale    = errors.New("система изменилась с момента построения плана, постройте план заново")
-	ErrPlanNotFound = errors.New("план не найден (не строился или истёк) — постройте план заново")
-	ErrPlanUsed     = errors.New("план уже выполнялся — постройте план заново")
+	ErrPlanStale    = i18n.Errorf("core.plan_stale")
+	ErrPlanNotFound = i18n.Errorf("core.plan_not_found")
+	ErrPlanUsed     = i18n.Errorf("core.plan_used")
 )
 
 // Сколько и как долго хранятся построенные планы.

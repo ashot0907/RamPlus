@@ -21,7 +21,7 @@ import (
 )
 
 // ErrRoot — HTTP-сервер RamPlus никогда не работает от root.
-var ErrRoot = errors.New("ramplus-web не запускается от root: используйте пользователя ramplus-web (systemctl start ramplus-web)")
+var ErrRoot = errors.New("ramplus-web does not run as root: use the ramplus-web user (systemctl start ramplus-web)")
 
 // CheckNotRoot — отказ запускаться от root.
 func CheckNotRoot(euid int) error {
@@ -35,7 +35,7 @@ func CheckNotRoot(euid int) error {
 func IsLocal(listen string) (bool, error) {
 	host, _, err := net.SplitHostPort(listen)
 	if err != nil {
-		return false, fmt.Errorf("--listen %q: ожидается адрес:порт (%v)", listen, err)
+		return false, fmt.Errorf("--listen %q: expected address:port (%v)", listen, err)
 	}
 	if strings.EqualFold(host, "localhost") {
 		return true, nil
@@ -54,7 +54,7 @@ func ValidateListen(listen string, withTLS bool) error {
 		return err
 	}
 	if !local && !withTLS {
-		return fmt.Errorf("--listen %s доступен не только с этого компьютера: нужен TLS (--tls-cert и --tls-key или --tls-self-signed); для удалённого доступа без TLS используйте ssh -L 7781:localhost:7781", listen)
+		return fmt.Errorf("--listen %s is reachable from other computers: TLS is required (--tls-cert and --tls-key, or --tls-self-signed); for remote access without TLS use ssh -L 7781:localhost:7781", listen)
 	}
 	return nil
 }

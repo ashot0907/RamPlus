@@ -35,7 +35,7 @@ cd web && npm run dev
 ```sh
 make test       # go test ./...
 make web-test   # vitest: ru/en dictionaries complete, UI logic, plan dialog rendering
-make lint       # gofmt, go vet, shellcheck scripts/*.sh
+make lint       # gofmt, go vet, shellcheck (scripts/*.sh, packaging/deb/*)
 make all        # lint + test + web-test + build + build-probe
 ```
 
@@ -47,8 +47,13 @@ packages with goroutines: `go test -race ./internal/api ./internal/core ./intern
   also injects failures at any step (`FailAt`) to prove automatic rollback.
 - **Parsers** of `/proc` and `/sys` are pure functions (`io.Reader`/`[]byte` → struct) tested on
   fixture files in `testdata/`.
-- **Golden tests** (`cmd/ramplus/testdata/golden`) pin the CLI's text output. Update them only when
-  the output change is intended: `go test ./cmd/ramplus -run Golden -update`, then review the diff.
+- **Golden tests** (`cmd/ramplus/testdata/golden`) pin the CLI's text output in Russian
+  (`--lang ru`), and `testdata/golden/en/` the same commands in English; both are checked. Update
+  them only when the output change is intended: `go test ./cmd/ramplus -run Golden -update`, then
+  review the diff.
+- **Messages** live in one catalog (`internal/i18n/catalog_*.go`, key → English and Russian).
+  `TestCatalogComplete` requires both languages and matching `%` verbs; `TestKeysUsedInCode` fails
+  on a key used in code but missing from the catalog.
 - **API and web tests** run the real HTTP servers on temporary Unix sockets over the fake system.
 
 ### Integration test (VM only)
@@ -60,6 +65,10 @@ services. **Run it only in a disposable VM**:
 multipass launch 24.04 --disk 30G --memory 4G   # for example
 make build
 sudo RAMPLUS_VM_TEST=1 scripts/vm-test.sh ./ramplus
+
+# with scenario G (the .deb package):
+make deb
+sudo RAMPLUS_VM_TEST=1 scripts/vm-test.sh ./ramplus dist/ramplus_*_amd64.deb
 ```
 
 Scenarios:
@@ -74,10 +83,34 @@ Scenarios:
 - **F.** web: install, `ramplus init`, login, wrong password, rate limit, `Host` check, recommendation
   → `setup` → apply with CSRF → one journal operation with `via: web` → rollback → clean, logout,
   `uninstall PURGE=1` leaves nothing.
+- **G.** (only with a `.deb` argument) `apt install ./ramplus_*.deb` → services neither enabled nor
+  running → `init --password-stdin`, `enable --now`, `daemon status` → `setup` from the
+  recommendation → `apt remove` is refused while RamPlus manages swap → `rollback` → `apt remove`
+  passes, services stopped and disabled → `apt purge` removes `/etc/ramplus` and the clean journal.
 
 On a failure the script saves the test journal (`/var/lib/ramplus/state.json.vmtest-failed-<time>`)
 and, in scenarios E and F, the last 50 lines of the service logs
 (`/var/lib/ramplus/vmtest-failed-<time>.journal.txt`), then rolls the VM back to its initial state.
+
+### Packages and releases
+
+```sh
+make deb            # GoReleaser snapshot: dist/*.tar.gz, dist/*.deb (amd64, arm64), SHA256SUMS
+make lintian        # lintian on dist/*.deb in an ubuntu:24.04 container (docker)
+make release-check  # goreleaser check
+```
+
+`make deb` needs [GoReleaser](https://goreleaser.com) v2 (`GORELEASER=/path/to/goreleaser` to use a
+binary outside `PATH`). The config is `.goreleaser.yaml`: the web UI is built first, then static
+binaries (`CGO_ENABLED=0`, `-trimpath`, version via `-X main.version`), archives with `LICENSE`,
+`README.md` and `packaging/`, and the `.deb` through nfpm. Maintainer scripts and the lintian
+overrides are in `packaging/deb/`; `packaging/deb/prepare.sh` generates the units with
+`/usr/bin` and the Debian changelog into `build/deb/`. AUR PKGBUILDs and how to publish them:
+[packaging/aur/README.md](../packaging/aur/README.md).
+
+A release is a tag: `git tag v0.3.0 && git push origin v0.3.0` runs `.github/workflows/release.yml`
+(tests, GoReleaser, GitHub Release with the changelog from commits). Tags with `-alpha`, `-beta` or
+`-rc` are published as prereleases.
 
 ### Benchmark
 
@@ -109,7 +142,7 @@ internal/fakesys   fake system for tests
 internal/detect    system, disks, filesystems
 internal/monitor   meminfo, swaps, zswap, zram, PSI, vm sysctl
 web/               frontend: React + TypeScript (Vite), ru/en dictionaries, vitest
-packaging/         systemd units, sysusers.d, tmpfiles.d
+packaging/         systemd units, sysusers.d, tmpfiles.d; deb/ (maintainer scripts), aur/ (PKGBUILDs)
 scripts/           VM integration test, benchmark
 docs/              user and developer documentation
 ```

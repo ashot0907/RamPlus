@@ -1,0 +1,122 @@
+$ ramplus swap plan --size 12G
+Plan: swapfile creation
+Command: ramplus swap apply --size 12G
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, HDD, usb)
+  space on /  20.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, HDD/usb, 20.0 GiB free of 500.0 GiB — USB — needs --force; not enough space
+  Size (--size): 12.0 GiB  [given]
+      / has no room even for the minimal swap (256.0 MiB)
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [FAIL] disk: swap on a USB disk is slow and dangerous if the disk is unplugged (pull the disk and every process with pages in swap crashes). To continue anyway: --force
+  [info] priority: the new swap gets priority 10 (no other swap)
+  [FAIL] space: / has 20.0 GiB of 500.0 GiB available; after creation 8.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+
+Steps
+   1. create /ramplus.swapfile, 12.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 12.0 GiB
+  created: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: —
+  deleted: —
+
+Result: PLAN BLOCKED — failed checks: 2. Nothing changed.
+
+$ ramplus swap apply --size 12G --yes
+Plan: swapfile creation
+Command: ramplus swap apply --size 12G
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, HDD, usb)
+  space on /  20.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, HDD/usb, 20.0 GiB free of 500.0 GiB — USB — needs --force; not enough space
+  Size (--size): 12.0 GiB  [given]
+      / has no room even for the minimal swap (256.0 MiB)
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [FAIL] disk: swap on a USB disk is slow and dangerous if the disk is unplugged (pull the disk and every process with pages in swap crashes). To continue anyway: --force
+  [info] priority: the new swap gets priority 10 (no other swap)
+  [FAIL] space: / has 20.0 GiB of 500.0 GiB available; after creation 8.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+
+Steps
+   1. create /ramplus.swapfile, 12.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 12.0 GiB
+  created: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: —
+  deleted: —
+
+Result: PLAN BLOCKED — failed checks: 2. Nothing changed.
+error: the plan is blocked by checks — nothing changed
+
+$ ramplus swap plan --size 4G --path /tmp/x.swapfile
+Plan: swapfile creation
+Command: ramplus swap apply --size 4G --path /tmp/x.swapfile
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, HDD, usb)
+  space on /  20.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /tmp/x.swapfile  [given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /tmp/x.swapfile ext4 on /dev/fake_, HDD/usb, 20.0 GiB free of 500.0 GiB — USB — needs --force; not enough space
+  Size (--size): 4.0 GiB  [given]
+      / has no room even for the minimal swap (256.0 MiB)
+
+Checks
+  [ok]   root: running as root
+  [FAIL] path: /tmp/x.swapfile: a swapfile cannot be created in /tmp (virtual filesystem or cleared at boot)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [FAIL] disk: swap on a USB disk is slow and dangerous if the disk is unplugged (pull the disk and every process with pages in swap crashes). To continue anyway: --force
+  [info] priority: the new swap gets priority 10 (no other swap)
+
+Steps
+  (none)
+
+Summary
+  swap: 0 B → 0 B
+  created: —
+  disabled: —
+  deleted: —
+
+Result: PLAN BLOCKED — failed checks: 2. Nothing changed.
+

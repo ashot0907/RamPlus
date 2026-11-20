@@ -14,13 +14,20 @@ export class ApiError extends Error {
 }
 
 let csrf = ''
+let lang = 'en'
 
 export function setCSRF(token: string | undefined): void {
   csrf = token ?? ''
 }
 
+// setApiLang — язык текстов сервера (Accept-Language): описания шагов,
+// сообщения без перевода по коду. Коды от языка не зависят.
+export function setApiLang(l: string): void {
+  lang = l
+}
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' }
+  const headers: Record<string, string> = { Accept: 'application/json', 'Accept-Language': lang }
   if (method !== 'GET') {
     headers['Content-Type'] = 'application/json'
     if (csrf) headers['X-CSRF-Token'] = csrf

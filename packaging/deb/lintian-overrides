@@ -1,0 +1,9 @@
+# Go binaries are built with CGO_ENABLED=0 on purpose: one static binary
+# runs on any distribution and kernel the release supports, without libc
+# version constraints.
+ramplus: statically-linked-binary [usr/bin/ramplus]
+ramplus: statically-linked-binary [usr/bin/ramplusd]
+ramplus: statically-linked-binary [usr/bin/ramplus-web]
+# prerm: the admin enables the units with "systemctl enable" (the package
+# never does), and deb-systemd-helper only removes links it created itself.
+ramplus: maintainer-script-calls-systemctl [prerm:*]

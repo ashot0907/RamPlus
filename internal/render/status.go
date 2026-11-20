@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"fmt"
 	"io"
 	"strings"
@@ -12,7 +14,7 @@ import (
 )
 
 // reasonText — человекочитаемые причины n/a; context переопределяет общие.
-func reasonText(u *detect.Unavailable, context map[string]string) string {
+func reasonText(l i18n.Lang, u *detect.Unavailable, context map[string]string) string {
 	if u == nil {
 		return "n/a"
 	}
@@ -21,15 +23,15 @@ func reasonText(u *detect.Unavailable, context map[string]string) string {
 	}
 	switch u.Reason {
 	case detect.ReasonPermissionDenied:
-		return "n/a (нужен root)"
+		return t(l, "render.na.root")
 	case detect.ReasonNotPresent:
-		return "n/a (нет в системе)"
+		return t(l, "render.na.absent")
 	case detect.ReasonUnsupported:
-		return "n/a (не поддерживается ядром)"
+		return t(l, "render.na.unsupported")
 	case detect.ReasonParseError:
-		return "n/a (неожиданный формат)"
+		return t(l, "render.na.parse")
 	default:
-		return "n/a (недоступно)"
+		return t(l, "render.na.unavailable")
 	}
 }
 
@@ -68,14 +70,14 @@ func strOrNA(p *string, na string) string {
 	return *p
 }
 
-func yesNo(p *bool) string {
+func yesNo(l i18n.Lang, p *bool) string {
 	switch {
 	case p == nil:
 		return "n/a"
 	case *p:
-		return "да"
+		return t(l, "render.yes")
 	default:
-		return "нет"
+		return t(l, "render.no")
 	}
 }
 
@@ -108,73 +110,73 @@ func (s *section) end(w io.Writer) error {
 }
 
 // Status — ramplus status для человека.
-func Status(w io.Writer, st monitor.Status) error {
-	renders := []func(io.Writer, monitor.Status) error{
+func Status(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	renders := []func(i18n.Lang, io.Writer, monitor.Status) error{
 		renderSystem, renderMemory, renderSwaps, renderZswap,
 		renderVM, renderPSI, renderRootDisk, renderZram, renderProfile,
 	}
 	for _, r := range renders {
-		if err := r(w, st); err != nil {
+		if err := r(l, w, st); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func renderSystem(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "Система")
+func renderSystem(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.system"))
 	sys := st.System
-	s.kv("Хост", strOrNA(&sys.Hostname, "n/a"))
+	s.kv(t(l, "render.status.host"), strOrNA(&sys.Hostname, "n/a"))
 	kernel := strOrNA(&sys.Kernel, "n/a")
 	if sys.Arch != "" {
 		kernel += " (" + sys.Arch + ")"
 	}
-	s.kv("Ядро", kernel)
+	s.kv(t(l, "render.status.kernel"), kernel)
 	if sys.Virtualization != "" {
-		s.kv("Виртуализация", sys.Virtualization+" (скорость дисков зависит от хоста)")
+		s.kv(t(l, "render.status.virt"), sys.Virtualization+t(l, "render.status.virt_note"))
 	}
 	if sys.OS != nil {
-		s.kv("Дистрибутив", sys.OS.PrettyName)
+		s.kv(t(l, "render.status.distro"), sys.OS.PrettyName)
 	} else {
-		s.kv("Дистрибутив", reasonText(sys.OSError, nil))
+		s.kv(t(l, "render.status.distro"), reasonText(l, sys.OSError, nil))
 	}
 	return s.end(w)
 }
 
-func renderMemory(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "Память")
+func renderMemory(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.memory"))
 	m := st.Memory
 	if m.Error != nil {
-		s.line("%s", reasonText(m.Error, nil))
+		s.line("%s", reasonText(l, m.Error, nil))
 		return s.end(w)
 	}
-	s.kv("Всего", bytesOrNA(m.TotalBytes))
-	s.kv("Доступно", bytesOrNA(m.AvailableBytes)+percent(m.AvailableBytes, m.TotalBytes))
-	s.kv("Используется", bytesOrNA(m.UsedBytes)+percent(m.UsedBytes, m.TotalBytes))
-	s.kv("Кэш (Cached)", bytesOrNA(m.CachedBytes))
-	s.kv("Swap всего", bytesOrNA(m.SwapTotalBytes))
-	s.kv("Swap свободно", bytesOrNA(m.SwapFreeBytes))
-	s.kv("Swap занято", bytesOrNA(m.SwapUsedBytes)+percent(m.SwapUsedBytes, m.SwapTotalBytes))
+	s.kv(t(l, "render.status.total"), bytesOrNA(m.TotalBytes))
+	s.kv(t(l, "render.status.available"), bytesOrNA(m.AvailableBytes)+percent(m.AvailableBytes, m.TotalBytes))
+	s.kv(t(l, "render.status.used"), bytesOrNA(m.UsedBytes)+percent(m.UsedBytes, m.TotalBytes))
+	s.kv(t(l, "render.status.cached"), bytesOrNA(m.CachedBytes))
+	s.kv(t(l, "render.status.swap_total"), bytesOrNA(m.SwapTotalBytes))
+	s.kv(t(l, "render.status.swap_free"), bytesOrNA(m.SwapFreeBytes))
+	s.kv(t(l, "render.status.swap_used"), bytesOrNA(m.SwapUsedBytes)+percent(m.SwapUsedBytes, m.SwapTotalBytes))
 	return s.end(w)
 }
 
-func renderSwaps(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "Swap-устройства")
+func renderSwaps(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.swaps"))
 	switch {
 	case st.Swaps.Error != nil:
-		s.line("%s", reasonText(st.Swaps.Error, nil))
+		s.line("%s", reasonText(l, st.Swaps.Error, nil))
 	case len(st.Swaps.Devices) == 0:
-		s.line("swap не включён")
+		s.line(t(l, "render.status.no_swap"))
 	default:
-		s.row("ПУТЬ", "ТИП", "РАЗМЕР", "ИСПОЛЬЗОВАНО", "ПРИОРИТЕТ", "ДИСК", "RAMPLUS")
+		s.row(t(l, "render.col.path"), t(l, "render.col.type"), t(l, "render.col.size"), t(l, "render.col.used"), t(l, "render.col.priority"), t(l, "render.col.disk"), "RAMPLUS")
 		for _, d := range st.Swaps.Devices {
 			disk := "—"
 			if d.DiskKind != "" {
-				disk = kindText(d.DiskKind) + ", " + d.Transport
+				disk = kindText(l, d.DiskKind) + ", " + d.Transport
 			}
-			managed := "нет"
+			managed := t(l, "render.no")
 			if d.Managed {
-				managed = "да"
+				managed = t(l, "render.yes")
 			}
 			s.row(d.Path, d.Type, humanBytes(d.SizeBytes), humanBytes(d.UsedBytes), fmt.Sprint(d.Priority), disk, managed)
 		}
@@ -185,11 +187,11 @@ func renderSwaps(w io.Writer, st monitor.Status) error {
 	for _, wr := range st.Swaps.Warnings {
 		switch wr.Code {
 		case monitor.WarnSwapOnUSB:
-			fmt.Fprintf(w, "  ВНИМАНИЕ: %s на USB-диске — swap медленный и опасный при отключении диска\n", wr.Path)
+			fmt.Fprintf(w, t(l, "render.status.warn_usb"), wr.Path)
 		case monitor.WarnInterrupted:
-			fmt.Fprintf(w, "  ВНИМАНИЕ: операция RamPlus прервана (%s) — выполните: sudo ramplus rollback\n", wr.Path)
+			fmt.Fprintf(w, t(l, "render.status.warn_interrupted"), wr.Path)
 		default:
-			fmt.Fprintf(w, "  ВНИМАНИЕ: %s: %s\n", wr.Path, wr.Code)
+			fmt.Fprintf(w, t(l, "render.status.warn_other"), wr.Path, wr.Code)
 		}
 	}
 	if len(st.Swaps.Warnings) > 0 {
@@ -198,40 +200,40 @@ func renderSwaps(w io.Writer, st monitor.Status) error {
 	return nil
 }
 
-func renderZswap(w io.Writer, st monitor.Status) error {
+func renderZswap(l i18n.Lang, w io.Writer, st monitor.Status) error {
 	s := newSection(w, "zswap")
 	z := st.Zswap
 	if !z.Present {
-		s.line("%s", reasonText(z.Error, map[string]string{detect.ReasonNotPresent: "zswap нет в ядре"}))
+		s.line("%s", reasonText(l, z.Error, map[string]string{detect.ReasonNotPresent: t(l, "render.status.no_zswap")}))
 		return s.end(w)
 	}
 	if z.Error != nil {
-		s.kv("Ошибка", reasonText(z.Error, nil))
+		s.kv(t(l, "render.status.error"), reasonText(l, z.Error, nil))
 	}
 	p := z.Params
-	s.kv("Включён", yesNo(p.Enabled))
-	s.kv("Компрессор", strOrNA(p.Compressor, "n/a"))
-	s.kv("Zpool", strOrNA(p.Zpool, "n/a (параметра нет в этом ядре)"))
+	s.kv(t(l, "render.status.enabled"), yesNo(l, p.Enabled))
+	s.kv(t(l, "render.status.compressor"), strOrNA(p.Compressor, "n/a"))
+	s.kv("Zpool", strOrNA(p.Zpool, t(l, "render.na.no_param")))
 	if p.MaxPoolPercent != nil {
 		s.kv("max_pool_percent", fmt.Sprintf("%d%%", *p.MaxPoolPercent))
 	} else {
 		s.kv("max_pool_percent", "n/a")
 	}
 	if z.PoolBytes != nil || z.StoredBytes != nil {
-		s.kv("Пул / данные", bytesOrNA(z.PoolBytes)+" / "+bytesOrNA(z.StoredBytes)+" (meminfo)")
+		s.kv(t(l, "render.status.pool_data"), bytesOrNA(z.PoolBytes)+" / "+bytesOrNA(z.StoredBytes)+" (meminfo)")
 	}
 	if z.Stats == nil {
-		s.kv("Статистика", reasonText(z.StatsError, map[string]string{
-			detect.ReasonNotPresent: "debugfs не смонтирован",
+		s.kv(t(l, "render.status.stats"), reasonText(l, z.StatsError, map[string]string{
+			detect.ReasonNotPresent: t(l, "render.status.no_debugfs"),
 		}))
 		return s.end(w)
 	}
-	s.kv("Размер пула", bytesOrNA(z.Stats.PoolTotalSizeBytes))
-	s.kv("Сохранено страниц", uintOrNA(z.Stats.StoredPages))
-	s.kv("Вытеснено на диск", uintOrNA(z.Stats.WrittenBackPages)+" стр.")
-	s.kv("Лимит пула достигнут", uintOrNA(z.Stats.PoolLimitHit)+" раз")
+	s.kv(t(l, "render.status.pool_size"), bytesOrNA(z.Stats.PoolTotalSizeBytes))
+	s.kv(t(l, "render.status.stored_pages"), uintOrNA(z.Stats.StoredPages))
+	s.kv(t(l, "render.status.written_back"), uintOrNA(z.Stats.WrittenBackPages)+t(l, "render.status.pages_unit"))
+	s.kv(t(l, "render.status.pool_limit"), uintOrNA(z.Stats.PoolLimitHit)+t(l, "render.status.times_unit"))
 	if z.Stats.CompressionRatio != nil {
-		s.kv("Степень сжатия", fmt.Sprintf("%.2fx", *z.Stats.CompressionRatio))
+		s.kv(t(l, "render.status.ratio"), fmt.Sprintf("%.2fx", *z.Stats.CompressionRatio))
 	}
 	return s.end(w)
 }
@@ -243,14 +245,14 @@ func uintOrNA(p *uint64) string {
 	return fmt.Sprint(*p)
 }
 
-func renderVM(w io.Writer, st monitor.Status) error {
+func renderVM(l i18n.Lang, w io.Writer, st monitor.Status) error {
 	s := newSection(w, "VM (sysctl)")
 	vm := st.VM
 	val := func(name string, p *int) string {
 		if p != nil {
 			return fmt.Sprint(*p)
 		}
-		return reasonText(vm.Errors[name], nil)
+		return reasonText(l, vm.Errors[name], nil)
 	}
 	s.kv("swappiness", val("swappiness", vm.Swappiness))
 	s.kv("vfs_cache_pressure", val("vfs_cache_pressure", vm.VFSCachePressure))
@@ -258,13 +260,13 @@ func renderVM(w io.Writer, st monitor.Status) error {
 	return s.end(w)
 }
 
-func renderPSI(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "PSI memory (% времени в ожидании памяти)")
+func renderPSI(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.psi"))
 	p := st.PSI
 	if p.Error != nil {
-		s.line("%s", reasonText(p.Error, map[string]string{
-			detect.ReasonNotPresent:  "ядро без PSI",
-			detect.ReasonUnsupported: "PSI отключён (psi=0)",
+		s.line("%s", reasonText(l, p.Error, map[string]string{
+			detect.ReasonNotPresent:  t(l, "render.status.no_psi"),
+			detect.ReasonUnsupported: t(l, "render.status.psi_off"),
 		}))
 		return s.end(w)
 	}
@@ -280,12 +282,12 @@ func renderPSI(w io.Writer, st monitor.Status) error {
 		s.row(l.name, fmt.Sprintf("%.2f", l.v.Avg10), fmt.Sprintf("%.2f", l.v.Avg60), fmt.Sprintf("%.2f", l.v.Avg300))
 	}
 	if p.PressureLevel != "" {
-		s.row("оценка", pressureText(p.PressureLevel)+" (по some avg10)")
+		s.row(t(l, "render.status.assessment"), pressureText(l, p.PressureLevel)+t(l, "render.status.by_some"))
 	}
 	return s.end(w)
 }
 
-func kindText(k string) string {
+func kindText(l i18n.Lang, k string) string {
 	switch k {
 	case detect.KindNVMe:
 		return "NVMe"
@@ -294,85 +296,85 @@ func kindText(k string) string {
 	case detect.KindHDD:
 		return "HDD"
 	case detect.KindVirtual:
-		return "виртуальный"
+		return t(l, "render.kind.virtual")
 	default:
-		return "неизвестно"
+		return t(l, "render.unknown")
 	}
 }
 
 // pressureText — интерпретация уровня давления на память.
-func pressureText(level string) string {
+func pressureText(l i18n.Lang, level string) string {
 	switch level {
 	case monitor.PressureNormal:
-		return "норма"
+		return t(l, "render.pressure.normal")
 	case monitor.PressureElevated:
-		return "повышенное давление"
+		return t(l, "render.pressure.elevated")
 	case monitor.PressureHigh:
-		return "система тормозит"
+		return t(l, "render.pressure.high")
 	case monitor.PressureSevere:
-		return "сильные тормоза"
+		return t(l, "render.pressure.severe")
 	default:
 		return "n/a"
 	}
 }
 
-func renderRootDisk(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "Корневой диск")
+func renderRootDisk(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.root_disk"))
 	rd := st.RootDisk
 	if rd.Error != nil {
-		s.kv("Монтирование", reasonText(rd.Error, nil))
+		s.kv(t(l, "render.status.mount"), reasonText(l, rd.Error, nil))
 	} else {
 		dev := rd.Source
 		if rd.Device != "" && !strings.HasSuffix(rd.Source, "/"+rd.Device) {
 			dev += " (" + rd.Device + ")"
 		}
-		s.kv("Устройство", dev)
-		s.kv("ФС", rd.FSType)
+		s.kv(t(l, "render.status.device"), dev)
+		s.kv(t(l, "render.status.fs"), rd.FSType)
 	}
 	switch {
 	case len(rd.Disks) > 0:
-		s.kv("Тип", kindText(rd.Kind))
+		s.kv(t(l, "render.status.type"), kindText(l, rd.Kind))
 		usbRotational := false
 		for _, d := range rd.Disks {
-			info := []string{kindText(d.Kind), d.Transport}
+			info := []string{kindText(l, d.Kind), d.Transport}
 			if d.Model != "" {
 				info = append(info, d.Model)
 			}
 			if d.SizeBytes != nil {
 				info = append(info, humanBytes(*d.SizeBytes))
 			}
-			s.kv("Диск "+d.Name, strings.Join(info, ", "))
+			s.kv(t(l, "render.status.disk_prefix")+d.Name, strings.Join(info, ", "))
 			if d.Transport == "usb" && d.Rotational != nil && *d.Rotational {
 				usbRotational = true
 			}
 		}
 		if usbRotational {
-			s.kv("", "примечание: USB-мосты часто сообщают rotational=1 и для SSD")
+			s.kv("", t(l, "render.status.usb_note"))
 		}
 	case rd.DiskError != nil:
-		s.kv("Тип", reasonText(rd.DiskError, map[string]string{detect.ReasonNotPresent: "нет блочного устройства"}))
+		s.kv(t(l, "render.status.type"), reasonText(l, rd.DiskError, map[string]string{detect.ReasonNotPresent: t(l, "render.status.no_block")}))
 	default:
-		s.kv("Тип", "n/a")
+		s.kv(t(l, "render.status.type"), "n/a")
 	}
 	if rd.SpaceError != nil {
-		s.kv("Свободно", reasonText(rd.SpaceError, nil))
+		s.kv(t(l, "render.status.free"), reasonText(l, rd.SpaceError, nil))
 	} else {
-		s.kv("Свободно", fmt.Sprintf("%s из %s (доступно без root: %s)",
+		s.kv(t(l, "render.status.free"), fmt.Sprintf(t(l, "render.status.free_value"),
 			bytesOrNA(rd.FreeBytes), bytesOrNA(rd.TotalBytes), bytesOrNA(rd.AvailableBytes)))
 	}
 	return s.end(w)
 }
 
-func renderZram(w io.Writer, st monitor.Status) error {
+func renderZram(l i18n.Lang, w io.Writer, st monitor.Status) error {
 	s := newSection(w, "zram")
 	z := st.Zram
 	switch {
 	case z.Error != nil:
-		s.line("%s", reasonText(z.Error, nil))
+		s.line("%s", reasonText(l, z.Error, nil))
 	case len(z.Devices) == 0:
-		s.line("устройств нет")
+		s.line(t(l, "render.status.no_devices"))
 	default:
-		s.row("УСТРОЙСТВО", "РАЗМЕР", "АЛГОРИТМ", "ДАННЫЕ", "СЖАТО", "ПАМЯТЬ", "СЖАТИЕ")
+		s.row(t(l, "render.col.device"), t(l, "render.col.size"), t(l, "render.col.algorithm"), t(l, "render.col.data"), t(l, "render.col.compressed"), t(l, "render.col.memory"), t(l, "render.col.ratio"))
 		for _, d := range z.Devices {
 			orig, compr, used, ratio := "n/a", "n/a", "n/a", "n/a"
 			if d.MMStat != nil {
@@ -385,26 +387,26 @@ func renderZram(w io.Writer, st monitor.Status) error {
 			}
 			s.row(d.Name, bytesOrNA(d.DiskSizeBytes), strOrNA(d.Algorithm, "n/a"), orig, compr, used, ratio)
 			if d.Error != nil {
-				s.row("", reasonText(d.Error, nil))
+				s.row("", reasonText(l, d.Error, nil))
 			}
 		}
 	}
 	return s.end(w)
 }
 
-func renderProfile(w io.Writer, st monitor.Status) error {
-	s := newSection(w, "Профиль RamPlus")
+func renderProfile(l i18n.Lang, w io.Writer, st monitor.Status) error {
+	s := newSection(w, t(l, "render.status.profile"))
 	if st.Profile == nil {
-		s.line("не применялся (ramplus profile list)")
+		s.line(t(l, "render.status.profile_none"))
 		return s.end(w)
 	}
-	s.kv("Профиль", st.Profile.Name)
-	s.kv("Статус", profile.StatusText(st.Profile.Status))
+	s.kv(t(l, "render.status.profile_name"), st.Profile.Name)
+	s.kv(t(l, "render.status.status"), profile.StatusText(l, st.Profile.Status))
 	for k, v := range st.Profile.Overrides {
 		s.kv("--set", k+"="+v)
 	}
 	if !st.Profile.AppliedAt.IsZero() {
-		s.kv("Применён", st.Profile.AppliedAt.Local().Format("2006-01-02 15:04:05"))
+		s.kv(t(l, "render.status.applied"), st.Profile.AppliedAt.Local().Format("2006-01-02 15:04:05"))
 	}
 	if err := s.end(w); err != nil {
 		return err
@@ -412,9 +414,9 @@ func renderProfile(w io.Writer, st monitor.Status) error {
 	if len(st.Drift) > 0 {
 		var parts []string
 		for _, d := range st.Drift {
-			parts = append(parts, fmt.Sprintf("%s = %s (профиль: %s)", d.Key, d.Actual, d.Expected))
+			parts = append(parts, fmt.Sprintf(t(l, "render.profile.drift_item"), d.Key, d.Actual, d.Expected))
 		}
-		fmt.Fprintf(w, "  ВНИМАНИЕ: значения изменены вручную, профиль не соблюдается: %s\n\n", strings.Join(parts, "; "))
+		fmt.Fprintf(w, t(l, "render.status.drift"), strings.Join(parts, "; "))
 	}
 	return nil
 }

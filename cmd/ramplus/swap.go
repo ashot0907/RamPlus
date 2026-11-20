@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"errors"
 	"fmt"
@@ -33,11 +35,11 @@ type swapFlags struct {
 }
 
 func (f *swapFlags) options(action swap.Action) (swap.Options, error) {
-	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force, Path: f.path, Orphan: f.orphan}
+	o := swap.Options{Action: action, DeleteOld: f.deleteOld, Force: f.force, Path: f.path, Orphan: f.orphan, Lang: lang}
 	if f.size != "" {
 		size, err := swap.ParseSize(f.size)
 		if err != nil {
-			return o, fmt.Errorf("--size: %w", err)
+			return o, i18n.Errorf("cli.flag_error", "--size", err)
 		}
 		o.Size = size
 	}
@@ -45,56 +47,56 @@ func (f *swapFlags) options(action swap.Action) (swap.Options, error) {
 	case "", swap.ExistingKeep, swap.ExistingReplace:
 		o.Existing = swap.ExistingMode(f.existing)
 	default:
-		return o, fmt.Errorf("--existing: ожидается keep или replace, получено %q", f.existing)
+		return o, fmt.Errorf(T("cli.swap.existing_invalid"), f.existing)
 	}
 	return o, nil
 }
 
 func addPlanFlags(cmd *cobra.Command, f *swapFlags, withSize, withExisting bool) {
 	if withSize {
-		cmd.Flags().StringVar(&f.size, "size", "", "размер swapfile: 4G, 512M, 1.5G (двоичные единицы)")
+		cmd.Flags().StringVar(&f.size, "size", "", T("cli.flag.size"))
 	}
 	if withExisting {
-		cmd.Flags().StringVar(&f.path, "path", "", "путь swapfile (по умолчанию /"+swap.DefaultFileName+" на корневой ФС), например /mnt/nvme/"+swap.DefaultFileName)
-		cmd.Flags().StringVar(&f.existing, "existing", "", "существующий swap: keep (по умолчанию) или replace")
-		cmd.Flags().BoolVar(&f.deleteOld, "delete-old", false, "при replace удалить старые swap-файлы")
+		cmd.Flags().StringVar(&f.path, "path", "", T("cli.flag.path1")+swap.DefaultFileName+T("cli.flag.path2")+swap.DefaultFileName)
+		cmd.Flags().StringVar(&f.existing, "existing", "", T("cli.flag.existing"))
+		cmd.Flags().BoolVar(&f.deleteOld, "delete-old", false, T("cli.flag.delete_old"))
 	}
-	cmd.Flags().BoolVar(&f.force, "force", false, "продолжить несмотря на предупреждения (swap на USB-диске; нехватка места при rollback)")
+	cmd.Flags().BoolVar(&f.force, "force", false, T("cli.flag.swap_force"))
 }
 
 func addVerboseFlag(cmd *cobra.Command, f *swapFlags) {
-	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, "показать полное содержимое записываемых файлов (systemd-юнит)")
+	cmd.Flags().BoolVarP(&f.verbose, "verbose", "v", false, T("cli.flag.verbose_unit"))
 }
 
 func addExecFlags(cmd *cobra.Command, f *swapFlags) {
-	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, "не спрашивать подтверждение (для скриптов)")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "только показать план, ничего не менять")
+	cmd.Flags().BoolVarP(&f.yes, "yes", "y", false, T("cli.flag.yes_scripts"))
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, T("cli.flag.dry_run"))
 }
 
 func newSwapCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "swap",
-		Short: "Управление swapfile RamPlus (план → apply → rollback)",
+		Short: T("cli.swap.short"),
 	}
 	cmd.AddCommand(
 		newPlanCmd(),
-		newExecCmd(swap.ActionApply, "apply", "Создать swapfile (нужен root)", true, true),
-		newExecCmd(swap.ActionResize, "resize", "Изменить размер swapfile RamPlus (нужен root)", true, false),
-		newExecCmd(swap.ActionRemove, "remove", "Удалить swapfile RamPlus (нужен root)", false, false),
+		newExecCmd(swap.ActionApply, "apply", T("cli.swap.apply_short"), true, true),
+		newExecCmd(swap.ActionResize, "resize", T("cli.swap.resize_short"), true, false),
+		newExecCmd(swap.ActionRemove, "remove", T("cli.swap.remove_short"), false, false),
 		newCheckCleanCmd(),
 	)
 	return cmd
 }
 
 func newRollbackCmd() *cobra.Command {
-	return newExecCmd(swap.ActionRollback, "rollback", "Отменить последнюю операцию RamPlus (повторный вызов идёт дальше назад)", false, false)
+	return newExecCmd(swap.ActionRollback, "rollback", T("cli.rollback.short"), false, false)
 }
 
 func newPlanCmd() *cobra.Command {
 	var f swapFlags
 	cmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Показать план создания swapfile. Ничего не меняет, root не нужен",
+		Short: T("cli.swap.plan_short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := f.options(swap.ActionApply)
@@ -115,8 +117,8 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: short,
-		Long: short + ".\n\nСначала печатается план и запрашивается подтверждение (--yes — без вопроса).\n" +
-			"Если шаг падает, выполненные шаги откатываются. Журнал: " + journal.StatePath,
+		Long: short + T("cli.swap.exec_long1") +
+			T("cli.swap.exec_long2") + journal.StatePath,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			o, err := f.options(action)
@@ -131,11 +133,11 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 				if !f.yes {
 					return errJSONNeedsYes
 				}
-				return executeJSON(cmd, core.Request{Swap: &o}, confirmer(true, nil, nil))
+				return executeJSON(cmd, core.Request{Swap: &o, Lang: lang}, confirmer(true, nil, nil))
 			}
-			err = execute(cmd, core.Request{Swap: &o}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
+			err = execute(cmd, core.Request{Swap: &o, Lang: lang}, f.verbose, confirmer(f.yes, cmd.InOrStdin(), out))
 			if errors.Is(err, journal.ErrNeedRoot) {
-				return fmt.Errorf("%w: sudo %s (посмотреть план без root: --dry-run)", err, o.Command())
+				return i18n.Errorf("cli.swap.need_root", err, o.Command())
 			}
 			return err
 		},
@@ -143,10 +145,10 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 	if withSize || withExisting {
 		addPlanFlags(cmd, &f, withSize, withExisting)
 	} else {
-		cmd.Flags().BoolVar(&f.force, "force", false, "продолжить несмотря на предупреждения")
+		cmd.Flags().BoolVar(&f.force, "force", false, T("cli.flag.force"))
 	}
 	if action == swap.ActionRemove {
-		cmd.Flags().BoolVar(&f.orphan, "orphan", false, "убрать следы RamPlus без записи в журнале (swapfile, юнит) — с проверкой маркеров")
+		cmd.Flags().BoolVar(&f.orphan, "orphan", false, T("cli.flag.orphan"))
 	}
 	addExecFlags(cmd, &f)
 	addVerboseFlag(cmd, &f)
@@ -157,10 +159,11 @@ func newExecCmd(action swap.Action, use, short string, withSize, withExisting bo
 // execute — построить план под блокировкой, показать, подтвердить, выполнить.
 func execute(cmd *cobra.Command, r core.Request, verbose bool, confirm func(*plan.Plan) (bool, error)) error {
 	out := cmd.OutOrStdout()
-	h := render.Exec(out)
-	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Verbose: verbose}) }
+	h := render.Exec(lang, out)
+	h.Render = func(p *plan.Plan) error { return render.Plan(out, p, render.Options{Verbose: verbose, Lang: lang}) }
 	h.Confirm = confirm
 	h.Origin = cliOrigin()
+	h.Lang = lang
 	_, err := newCore().Run(cmd.Context(), r, h)
 	return err
 }
@@ -171,9 +174,9 @@ func confirmer(yes bool, in io.Reader, out io.Writer) func(*plan.Plan) (bool, er
 			return true, nil
 		}
 		if file, ok := in.(*os.File); !ok || !isTerminal(file) {
-			return false, errors.New("нет терминала для подтверждения: добавьте --yes")
+			return false, errors.New(T("cli.confirm.no_tty"))
 		}
-		fmt.Fprintf(out, "\nПрименить план (%d шагов)? [y/N]: ", len(p.Steps))
+		fmt.Fprintf(out, T("cli.confirm.apply"), len(p.Steps))
 		line, err := bufio.NewReader(in).ReadString('\n')
 		if err != nil && line == "" {
 			return false, nil
@@ -194,22 +197,22 @@ func isTerminal(f *os.File) bool {
 func newCheckCleanCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "check-clean",
-		Short: "Проверить, что в системе нет следов RamPlus (управляемого swap, юнитов, незавершённых операций)",
-		Long: "Смотрит на фактическое состояние: managed в журнале, активный swap RamPlus,\n" +
-			"юниты *ramplus*.swap, незавершённые операции, файлы по путям RamPlus.\n" +
-			"Журнал с историей откаченных операций следом не считается. Код выхода 1 — не чисто.",
+		Short: T("cli.clean.short"),
+		Long: T("cli.clean.long1") +
+			T("cli.clean.long2") +
+			T("cli.clean.long3"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			problems := newCore().CleanProblems(cmd.Context())
+			problems := newCore().CleanProblems(cmd.Context(), lang)
 			out := cmd.OutOrStdout()
 			if len(problems) == 0 {
-				fmt.Fprintln(out, "чисто: следов RamPlus нет")
+				fmt.Fprintln(out, T("cli.clean.ok"))
 				return nil
 			}
 			for _, p := range problems {
 				fmt.Fprintln(out, "- "+p)
 			}
-			return fmt.Errorf("найдены следы RamPlus: %d", len(problems))
+			return fmt.Errorf(T("cli.clean.found"), len(problems))
 		},
 	}
 }

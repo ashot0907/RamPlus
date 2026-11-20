@@ -1,0 +1,43 @@
+#!/bin/sh
+# postrm for the ramplus package. On purge: remove /etc/ramplus (web
+# password) and /var/lib/ramplus — the latter only if the journal manages
+# nothing (otherwise it is still needed for rollback). System users and
+# groups are kept, as Debian policy recommends.
+set -e
+
+STATE=/var/lib/ramplus/state.json
+
+case "$1" in
+remove)
+	if [ -d /run/systemd/system ]; then
+		systemctl daemon-reload || true
+	fi
+	rm -rf /run/ramplus
+	;;
+purge)
+	rm -rf /etc/ramplus
+	if [ -f "$STATE" ]; then
+		if grep -q '^  "managed": null' "$STATE" && grep -q '^  "profile": null' "$STATE" &&
+			! grep -q '"status": "in_progress"' "$STATE" && ! grep -q '"status": "rollback_failed"' "$STATE"; then
+			# Only what RamPlus writes; files someone else put there stay.
+			rm -rf /var/lib/ramplus/state.json /var/lib/ramplus/backups
+			rmdir /var/lib/ramplus 2>/dev/null ||
+				echo "ramplus: /var/lib/ramplus kept: it contains files RamPlus did not create." >&2
+		else
+			echo "ramplus: $STATE still records managed swap or settings — kept for rollback (remove it manually after checking)." >&2
+		fi
+	elif [ -d /var/lib/ramplus ]; then
+		rm -rf /var/lib/ramplus/backups
+		rmdir /var/lib/ramplus 2>/dev/null || true
+	fi
+	echo "ramplus: system users and groups (ramplus, ramplus-admin, ramplus-web) are kept, as Debian policy recommends."
+	echo "         To remove them: sudo userdel ramplus-web; sudo groupdel ramplus-admin; sudo groupdel ramplus"
+	;;
+upgrade | failed-upgrade | abort-install | abort-upgrade | disappear) ;;
+*)
+	echo "postrm called with unknown argument '$1'" >&2
+	exit 1
+	;;
+esac
+
+exit 0

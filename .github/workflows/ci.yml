@@ -22,7 +22,7 @@ jobs:
         run: |
           out=$(gofmt -l .)
           if [ -n "$out" ]; then
-            echo "Файлы не отформатированы (gofmt -w .):"
+            echo "Files need formatting (gofmt -w .):"
             echo "$out"
             exit 1
           fi
@@ -33,9 +33,69 @@ jobs:
       - name: go build
         run: go build ./...
 
-      # Тесты работают на фейках и не меняют систему; запускаются не от root.
+      # Tests use fakes and never change the system; they run as a normal user.
+      # Golden tests check both English and Russian output.
       - name: go test
         run: go test ./...
 
       - name: shellcheck
-        run: shellcheck scripts/*.sh
+        run: shellcheck scripts/*.sh packaging/deb/postinst packaging/deb/prerm packaging/deb/postrm packaging/deb/prepare.sh
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - run: npm run build
+
+  package:
+    runs-on: ubuntu-latest
+    needs: [test, web]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # GoReleaser derives the version from tags
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
+
+      - name: snapshot build (tar.gz + .deb)
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: lintian (Ubuntu 24.04)
+        run: make lintian
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot
+          path: |
+            dist/*.deb
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          retention-days: 7

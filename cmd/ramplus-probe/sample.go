@@ -97,9 +97,9 @@ func SummarizeSamples(ss []Sample) SampleSummary {
 
 func runSample(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("sample", flag.ContinueOnError)
-	interval := fs.Duration("interval", 200*time.Millisecond, "период сэмплирования")
-	out := fs.String("out", "samples.csv", "CSV с замерами")
-	summary := fs.String("summary", "", "JSON-сводка (по умолчанию stdout)")
+	interval := fs.Duration("interval", 200*time.Millisecond, "sampling period")
+	out := fs.String("out", "samples.csv", "CSV with samples")
+	summary := fs.String("summary", "", "JSON summary (default stdout)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

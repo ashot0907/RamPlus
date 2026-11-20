@@ -1,8 +1,9 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"errors"
-	"fmt"
 
 	"github.com/spf13/cobra"
 
@@ -33,9 +34,9 @@ func (f *setupFlags) request() (core.SetupRequest, error) {
 		if err != nil {
 			return r, err
 		}
-		r.Profile = &profile.ProfileRequest{Name: f.profile, Set: set, Force: f.force, Experimental: f.experimental}
+		r.Profile = &profile.ProfileRequest{Name: f.profile, Set: set, Force: f.force, Experimental: f.experimental, Lang: lang}
 	} else if len(f.set) > 0 {
-		return r, errors.New("--set действует только вместе с --profile")
+		return r, errors.New(T("cli.setup.set_needs_profile"))
 	}
 	return r, nil
 }
@@ -44,10 +45,10 @@ func newSetupCmd() *cobra.Command {
 	var f setupFlags
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Swap и профиль одной операцией: одна запись в журнале, один rollback (нужен root)",
-		Long: "Желаемое состояние: swap RamPlus размера --size (создаётся или меняется размер) и/или\n" +
-			"профиль --profile. Сначала печатается план и запрашивается подтверждение.\n" +
-			"Рекомендуемые значения: ramplus recommend. Отменить: ramplus rollback.",
+		Short: T("cli.setup.short"),
+		Long: T("cli.setup.long1") +
+			T("cli.setup.long2") +
+			T("cli.setup.long3"),
 		Example: "  ramplus setup --size 16G --existing=replace --profile zswap-lz4 --dry-run\n" +
 			"  sudo ramplus setup --size 16G --existing=replace --profile zswap-lz4 --experimental",
 		Args: cobra.NoArgs,
@@ -56,9 +57,9 @@ func newSetupCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			req := core.Request{Setup: &r}
+			req := core.Request{Setup: &r, Lang: lang}
 			if f.dryRun {
-				return showPlan(cmd, newCore().SetupPlan(cmd.Context(), r), f.verbose, f.json)
+				return showPlan(cmd, newCore().SetupPlan(cmd.Context(), r, lang), f.verbose, f.json)
 			}
 			if f.json {
 				if !f.yes {
@@ -68,7 +69,7 @@ func newSetupCmd() *cobra.Command {
 			}
 			err = execute(cmd, req, f.verbose, profileConfirmer(f.yes, f.experimental, cmd.InOrStdin(), cmd.OutOrStdout()))
 			if errors.Is(err, journal.ErrNeedRoot) {
-				return fmt.Errorf("%w: sudo ramplus setup ... (план без root: ramplus setup ... --dry-run)", err)
+				return i18n.Errorf("cli.setup.need_root", err)
 			}
 			return err
 		},
@@ -77,9 +78,9 @@ func newSetupCmd() *cobra.Command {
 	addVerboseFlag(cmd, &f.swapFlags)
 	addExecFlags(cmd, &f.swapFlags)
 	addJSONFlag(cmd, &f.json)
-	cmd.Flags().StringVar(&f.profile, "profile", "", "профиль: "+joinNames())
-	cmd.Flags().StringArrayVar(&f.set, "set", nil, "точечное изменение поверх профиля: ключ=значение")
-	cmd.Flags().BoolVar(&f.experimental, "experimental", false, "подтвердить экспериментальный профиль (для скриптов)")
+	cmd.Flags().StringVar(&f.profile, "profile", "", T("cli.flag.profile")+joinNames())
+	cmd.Flags().StringArrayVar(&f.set, "set", nil, T("cli.flag.set"))
+	cmd.Flags().BoolVar(&f.experimental, "experimental", false, T("cli.flag.experimental_setup"))
 	return cmd
 }
 

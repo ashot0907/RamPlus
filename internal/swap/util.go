@@ -1,11 +1,14 @@
 package swap
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"fmt"
 
-	"github.com/ashot0907/ramplus/internal/plan"
 	"strconv"
 	"strings"
+
+	"github.com/ashot0907/ramplus/internal/plan"
 )
 
 const (
@@ -24,7 +27,7 @@ const MinSize = 256 * MiB
 func ParseSize(s string) (uint64, error) {
 	in := strings.TrimSpace(s)
 	if in == "" {
-		return 0, fmt.Errorf("пустой размер")
+		return 0, i18n.Errorf("size.err.empty")
 	}
 	num := strings.TrimRight(in, "KMGTkmgtiBb")
 	suffix := strings.ToUpper(strings.TrimSpace(in[len(num):]))
@@ -32,20 +35,20 @@ func ParseSize(s string) (uint64, error) {
 	mult := map[string]float64{"": 1, "K": KiB, "M": MiB, "G": GiB, "T": TiB}
 	m, ok := mult[suffix]
 	if !ok {
-		return 0, fmt.Errorf("неизвестная единица в %q (используйте K, M, G, T)", s)
+		return 0, i18n.Errorf("size.err.unit", s)
 	}
 	v, err := strconv.ParseFloat(strings.TrimSpace(num), 64)
 	if err != nil || v <= 0 {
-		return 0, fmt.Errorf("неверный размер %q", s)
+		return 0, i18n.Errorf("size.err.invalid", s)
 	}
 	b := v * m
 	if b > 1<<60 {
-		return 0, fmt.Errorf("слишком большой размер %q", s)
+		return 0, i18n.Errorf("size.err.too_big", s)
 	}
 	if r := uint64(b) / MiB * MiB; r > 0 {
 		return r, nil
 	}
-	return 0, fmt.Errorf("слишком маленький размер %q", s)
+	return 0, i18n.Errorf("size.err.too_small", s)
 }
 
 // FormatSize — человекочитаемый размер в IEC-единицах.

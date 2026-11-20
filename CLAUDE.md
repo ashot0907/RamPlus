@@ -42,8 +42,11 @@ Open-source инструмент для Linux (десктоп и серверы)
 - internal/webauth — argon2id, формат файла пароля (чистые функции)
 - internal/webui — собранный фронтенд (go:embed)
 - web/ — React-фронтенд (словари ru/en, vitest)
-- packaging/ — systemd-юниты ramplusd и ramplus-web, sysusers.d, tmpfiles.d
-  (позже polkit)
+- packaging/ — systemd-юниты ramplusd и ramplus-web, sysusers.d, tmpfiles.d,
+  deb/ (maintainer-скрипты .deb, lintian overrides), aur/ (PKGBUILD); сборка
+  релиза и .deb — .goreleaser.yaml (позже polkit)
+- internal/i18n — каталог сообщений (ключ → en/ru), выбор языка (--lang,
+  LANG/LC_*, Accept-Language); CLI по умолчанию на английском
 - scripts/ — нагрузочные тесты
 
 ## Безопасность

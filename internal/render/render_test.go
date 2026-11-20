@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"path/filepath"
 	"strings"
@@ -37,7 +39,7 @@ func TestRenderAllUnavailable(t *testing.T) {
 	st.RootDisk.Error = &detect.Unavailable{Reason: detect.ReasonPermissionDenied}
 
 	var buf bytes.Buffer
-	if err := Status(&buf, st); err != nil {
+	if err := Status(i18n.RU, &buf, st); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -62,7 +64,7 @@ func TestRenderFixtures(t *testing.T) {
 		SysBlock:    td("sysblock"),
 	})
 	var buf bytes.Buffer
-	if err := Status(&buf, st); err != nil {
+	if err := Status(i18n.RU, &buf, st); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
@@ -83,7 +85,7 @@ func TestPressureText(t *testing.T) {
 		monitor.PressureNormal: "норма", monitor.PressureElevated: "повышенное давление",
 		monitor.PressureHigh: "система тормозит", monitor.PressureSevere: "сильные тормоза", "": "n/a",
 	} {
-		if got := pressureText(level); got != want {
+		if got := pressureText(i18n.RU, level); got != want {
 			t.Errorf("pressureText(%q) = %q", level, got)
 		}
 	}
@@ -95,7 +97,7 @@ func TestStatusProfileSection(t *testing.T) {
 		Profile: &monitor.ProfileInfo{Name: "zswap-lz4", Status: "experimental", AppliedAt: time.Date(2026, 11, 17, 12, 0, 0, 0, time.Local)},
 		Drift:   []monitor.DriftItem{{Key: "vm.swappiness", Expected: "60", Actual: "80"}},
 	}
-	if err := renderProfile(&out, st); err != nil {
+	if err := renderProfile(i18n.RU, &out, st); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"zswap-lz4", "экспериментальный", "ВНИМАНИЕ: значения изменены вручную", "vm.swappiness = 80 (профиль: 60)"} {
@@ -104,7 +106,7 @@ func TestStatusProfileSection(t *testing.T) {
 		}
 	}
 	out.Reset()
-	renderProfile(&out, monitor.Status{})
+	renderProfile(i18n.RU, &out, monitor.Status{})
 	if !strings.Contains(out.String(), "не применялся") {
 		t.Errorf("no profile:\n%s", out.String())
 	}
@@ -115,7 +117,7 @@ func TestRenderCurrent(t *testing.T) {
 	pf.Profile = &profile.AppliedProfile{Name: "default", Status: "modified", Values: map[string]string{"vm.swappiness": "80", "zswap.enabled": "N"}}
 	pf.Baseline = &profile.Baseline{Values: map[string]string{"vm.swappiness": "60", "zswap.enabled": "N"}}
 	var out bytes.Buffer
-	if err := ProfileCurrent(&out, pf); err != nil {
+	if err := ProfileCurrent(i18n.RU, &out, pf); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"изменённый пользователем", "Отличия от исходных значений", "vm.swappiness: 60 → 80", "zswap.enabled: N → Y",

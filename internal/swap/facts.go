@@ -1,9 +1,10 @@
 package swap
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"context"
-	"errors"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -190,7 +191,7 @@ func resolveTarget(sys system.System, requested string, managed *Managed, root d
 		} else if real, err := sys.FS.EvalSymlinks(dir); err != nil {
 			t.ParentErr = err
 		} else if st, err := sys.FS.Stat(real); err != nil || !st.IsDir() {
-			t.ParentErr = &fs.PathError{Op: "stat", Path: real, Err: errors.New("не каталог")}
+			t.ParentErr = &fs.PathError{Op: "stat", Path: real, Err: i18n.Errorf("swap.err.not_dir")}
 		} else if path != BtrfsPath {
 			path = filepath.Join(real, filepath.Base(path))
 		}

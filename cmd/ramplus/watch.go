@@ -40,7 +40,7 @@ func (w *watcher) run(ctx context.Context) error {
 		} else if frame > 1 {
 			b.WriteString("\n")
 		}
-		render.WatchFrame(&b, st, peaks, now, w.interval)
+		render.WatchFrame(lang, &b, st, peaks, now, w.interval)
 		if _, err := io.WriteString(w.out, b.String()); err != nil {
 			return err
 		}
@@ -49,9 +49,9 @@ func (w *watcher) run(ctx context.Context) error {
 		}
 		select {
 		case <-ctx.Done():
-			return render.WatchSummary(w.out, peaks, w.now())
+			return render.WatchSummary(lang, w.out, peaks, w.now())
 		case <-ticker.C:
 		}
 	}
-	return render.WatchSummary(w.out, peaks, w.now())
+	return render.WatchSummary(lang, w.out, peaks, w.now())
 }

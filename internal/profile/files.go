@@ -1,6 +1,8 @@
 package profile
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"fmt"
 	"sort"
@@ -133,7 +135,7 @@ func SysctlKeys(values map[string]string) []string { return sortedKeys(values, G
 func ZswapKeys(values map[string]string) []string  { return sortedKeys(values, GroupZswap) }
 
 func header(what, name, status string) string {
-	return fmt.Sprintf("%s: do not edit, use `ramplus profile`.\n# Профиль: %s (%s)\n", Marker, name, StatusText(status)) +
+	return fmt.Sprintf("%s: do not edit, use `ramplus profile`.\n# Профиль: %s (%s)\n", Marker, name, StatusText(i18n.RU, status)) +
 		"# " + what + "\n"
 }
 

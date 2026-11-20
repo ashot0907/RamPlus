@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"fmt"
 	"io"
 	"strings"
@@ -10,24 +12,24 @@ import (
 )
 
 // ProfileCurrent — ramplus profile current.
-func ProfileCurrent(w io.Writer, pf profile.Facts) error {
+func ProfileCurrent(l i18n.Lang, w io.Writer, pf profile.Facts) error {
 	ap, base := pf.Profile, pf.Baseline
 	if ap == nil {
-		fmt.Fprintln(w, "Профиль RamPlus не применён.")
+		fmt.Fprintln(w, t(l, "render.profile.none"))
 	} else {
-		fmt.Fprintf(w, "Профиль: %s — %s, применён %s\n", ap.Name, profile.StatusText(ap.Status), ap.AppliedAt.Local().Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(w, t(l, "render.profile.applied"), ap.Name, profile.StatusText(l, ap.Status), ap.AppliedAt.Local().Format("2006-01-02 15:04:05"))
 		for k, v := range ap.Overrides {
-			fmt.Fprintf(w, "  изменено пользователем: %s=%s\n", k, v)
+			fmt.Fprintf(w, t(l, "render.profile.override"), k, v)
 		}
 	}
 	fmt.Fprintln(w)
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ПАРАМЕТР\tСЕЙЧАС\tПРОФИЛЬ\tИСХОДНОЕ\tОТКУДА")
+	fmt.Fprintln(tw, t(l, "render.profile.columns"))
 	var fromBase []string
 	for _, pr := range profile.Params {
 		cur, present := pf.Values[pr.Key]
 		if !present {
-			cur = "нет в ядре"
+			cur = t(l, "render.not_in_kernel")
 		}
 		want, orig := "—", "—"
 		if ap != nil && ap.Values[pr.Key] != "" {
@@ -39,22 +41,22 @@ func ProfileCurrent(w io.Writer, pf profile.Facts) error {
 				fromBase = append(fromBase, fmt.Sprintf("%s: %s → %s", pr.Key, orig, cur))
 			}
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", pr.Key, cur, want, orig, pf.SourceOf(pr.Key))
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\n", pr.Key, cur, want, orig, pf.SourceOf(pr.Key).Text(l))
 	}
 	tw.Flush()
 	if base == nil {
-		fmt.Fprintln(w, "\nИсходные значения не сохранены (снимаются при первом ramplus profile apply).")
+		fmt.Fprintln(w, t(l, "render.profile.no_baseline"))
 	} else if len(fromBase) == 0 {
-		fmt.Fprintln(w, "\nОтличий от исходных значений нет.")
+		fmt.Fprintln(w, t(l, "render.profile.no_diff"))
 	} else {
-		fmt.Fprintf(w, "\nОтличия от исходных значений (сняты %s): %s\n", base.CapturedAt.Local().Format("2006-01-02 15:04:05"), strings.Join(fromBase, "; "))
+		fmt.Fprintf(w, t(l, "render.profile.diff"), base.CapturedAt.Local().Format("2006-01-02 15:04:05"), strings.Join(fromBase, "; "))
 	}
 	if d := profile.ProfileDrift(ap, pf.Values); len(d) > 0 {
 		var parts []string
 		for _, r := range d {
-			parts = append(parts, fmt.Sprintf("%s = %s (профиль: %s)", r.Key, dash(r.Current), r.New))
+			parts = append(parts, fmt.Sprintf(t(l, "render.profile.drift_item"), r.Key, dash(r.Current), r.New))
 		}
-		fmt.Fprintf(w, "ВНИМАНИЕ: значения изменены вручную после apply: %s\n", strings.Join(parts, "; "))
+		fmt.Fprintf(w, t(l, "render.profile.drift"), strings.Join(parts, "; "))
 	}
 	return nil
 }

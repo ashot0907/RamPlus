@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bytes"
 	"strings"
 
@@ -13,7 +15,7 @@ import (
 // History — операции из журнала (ID, время, команда, статус, можно ли
 // откатить, название для человека). Только чтение, root не нужен; нет
 // журнала — пустая история.
-func (c *Core) History() (journal.History, error) {
+func (c *Core) History(l i18n.Lang) (journal.History, error) {
 	st, err := journal.LoadState(c.Sys)
 	if err != nil {
 		return journal.HistoryOf(journal.State{}), err
@@ -30,14 +32,17 @@ func (c *Core) History() (journal.History, error) {
 			if t, ok := byID[op.Target]; ok {
 				tc := changeOf(t)
 				ch.Target = &tc
-				h.Operations[i].Title = "Отмена: " + lowerFirst(OperationTitle(t))
+				h.Operations[i].Title = i18n.T(l, "history.undo", lowerFirst(OperationTitle(l, t)))
 			} else {
-				h.Operations[i].Title = "Отмена операции"
+				h.Operations[i].Title = i18n.T(l, "history.undo_unknown")
 			}
 		} else {
-			h.Operations[i].Title = OperationTitle(op)
+			h.Operations[i].Title = OperationTitle(l, op)
 		}
 		h.Operations[i].Change = &ch
+		if op.ErrorMsg != nil {
+			h.Operations[i].Error = op.ErrorMsg.Text(l)
+		}
 	}
 	return h, nil
 }
@@ -61,27 +66,27 @@ func changeOf(op journal.Operation) plan.ChangeView {
 
 // OperationTitle — название операции для человека: «Запас 16 GB из SSD +
 // режим «Сжатие — быстрое»».
-func OperationTitle(op journal.Operation) string {
+func OperationTitle(l i18n.Lang, op journal.Operation) string {
 	ch := changeOf(op)
 	swapPart := func() string {
 		switch {
 		case ch.SwapAfter == nil && ch.SwapBefore == nil:
 			return ""
 		case ch.SwapAfter == nil:
-			return "запас из SSD убран"
+			return i18n.T(l, "history.swap_removed")
 		case ch.SwapBefore == nil:
-			return "запас " + gbText(*ch.SwapAfter) + " из SSD"
+			return i18n.T(l, "history.swap_added", gbText(*ch.SwapAfter))
 		case *ch.SwapBefore != *ch.SwapAfter:
-			return "запас из SSD: " + gbText(*ch.SwapBefore) + " → " + gbText(*ch.SwapAfter)
+			return i18n.T(l, "history.swap_resized", gbText(*ch.SwapBefore), gbText(*ch.SwapAfter))
 		}
 		return ""
 	}
 	profilePart := func() string {
 		switch {
 		case ch.ProfileAfter == "" && ch.ProfileBefore != "":
-			return "режим сброшен к исходным значениям"
+			return i18n.T(l, "history.mode_reset")
 		case ch.ProfileAfter != "":
-			return "режим «" + profile.FriendlyName(ch.ProfileAfter) + "»"
+			return i18n.T(l, "history.mode", profile.FriendlyName(l, ch.ProfileAfter))
 		}
 		return ""
 	}
@@ -102,7 +107,7 @@ func OperationTitle(op journal.Operation) string {
 	}
 	title := strings.Join(nonEmpty(parts), " + ")
 	if title == "" {
-		title = plan.InfoOf(op.Action).Title
+		title = plan.ActionTitle(l, op.Action)
 	}
 	return upperFirst(title)
 }

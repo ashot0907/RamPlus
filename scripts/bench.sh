@@ -14,21 +14,21 @@ set -euo pipefail
 
 usage() {
 	cat <<'EOF'
-Использование: sudo scripts/bench.sh [--i-know-this-changes-swap] [опции]
+Usage: sudo scripts/bench.sh [--i-know-this-changes-swap] [options]
 
-  --probe PATH        бинарник ramplus-probe (по умолчанию ./ramplus-probe)
-  --out DIR           каталог результатов (по умолчанию ./bench-results-<время>)
-  --runs N            прогонов на конфигурацию (3)
-  --duration SEC      длительность нагрузки (30)
-  --work-size SIZE    объём памяти нагрузки (по умолчанию 1.3 × RAM)
-  --swap-size SIZE    размер swapfile (4G)
-  --pause SEC         пауза после сброса состояния (10)
-  --configs LIST      через запятую: no-swap,swap,zswap-lz4,zswap-zstd,zswap-lzo-zbud
-  --workloads LIST    через запятую: hot,hot-probe,cold
-  --data LIST         через запятую: compressible,random (для hot-probe и cold)
-  --pool-sweep        добавить zswap-lz4 с max_pool_percent 35 и 50 (zswap-lz4 = 20%)
-  --quick             1 прогон, 15 с, пауза 3 с — проверить, что всё работает
-                      (≈ 25–30 мин; --pool-sweep в него не входит)
+  --probe PATH        ramplus-probe binary (default ./ramplus-probe)
+  --out DIR           results directory (default ./bench-results-<time>)
+  --runs N            runs per configuration (3)
+  --duration SEC      load duration (30)
+  --work-size SIZE    load memory size (default 1.3 × RAM)
+  --swap-size SIZE    swapfile size (4G)
+  --pause SEC         pause after the state reset (10)
+  --configs LIST      comma-separated: no-swap,swap,zswap-lz4,zswap-zstd,zswap-lzo-zbud
+  --workloads LIST    comma-separated: hot,hot-probe,cold
+  --data LIST         comma-separated: compressible,random (for hot-probe and cold)
+  --pool-sweep        add zswap-lz4 with max_pool_percent 35 and 50 (zswap-lz4 = 20%)
+  --quick             1 run, 15 s, pause 3 s — check that everything works
+                      (≈ 25–30 min; --pool-sweep is not included)
 EOF
 }
 
@@ -54,33 +54,33 @@ POOL_SWEEP=0
 while (($# > 0)); do
 	case $1 in
 	--i-know-this-changes-swap) I_KNOW=1 ;;
-	--probe) PROBE=${2:?--probe: нужен путь}; shift ;;
-	--out) OUT=${2:?--out: нужен каталог}; shift ;;
-	--runs) RUNS=${2:?--runs: нужно число}; shift ;;
-	--duration) DURATION=${2:?--duration: нужно число секунд}; shift ;;
-	--work-size) WORK_SIZE=${2:?--work-size: нужен размер}; shift ;;
-	--swap-size) SWAP_SIZE=${2:?--swap-size: нужен размер}; shift ;;
-	--pause) PAUSE=${2:?--pause: нужно число секунд}; shift ;;
-	--configs) IFS=, read -r -a CONFIGS <<<"${2:?--configs: нужен список}"; shift ;;
-	--workloads) IFS=, read -r -a WORKLOADS <<<"${2:?--workloads: нужен список}"; shift ;;
-	--data) IFS=, read -r -a DATAS <<<"${2:?--data: нужен список}"; shift ;;
+	--probe) PROBE=${2:?--probe: a path is required}; shift ;;
+	--out) OUT=${2:?--out: a directory is required}; shift ;;
+	--runs) RUNS=${2:?--runs: a number is required}; shift ;;
+	--duration) DURATION=${2:?--duration: a number of seconds is required}; shift ;;
+	--work-size) WORK_SIZE=${2:?--work-size: a size is required}; shift ;;
+	--swap-size) SWAP_SIZE=${2:?--swap-size: a size is required}; shift ;;
+	--pause) PAUSE=${2:?--pause: a number of seconds is required}; shift ;;
+	--configs) IFS=, read -r -a CONFIGS <<<"${2:?--configs: a list is required}"; shift ;;
+	--workloads) IFS=, read -r -a WORKLOADS <<<"${2:?--workloads: a list is required}"; shift ;;
+	--data) IFS=, read -r -a DATAS <<<"${2:?--data: a list is required}"; shift ;;
 	--quick) RUNS=1; DURATION=15; PAUSE=3 ;;
 	--pool-sweep) POOL_SWEEP=1 ;;
 	-h | --help) usage; exit 0 ;;
-	*) usage >&2; die "неизвестный аргумент: $1" ;;
+	*) usage >&2; die "unknown argument: $1" ;;
 	esac
 	shift
 done
 
 [[ ${RAMPLUS_VM_TEST:-} == 1 || $I_KNOW == 1 ]] ||
-	die "бенчмарк отключает весь swap и меняет zswap. Запуск: RAMPLUS_VM_TEST=1 (в VM) или --i-know-this-changes-swap"
-[[ $EUID -eq 0 ]] || die "нужен root (swapon/swapoff, параметры zswap, drop_caches)"
-[[ $RUNS =~ ^[1-9][0-9]*$ && $DURATION =~ ^[1-9][0-9]*$ && $PAUSE =~ ^[0-9]+$ ]] || die "--runs/--duration/--pause: нужны целые числа"
+	die "the benchmark turns off all swap and changes zswap. Run with RAMPLUS_VM_TEST=1 (in a VM) or --i-know-this-changes-swap"
+[[ $EUID -eq 0 ]] || die "root is required (swapon/swapoff, zswap parameters, drop_caches)"
+[[ $RUNS =~ ^[1-9][0-9]*$ && $DURATION =~ ^[1-9][0-9]*$ && $PAUSE =~ ^[0-9]+$ ]] || die "--runs/--duration/--pause: integers are required"
 PROBE=$(readlink -f "$PROBE")
-[[ -x $PROBE ]] || die "нет $PROBE (make build-probe)"
+[[ -x $PROBE ]] || die "no $PROBE (make build-probe)"
 for w in "${WORKLOADS[@]}"; do
 	if [[ $w == hot ]] && ! command -v stress-ng >/dev/null; then
-		die "для нагрузки hot нужен stress-ng (apt install stress-ng) или уберите её: --workloads hot-probe,cold"
+		die "the hot workload needs stress-ng (apt install stress-ng), or drop it: --workloads hot-probe,cold"
 	fi
 done
 
@@ -96,7 +96,7 @@ MEM_TOTAL_KB=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
 [[ -n $OUT ]] || OUT="./bench-results-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUT/runs"
 OUT=$(readlink -f "$OUT")
-[[ ! -e $BENCH_SWAP ]] || die "$BENCH_SWAP уже существует — удалите его вручную"
+[[ ! -e $BENCH_SWAP ]] || die "$BENCH_SWAP already exists — remove it manually"
 
 ########################################################################
 # Исходное состояние и его восстановление.
@@ -114,7 +114,7 @@ fi
 restore() {
 	local rc=$?
 	set +e
-	log "восстановление исходного состояния"
+	log "restoring the original state"
 	jobs -p | xargs -r kill -TERM 2>/dev/null
 	swapoff "$BENCH_SWAP" 2>/dev/null
 	rm -f "$BENCH_SWAP"
@@ -169,7 +169,7 @@ reset_state() {
 	# Только активные устройства: swapoff -a падает на неактивных строках fstab.
 	while read -r name; do
 		[[ -n $name ]] || continue
-		swapoff "$name" || die "swapoff $name не удался (не хватает RAM?) — состояние будет восстановлено"
+		swapoff "$name" || die "swapoff $name failed (not enough RAM?) — the state will be restored"
 	done < <(swapon --show=NAME --noheadings --raw)
 	if [[ -n ${ORIG_ZSWAP[enabled]:-} ]]; then
 		zswap_set enabled N || true
@@ -197,37 +197,37 @@ configure() {
 	zswap-lz4) comp=lz4 pool=zsmalloc ;;
 	zswap-zstd) comp=zstd pool=zsmalloc ;;
 	zswap-lzo-zbud) comp=lzo pool=zbud ;;
-	*) SKIP_REASON="неизвестная конфигурация"; return 1 ;;
+	*) SKIP_REASON="unknown configuration"; return 1 ;;
 	esac
 	swapon -p 10 "$BENCH_SWAP"
 	[[ -n $comp ]] || return 0
 
 	if [[ ! -d $ZSWAP ]]; then
-		SKIP_REASON="zswap нет в ядре"
+		SKIP_REASON="the kernel has no zswap"
 		return 1
 	fi
 	modprobe "$comp" 2>/dev/null || true
 	if ! zswap_set compressor "$comp"; then
-		SKIP_REASON="компрессор $comp недоступен"
+		SKIP_REASON="compressor $comp is not available"
 		return 1
 	fi
 	if [[ -e $ZSWAP/zpool ]]; then
 		modprobe "$pool" 2>/dev/null || true
 		if ! zswap_set zpool "$pool"; then
-			SKIP_REASON="zpool $pool недоступен"
+			SKIP_REASON="zpool $pool is not available"
 			return 1
 		fi
 	elif [[ $pool != zsmalloc ]]; then
-		SKIP_REASON="в ядре нет выбора zpool (только zsmalloc), $pool недоступен"
+		SKIP_REASON="the kernel has no zpool choice (only zsmalloc), $pool is not available"
 		return 1
 	fi
 	if ! zswap_set max_pool_percent "$pct"; then
-		SKIP_REASON="не удалось задать max_pool_percent=$pct"
+		SKIP_REASON="could not set max_pool_percent=$pct"
 		return 1
 	fi
 	POOL_PCT=$pct
 	if ! zswap_set enabled Y; then
-		SKIP_REASON="не удалось включить zswap"
+		SKIP_REASON="could not enable zswap"
 		return 1
 	fi
 }
@@ -247,11 +247,11 @@ run_one() {
 	local dir="$OUT/runs/${config}__${workload}__${data}__${n}"
 	local sp="" lp="" rc=0 start end dur status="" note="" limit
 	mkdir -p "$dir"
-	log "$config / $workload / $data / прогон $n"
+	log "$config / $workload / $data / run $n"
 
 	reset_state
 	if ! configure "$config"; then
-		log "  пропуск: $SKIP_REASON"
+		log "  skipped: $SKIP_REASON"
 		write_meta "$dir" "$config" "$workload" "$data" "$n" skipped 0 0 "$SKIP_REASON"
 		return 0
 	fi
@@ -294,7 +294,7 @@ run_one() {
 	local cls
 	cls=$("$PROBE" classify --workload "$workload" --rc "$rc" --log "$dir/workload.log" --duration "$dur" --limit "$limit")
 	IFS=$'\t' read -r status note <<<"$cls"
-	log "  $status за ${dur}s${note:+ — $note}"
+	log "  $status in ${dur}s${note:+ — $note}"
 	write_meta "$dir" "$config" "$workload" "$data" "$n" "$status" "$rc" "$dur" "$note" "$POOL_PCT"
 }
 
@@ -315,11 +315,11 @@ printf '{"date":"%s","kernel":"%s","virt":"%s","mem_total_mib":%d,"swap_size":"%
 	"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(uname -r)" "$VIRT" "$((MEM_TOTAL_KB / 1024))" "$SWAP_SIZE" "$WORK_SIZE" \
 	"$DURATION" "$RUNS" "${ROOT_INFO//\"/}" "$DEBUGFS" >"$OUT/env.json"
 if [[ $DEBUGFS != true ]]; then
-	log "debugfs zswap недоступен ($ZSWAP_DEBUG): лимит пула оценивается по пику пула"
+	log "zswap debugfs is not available ($ZSWAP_DEBUG): the pool limit is estimated from the pool peak"
 fi
 
 if [[ $VIRT != none && -n $VIRT ]]; then
-	log "ВНИМАНИЕ: запуск в VM ($VIRT) — цифры производительности нерепрезентативны (см. scripts/BENCH.md)"
+	log "WARNING: running in a VM ($VIRT) — performance numbers are not representative (see scripts/BENCH.md)"
 fi
 variants=0
 for w in "${WORKLOADS[@]}"; do
@@ -331,8 +331,8 @@ for w in "${WORKLOADS[@]}"; do
 done
 TOTAL_RUNS=$((${#CONFIGS[@]} * variants * RUNS))
 PER_RUN=$((PAUSE + 2 * DURATION + 30)) # пауза + заполнение памяти + нагрузка + сброс swap
-log "результаты: $OUT; нагрузка $WORK_SIZE, swapfile $SWAP_SIZE, $DURATION с × $RUNS прогона"
-log "прогонов: $TOTAL_RUNS (${#CONFIGS[@]} конфигураций × $variants вариантов нагрузки × $RUNS), примерно $((TOTAL_RUNS * PER_RUN / 60)) мин"
+log "results: $OUT; load $WORK_SIZE, swapfile $SWAP_SIZE, $DURATION s × $RUNS runs"
+log "runs: $TOTAL_RUNS (${#CONFIGS[@]} configurations × $variants workload variants × $RUNS), about $((TOTAL_RUNS * PER_RUN / 60)) min"
 
 create_bench_swap
 
@@ -349,4 +349,4 @@ for workload in "${WORKLOADS[@]}"; do
 done
 
 "$PROBE" report "$OUT"
-log "готово: $OUT/results.csv, $OUT/summary.md"
+log "done: $OUT/results.csv, $OUT/summary.md"

@@ -13,24 +13,24 @@ import (
 // renderRecommendation — текст ramplus recommend.
 func renderRecommendation(w io.Writer, r core.Recommendation) error {
 	pr := func(format string, a ...any) { fmt.Fprintf(w, format, a...) }
-	pr("Рекомендация RamPlus\n\n")
+	fmt.Fprint(w, T("cli.recommend.header"))
 	pr("  RAM: %s (MemTotal %s)\n", plan.FormatSize(r.RAMRoundedBytes), plan.FormatSize(r.RAMBytes))
 	if t := r.Target; t != nil {
 		avail := "n/a"
 		if t.Available != nil {
 			avail = plan.FormatSize(*t.Available)
 		}
-		pr("  место: %s (%s на %s, %s), свободно %s, можно до %s\n", t.Path, t.FSType, t.MountPoint, t.DiskKind, avail, plan.FormatSize(r.SwapMaxBytes))
+		pr(T("cli.recommend.target"), t.Path, t.FSType, t.MountPoint, t.DiskKind, avail, plan.FormatSize(r.SwapMaxBytes))
 	}
 	if r.SwapSizeBytes != nil {
-		pr("  swap RamPlus: %s — %s\n", plan.FormatSize(*r.SwapSizeBytes), r.SwapReason)
+		pr(T("cli.recommend.swap"), plan.FormatSize(*r.SwapSizeBytes), r.SwapReason)
 	} else {
-		pr("  swap RamPlus: не рекомендуется — %s\n", r.SwapReason)
+		pr(T("cli.recommend.no_swap"), r.SwapReason)
 	}
 	if r.Existing != nil {
-		pr("  существующий swap: --existing=%s — %s\n", *r.Existing, r.ExistingReason)
+		pr(T("cli.recommend.existing"), *r.Existing, r.ExistingReason)
 	}
-	pr("  профиль: %s (%s) — %s\n", r.Profile, r.ProfileStatus, r.ProfileReason)
+	pr(T("cli.recommend.profile"), r.Profile, r.ProfileStatus, r.ProfileReason)
 	for _, n := range r.Notes {
 		pr("  [%s] %s\n", n.Code, n.Message)
 	}
@@ -45,7 +45,7 @@ func renderRecommendation(w io.Writer, r core.Recommendation) error {
 	if r.ProfileStatus == "experimental" {
 		cmd += " --experimental"
 	}
-	_, err := fmt.Fprintf(w, "\nПлан: %s --dry-run\n", cmd)
+	_, err := fmt.Fprintf(w, T("cli.recommend.plan"), cmd)
 	return err
 }
 
@@ -54,17 +54,17 @@ func newRecommendCmd() *cobra.Command {
 	var path string
 	cmd := &cobra.Command{
 		Use:   "recommend",
-		Short: "Что RamPlus советует для этой машины: размер swap, существующий swap, профиль. Только чтение",
+		Short: T("cli.recommend.short"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			r := newCore().Recommend(cmd.Context(), path)
+			r := newCore().Recommend(cmd.Context(), path, lang)
 			if asJSON {
 				return writeJSON(cmd.OutOrStdout(), r)
 			}
 			return renderRecommendation(cmd.OutOrStdout(), r)
 		},
 	}
-	cmd.Flags().StringVar(&path, "path", "", "место swapfile (по умолчанию — как у swap apply)")
+	cmd.Flags().StringVar(&path, "path", "", T("cli.flag.recommend_path"))
 	addJSONFlag(cmd, &asJSON)
 	return cmd
 }

@@ -15,7 +15,7 @@ import (
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
-		Short: "Демон ramplusd: доступность и версия",
+		Short: T("cli.daemon.short"),
 	}
 	cmd.AddCommand(newDaemonStatusCmd())
 	return cmd
@@ -38,8 +38,8 @@ func newDaemonStatusCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Доступен ли демон, его версия и совпадает ли она с версией CLI",
-		Long:  "Только чтение. Код выхода 1 — демон недоступен.",
+		Short: T("cli.daemon.status_short"),
+		Long:  T("cli.daemon.status_long"),
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ds := DaemonStatus{Socket: socket, CLIVersion: version}
@@ -62,21 +62,21 @@ func newDaemonStatusCmd() *cobra.Command {
 			if !ds.Available {
 				return errors.New(ds.Error)
 			}
-			match := "совпадает с CLI"
+			match := T("cli.daemon.version_match")
 			if !ds.VersionMatch {
-				match = fmt.Sprintf("НЕ совпадает с CLI (%s) — перезапустите демон после обновления: sudo systemctl restart ramplusd", version)
+				match = fmt.Sprintf(T("cli.daemon.version_mismatch"), version)
 			}
-			fmt.Fprintf(out, "ramplusd: доступен (%s)\n", socket)
-			fmt.Fprintf(out, "  версия:   %s — %s\n", h.Version, match)
+			fmt.Fprintf(out, T("cli.daemon.available"), socket)
+			fmt.Fprintf(out, T("cli.daemon.version"), h.Version, match)
 			fmt.Fprintf(out, "  API:      %s\n", h.API)
-			fmt.Fprintf(out, "  работает: %s (pid %d)\n", (time.Duration(h.UptimeSeconds) * time.Second).String(), h.PID)
+			fmt.Fprintf(out, T("cli.daemon.uptime"), (time.Duration(h.UptimeSeconds) * time.Second).String(), h.PID)
 			if !h.Root {
-				fmt.Fprintln(out, "  внимание: демон запущен не от root — apply будет отказывать")
+				fmt.Fprintln(out, T("cli.daemon.not_root"))
 			}
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&socket, "socket", api.DefaultSocket, "путь сокета демона")
+	cmd.Flags().StringVar(&socket, "socket", api.DefaultSocket, T("cli.daemon.socket_flag"))
 	addJSONFlag(cmd, &asJSON)
 	return cmd
 }
@@ -84,11 +84,11 @@ func newDaemonStatusCmd() *cobra.Command {
 func daemonError(socket string, err error) string {
 	switch {
 	case errors.Is(err, fs.ErrNotExist), errors.Is(err, syscall.ENOENT):
-		return fmt.Sprintf("ramplusd недоступен: нет сокета %s (демон не запущен: sudo systemctl start ramplusd)", socket)
+		return fmt.Sprintf(T("cli.daemon.no_socket"), socket)
 	case errors.Is(err, syscall.ECONNREFUSED):
-		return fmt.Sprintf("ramplusd недоступен: %s никто не слушает (демон упал? journalctl -u ramplusd)", socket)
+		return fmt.Sprintf(T("cli.daemon.refused"), socket)
 	case errors.Is(err, fs.ErrPermission), errors.Is(err, syscall.EACCES):
-		return fmt.Sprintf("нет доступа к %s: нужно быть в группе ramplus (sudo usermod -aG ramplus $USER и перелогиниться)", socket)
+		return fmt.Sprintf(T("cli.daemon.no_access"), socket)
 	}
-	return fmt.Sprintf("ramplusd недоступен (%s): %v", socket, err)
+	return fmt.Sprintf(T("cli.daemon.unreachable"), socket, err)
 }

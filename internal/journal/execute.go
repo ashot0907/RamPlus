@@ -3,18 +3,18 @@ package journal
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/sys"
 )
 
 // Ошибки, которые CLI показывает пользователю.
 var (
-	ErrNeedRoot  = errors.New("нужны права root: запустите через sudo")
-	ErrBlocked   = errors.New("план заблокирован проверками — ничего не изменено")
-	ErrCancelled = errors.New("отменено пользователем — ничего не изменено")
+	ErrNeedRoot  = i18n.Errorf("journal.need_root")
+	ErrBlocked   = i18n.Errorf("journal.blocked")
+	ErrCancelled = i18n.Errorf("journal.cancelled")
 )
 
 // Hooks — взаимодействие с пользователем при выполнении (вывод CLI,
@@ -28,6 +28,8 @@ type Hooks struct {
 	Finished func()                           // операция зафиксирована
 	// Origin — откуда и кем запрошена операция (пишется в журнал).
 	Origin Origin
+	// Lang — язык сообщений о ходе выполнения и ошибок (для вызывающего).
+	Lang i18n.Lang
 }
 
 // Execute выполняет операцию. Порядок:
@@ -40,7 +42,7 @@ func Execute(ctx context.Context, s sys.System, build func(context.Context) (*pl
 		return nil, ErrNeedRoot
 	}
 	if err := s.FS.MkdirAll(StateDir, 0o755); err != nil {
-		return nil, fmt.Errorf("создание %s: %w", StateDir, err)
+		return nil, i18n.Errorf("journal.mkdir_failed", StateDir, err)
 	}
 	unlock, err := s.FS.Lock(LockPath)
 	if err != nil {
@@ -81,7 +83,7 @@ func Execute(ctx context.Context, s sys.System, build func(context.Context) (*pl
 func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 	state, err := LoadState(s)
 	if err != nil {
-		return fmt.Errorf("чтение %s: %w", StatePath, err)
+		return i18n.Errorf("journal.read_failed", StatePath, err)
 	}
 	now := s.Now()
 	op := Operation{
@@ -114,7 +116,7 @@ func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 		return s.FS.WriteFileAtomic(StatePath, b, 0o644)
 	}
 	if err := save(); err != nil {
-		return fmt.Errorf("запись журнала %s (до изменений, ничего не изменено): %w", StatePath, err)
+		return i18n.Errorf("journal.write_before_failed", StatePath, err)
 	}
 
 	if h.Started != nil {
@@ -141,11 +143,12 @@ func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 		}
 		state.Operations[cur].Status = st
 		state.Operations[cur].Error = runErr.Error()
+		state.Operations[cur].ErrorMsg = i18n.Store(runErr)
 		if st == OpFailed {
 			state.Operations[cur].Applied = []Applied{} // всё откачено
 		}
 		if err := save(); err != nil {
-			return fmt.Errorf("%w (и не удалось обновить журнал: %v)", runErr, err)
+			return i18n.Errorf("journal.update_failed_after_error", runErr, err)
 		}
 		return runErr
 	}
@@ -156,7 +159,7 @@ func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 		// Ровно одна операция — по позиции в стеке, с проверкой ID.
 		// Никаких массовых изменений статуса по ID.
 		if t.Index < 0 || t.Index >= cur || state.Operations[t.Index].ID != t.ID {
-			return fmt.Errorf("шаги выполнены, но цель rollback #%d (%s) не найдена в журнале — проверьте %s вручную", t.Index, t.ID, StatePath)
+			return i18n.Errorf("journal.rollback_target_missing", t.Index, t.ID, StatePath)
 		}
 		state.Operations[t.Index].Status = OpRolledBack
 		if state.Operations[t.Index].BaselineCaptured {
@@ -165,7 +168,7 @@ func run(ctx context.Context, s sys.System, p *plan.Plan, h Hooks) error {
 	}
 	if err := save(); err != nil {
 		// Изменения выполнены, но журнал не обновился — это нужно знать.
-		return fmt.Errorf("шаги выполнены, но не удалось записать итог в %s: %w", StatePath, err)
+		return i18n.Errorf("journal.commit_write_failed", StatePath, err)
 	}
 	if h.Finished != nil {
 		h.Finished()

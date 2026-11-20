@@ -22,7 +22,7 @@ type NoMemoryError struct {
 }
 
 func (e *NoMemoryError) Error() string {
-	return fmt.Sprintf("не удалось выделить %d MiB: недостаточно памяти (%v)", e.Size>>20, e.Err)
+	return fmt.Sprintf("could not allocate %d MiB: not enough memory (%v)", e.Size>>20, e.Err)
 }
 
 func (e *NoMemoryError) Unwrap() error { return e.Err }
@@ -37,7 +37,7 @@ var mmapAnon = func(size int) ([]byte, error) {
 // allocate выделяет size байт; отказ ядра — *NoMemoryError.
 func allocate(size uint64, mmap func(int) ([]byte, error)) ([]byte, error) {
 	if size == 0 {
-		return nil, errors.New("нулевой размер")
+		return nil, errors.New("zero size")
 	}
 	if size > math.MaxInt {
 		return nil, &NoMemoryError{Size: size, Err: unix.ENOMEM}
@@ -47,7 +47,7 @@ func allocate(size uint64, mmap func(int) ([]byte, error)) ([]byte, error) {
 		if errors.Is(err, unix.ENOMEM) || errors.Is(err, unix.EAGAIN) {
 			return nil, &NoMemoryError{Size: size, Err: err}
 		}
-		return nil, fmt.Errorf("mmap %d байт: %w", size, err)
+		return nil, fmt.Errorf("mmap %d bytes: %w", size, err)
 	}
 	return b, nil
 }
@@ -63,10 +63,10 @@ func touch(buf []byte, v byte) {
 // runLatency — latency-probe: маленький "интерактивный" процесс.
 func runLatency(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("latency", flag.ContinueOnError)
-	sizeS := fs.String("size", "50M", "сколько своей памяти трогать")
-	interval := fs.Duration("interval", 100*time.Millisecond, "период")
-	duration := fs.Duration("duration", 0, "длительность (0 — до SIGTERM)")
-	out := fs.String("out", "", "куда писать JSON-сводку (по умолчанию stdout)")
+	sizeS := fs.String("size", "50M", "how much of its own memory to touch")
+	interval := fs.Duration("interval", 100*time.Millisecond, "period")
+	duration := fs.Duration("duration", 0, "duration (0 — until SIGTERM)")
+	out := fs.String("out", "", "where to write the JSON summary (default stdout)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -121,19 +121,19 @@ type WorkloadResult struct {
 // с долей hot (1.0 — все страницы активны, как stress-ng --vm-keep).
 func runWorkload(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("workload", flag.ContinueOnError)
-	sizeS := fs.String("size", "", "сколько памяти выделить, например 5G")
-	hot := fs.Float64("hot", 0.15, "доля активно используемой памяти (0..1]")
+	sizeS := fs.String("size", "", "how much memory to allocate, for example 5G")
+	hot := fs.Float64("hot", 0.15, "share of actively used memory (0..1]")
 	data := fs.String("data", DataCompressible, "compressible|random")
-	duration := fs.Duration("duration", 30*time.Second, "сколько работать после заполнения")
-	out := fs.String("out", "", "куда писать JSON (по умолчанию stdout)")
+	duration := fs.Duration("duration", 30*time.Second, "how long to work after filling")
+	out := fs.String("out", "", "where to write JSON (default stdout)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *sizeS == "" {
-		return fmt.Errorf("--size обязателен")
+		return fmt.Errorf("--size is required")
 	}
 	if *hot <= 0 || *hot > 1 {
-		return fmt.Errorf("--hot должен быть в (0, 1]")
+		return fmt.Errorf("--hot must be in (0, 1]")
 	}
 	size, err := ParseSize(*sizeS)
 	if err != nil {

@@ -1,6 +1,10 @@
 package plan
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/ashot0907/ramplus/internal/i18n"
+)
 
 // SchemaVersion — версия JSON-схемы плана (--json, API демона).
 const SchemaVersion = 1
@@ -12,8 +16,8 @@ type StepView struct {
 	Description string `json:"description"`
 }
 
-// ViewOf — шаг для JSON.
-func ViewOf(s Step) StepView { return StepView{Step: s, Description: s.Describe()} }
+// ViewOf — шаг для JSON с описанием на языке l.
+func ViewOf(s Step, l i18n.Lang) StepView { return StepView{Step: s, Description: s.Describe(l)} }
 
 // planJSON — JSON-представление плана. Порядок и имена полей — часть
 // публичной схемы (schema_version).
@@ -58,7 +62,7 @@ func (p Plan) MarshalJSON() ([]byte, error) {
 		j.Profile = &v
 	}
 	for _, s := range p.Steps {
-		j.Steps = append(j.Steps, ViewOf(s))
+		j.Steps = append(j.Steps, ViewOf(s, p.Lang))
 	}
 	j.Summary.Created = nonNil(j.Summary.Created)
 	j.Summary.Disabled = nonNil(j.Summary.Disabled)

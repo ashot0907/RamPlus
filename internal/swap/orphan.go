@@ -2,12 +2,12 @@ package swap
 
 import (
 	"bufio"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/journal"
 	system "github.com/ashot0907/ramplus/internal/sys"
 )
@@ -16,30 +16,38 @@ import (
 // RamPlus и/или юнит RamPlus (журнал удалён вручную, потерян, или swap
 // создан и брошен).
 type Orphan struct {
-	Path     string `json:"path,omitempty"`      // swapfile ("" — только юнит без What=)
-	Unit     string `json:"unit,omitempty"`      // имя юнита ("" — юнита нет)
-	Exists   bool   `json:"exists"`              // файл Path существует
-	Regular  bool   `json:"regular"`             // обычный файл
-	Size     uint64 `json:"size_bytes"`          // размер файла
-	Swap     bool   `json:"swap_signature"`      // сигнатура SWAPSPACE2
-	Active   bool   `json:"active"`              // swap включён
-	Priority int    `json:"priority"`            // если активен
-	Marker   bool   `json:"unit_marker"`         // в юните «# Managed by RamPlus»
-	Problem  string `json:"problem,omitempty"`   // почему это нельзя убрать автоматически
-	FSType   string `json:"fs_type,omitempty"`   // ФС под Path
-	Subvol   string `json:"btrfs_dir,omitempty"` // подтом RamPlus (/ramplus-swap) с этим файлом
+	Path     string    `json:"path,omitempty"`      // swapfile ("" — только юнит без What=)
+	Unit     string    `json:"unit,omitempty"`      // имя юнита ("" — юнита нет)
+	Exists   bool      `json:"exists"`              // файл Path существует
+	Regular  bool      `json:"regular"`             // обычный файл
+	Size     uint64    `json:"size_bytes"`          // размер файла
+	Swap     bool      `json:"swap_signature"`      // сигнатура SWAPSPACE2
+	Active   bool      `json:"active"`              // swap включён
+	Priority int       `json:"priority"`            // если активен
+	Marker   bool      `json:"unit_marker"`         // в юните «# Managed by RamPlus»
+	Problem  i18n.Text `json:"problem,omitempty"`   // почему это нельзя убрать автоматически
+	FSType   string    `json:"fs_type,omitempty"`   // ФС под Path
+	Subvol   string    `json:"btrfs_dir,omitempty"` // подтом RamPlus (/ramplus-swap) с этим файлом
 }
 
 // Label — описание для человека.
-func (o Orphan) Label() string {
-	var parts []string
+func (o Orphan) Label() i18n.Text {
+	var parts []i18n.Text
 	if o.Path != "" {
-		parts = append(parts, o.Path)
+		parts = append(parts, i18n.Raw(o.Path))
 	}
 	if o.Unit != "" {
-		parts = append(parts, "юнит "+o.Unit)
+		parts = append(parts, i18n.Msg("orphan.unit", o.Unit))
 	}
-	return strings.Join(parts, ", ")
+	return i18n.Join{Sep: ", ", Parts: parts}
+}
+
+// sortKey — порядок следов: путь, затем юнит (от языка не зависит).
+func (o Orphan) sortKey() string {
+	if o.Path == "" {
+		return "\uffff" + o.Unit // как раньше: следы без пути — после путей
+	}
+	return o.Path + "\x00" + o.Unit
 }
 
 // unitWhat — значение What= из юнита.
@@ -93,11 +101,11 @@ func (f *Facts) findOrphans(sys system.System) {
 		o.Unit, o.Marker = name, marker
 		switch {
 		case err != nil:
-			o.Problem = fmt.Sprintf("юнит %s не прочитать: %v", u, err)
+			o.Problem = i18n.Msg("orphan.problem.unreadable", u, err.Error())
 		case !marker:
-			o.Problem = fmt.Sprintf("в юните %s нет маркера RamPlus (%q)", u, journal.Marker)
+			o.Problem = i18n.Msg("orphan.problem.no_marker", u, journal.Marker)
 		case what == "":
-			o.Problem = fmt.Sprintf("в юните %s нет What=", u)
+			o.Problem = i18n.Msg("orphan.problem.no_what", u)
 		}
 	}
 	for _, p := range []string{ManagedPath, BtrfsPath, LegacyPath} {
@@ -131,16 +139,16 @@ func (f *Facts) findOrphans(sys system.System) {
 				o.Subvol = BtrfsDir
 			}
 		}
-		if o.Problem != "" {
+		if o.Problem != nil {
 			continue
 		}
 		switch {
 		case !filepath.IsAbs(o.Path):
-			o.Problem = fmt.Sprintf("путь %q не абсолютный", o.Path)
+			o.Problem = i18n.Msg("orphan.problem.relative", o.Path)
 		case o.Exists && !o.Regular:
-			o.Problem = o.Path + ": не обычный файл"
+			o.Problem = i18n.Msg("orphan.problem.not_regular", o.Path)
 		case o.Exists && !o.Swap:
-			o.Problem = o.Path + ": нет сигнатуры swap (SWAPSPACE2) — это не swapfile"
+			o.Problem = i18n.Msg("orphan.problem.no_signature", o.Path)
 		}
 	}
 	f.Orphans = f.Orphans[:0]
@@ -149,7 +157,7 @@ func (f *Facts) findOrphans(sys system.System) {
 			f.Orphans = append(f.Orphans, *o)
 		}
 	}
-	sort.Slice(f.Orphans, func(i, j int) bool { return f.Orphans[i].Label() < f.Orphans[j].Label() })
+	sort.Slice(f.Orphans, func(i, j int) bool { return f.Orphans[i].sortKey() < f.Orphans[j].sortKey() })
 }
 
 // planOrphan — ramplus swap remove --orphan: убрать следы RamPlus без
@@ -158,30 +166,30 @@ func (f *Facts) findOrphans(sys system.System) {
 func (p *Plan) planOrphan(f Facts) {
 	p.ManagedAfter = f.Managed // запись в журнале (если есть) не трогаем
 	if len(f.Orphans) == 0 {
-		p.add(LevelFail, "orphan.none", "следы", "следов RamPlus без записи в журнале нет — убирать нечего")
+		p.add(LevelFail, "orphan.none")
 		return
 	}
 	for _, o := range f.Orphans {
-		if o.Problem != "" {
-			p.add(LevelFail, "orphan.not_ours", "следы", "%s: %s — RamPlus это не трогает, разберитесь вручную", o.Label(), o.Problem)
+		if o.Problem != nil {
+			p.add(LevelFail, "orphan.not_ours", o.Label(), o.Problem)
 			continue
 		}
-		var facts []string
+		var facts []i18n.Text
 		if o.Active {
-			facts = append(facts, fmt.Sprintf("активен, приоритет %d", o.Priority))
+			facts = append(facts, i18n.Msg("orphan.fact.active", o.Priority))
 		}
 		if o.Exists {
-			facts = append(facts, FormatSize(o.Size), "сигнатура SWAPSPACE2")
+			facts = append(facts, i18n.Raw(FormatSize(o.Size)), i18n.Msg("orphan.fact.signature"))
 		}
 		if o.Marker {
-			facts = append(facts, "юнит с маркером RamPlus")
+			facts = append(facts, i18n.Msg("orphan.fact.marker"))
 		}
-		p.add(LevelInfo, "orphan.found", "следы", "%s (%s) — нет в журнале %s", o.Label(), strings.Join(facts, ", "), journal.StatePath)
+		p.add(LevelInfo, "orphan.found", o.Label(), i18n.Join{Sep: ", ", Parts: facts}, journal.StatePath)
 	}
 	if p.Blocked() {
 		return
 	}
-	p.checkResume(f, "удаление")
+	p.checkResume(f, i18n.Msg("swap.op.remove"))
 	for _, o := range f.Orphans {
 		if o.Active {
 			p.Steps = append(p.Steps, Step{Kind: KindSwapoff, Path: o.Path, Priority: o.Priority, Size: o.Size})
@@ -211,7 +219,7 @@ func (p *Plan) planOrphan(f Facts) {
 		}
 	}
 	if remaining == 0 {
-		p.add(LevelWarn, "swap.none_left", "swap", "после удаления в системе не останется swap")
+		p.add(LevelWarn, "swap.none_left")
 	}
 }
 
@@ -219,7 +227,7 @@ func (p *Plan) planOrphan(f Facts) {
 // который можно убрать remove --orphan.
 func (f Facts) isOrphan(path string) bool {
 	for _, o := range f.Orphans {
-		if o.Problem == "" && (o.Path == path || (o.Unit != "" && filepath.Join(UnitDir, o.Unit) == path) || o.Subvol == path) {
+		if o.Problem == nil && (o.Path == path || (o.Unit != "" && filepath.Join(UnitDir, o.Unit) == path) || o.Subvol == path) {
 			return true
 		}
 	}

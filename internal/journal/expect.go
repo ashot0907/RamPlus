@@ -1,9 +1,7 @@
 package journal
 
 import (
-	"fmt"
-	"sort"
-
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/sys"
 )
@@ -19,10 +17,10 @@ const (
 
 // VerifyPending проверяет артефакт записи со статусом pending (процесс
 // упал между записью pending и done). Только чтение.
-func VerifyPending(s sys.System, a Applied) (Verdict, string) {
+func VerifyPending(s sys.System, a Applied) (Verdict, i18n.Text) {
 	h, ok := handler(a.Step.Kind)
 	if !ok || h.Verify == nil {
-		return VerdictAbsent, "отменять нечего"
+		return VerdictAbsent, i18n.Msg("verify.nothing")
 	}
 	return h.Verify(&Env{Sys: s}, a)
 }
@@ -31,9 +29,10 @@ func VerifyPending(s sys.System, a Applied) (Verdict, string) {
 // Следующая ожидаемость с тем же Key заменяет предыдущую (например, файл
 // создан, потом удалён).
 type Expectation struct {
-	Key   string
-	Path  string // для ignore ("" — не игнорируется)
-	Check func(s sys.System) string
+	Key  string
+	Path string // для ignore ("" — не игнорируется)
+	// Check — расхождение (nil — совпадает).
+	Check func(s sys.System) i18n.Text
 }
 
 // ConfigMax — файлы до этого размера читаются целиком (конфиги).
@@ -42,24 +41,24 @@ const ConfigMax = 1 << 20
 // FileExpect — файл (не) существует; size > 0 — с таким размером;
 // content != nil — с таким содержимым.
 func FileExpect(path string, exists, dir bool, size uint64, content *string) Expectation {
-	return Expectation{Key: "file:" + path, Path: path, Check: func(s sys.System) string {
+	return Expectation{Key: "file:" + path, Path: path, Check: func(s sys.System) i18n.Text {
 		st, err := s.FS.Stat(path)
 		got := err == nil
 		switch {
 		case exists && !got:
-			return fmt.Sprintf("%s: нет, а по журналу должен существовать", path)
+			return i18n.Msg("expect.file_missing", path)
 		case !exists && got:
-			return fmt.Sprintf("%s: существует, а по журналу удалён", path)
+			return i18n.Msg("expect.file_exists", path)
 		case !exists:
-			return ""
+			return nil
 		case !dir && size > 0 && uint64(st.Size()) != size:
-			return fmt.Sprintf("%s: размер %s, по журналу %s", path, plan.FormatSize(uint64(st.Size())), plan.FormatSize(size))
+			return i18n.Msg("expect.file_size", path, plan.FormatSize(uint64(st.Size())), plan.FormatSize(size))
 		case content != nil && st.Mode().IsRegular() && st.Size() <= ConfigMax:
 			if b, err := s.FS.ReadFile(path); err == nil && string(b) != *content {
-				return fmt.Sprintf("%s: содержимое отличается от записанного RamPlus", path)
+				return i18n.Msg("expect.file_content", path)
 			}
 		}
-		return ""
+		return nil
 	}}
 }
 
@@ -67,7 +66,7 @@ func FileExpect(path string, exists, dir bool, size uint64, content *string) Exp
 // op по журналу (выполненные шаги, по порядку). Возвращает расхождения;
 // пустой список — можно откатывать. ignore — пути прерванного шага: их
 // состояние неизвестно и проверяется отдельно (VerifyPending).
-func CheckExpected(s sys.System, op Operation, ignore map[string]bool) []string {
+func CheckExpected(s sys.System, op Operation, ignore map[string]bool) []i18n.Text {
 	var order []string
 	byKey := map[string]Expectation{}
 	for _, a := range op.Applied {
@@ -85,16 +84,15 @@ func CheckExpected(s sys.System, op Operation, ignore map[string]bool) []string 
 			byKey[e.Key] = e
 		}
 	}
-	var out []string
+	var out []i18n.Text
 	for _, k := range order {
 		e := byKey[k]
 		if e.Path != "" && ignore[e.Path] {
 			continue
 		}
-		if msg := e.Check(s); msg != "" {
+		if msg := e.Check(s); msg != nil {
 			out = append(out, msg)
 		}
 	}
-	sort.Strings(out)
 	return out
 }

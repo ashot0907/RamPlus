@@ -176,7 +176,7 @@ func LoadRunsCSV(r io.Reader) ([]Run, error) {
 		return nil, err
 	}
 	if len(rows) < 2 {
-		return nil, errors.New("results.csv пуст")
+		return nil, errors.New("results.csv is empty")
 	}
 	col := map[string]int{}
 	for i, h := range rows[0] {
@@ -292,7 +292,7 @@ func WriteCSV(w io.Writer, runs []Run) error {
 
 func runReport(args []string) error {
 	if len(args) != 1 {
-		return errors.New("использование: ramplus-probe report <каталог>")
+		return errors.New("usage: ramplus-probe report <dir>")
 	}
 	dir := args[0]
 	runs, err := LoadRuns(dir)
@@ -304,7 +304,7 @@ func runReport(args []string) error {
 		// Каталог без runs/ — пересобрать сводку по готовому results.csv.
 		f, err := os.Open(filepath.Join(dir, "results.csv"))
 		if err != nil {
-			return fmt.Errorf("в %s нет ни runs/, ни results.csv", dir)
+			return fmt.Errorf("%s has neither runs/ nor results.csv", dir)
 		}
 		runs, err = LoadRunsCSV(f)
 		f.Close()

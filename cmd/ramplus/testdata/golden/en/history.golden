@@ -1,0 +1,368 @@
+$ ramplus history
+Journal /var/lib/ramplus/state.json is empty: RamPlus has not changed anything.
+
+$ ramplus swap apply --size 4G --yes
+Plan: swapfile creation
+Command: ramplus swap apply --size 4G
+
+Now
+  swap        none
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+
+Choices
+  Location (--path): /ramplus.swapfile  [default — flag not given]
+      alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile
+    * /ramplus.swapfile ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB
+  Size (--size): 4.0 GiB  [given]
+      up to 280.0 GiB allowed on /
+
+Checks
+  [ok]   root: running as root
+  [info] path: /ramplus.swapfile (default)
+  [ok]   filesystem: ext4 on /dev/fake_ (mount point /): swapfile via fallocate
+  [ok]   disk: NVMe (nvme)
+  [info] priority: the new swap gets priority 10 (no other swap)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 296.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+
+Steps
+   1. create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   2. chmod 600 /ramplus.swapfile
+   3. mkswap /ramplus.swapfile
+   4. swapon /ramplus.swapfile (priority 10)
+   5. write /etc/systemd/system/ramplus.swapfile.swap
+   6. systemctl daemon-reload
+   7. systemctl enable ramplus.swapfile.swap
+  (content of files to be written: --verbose)
+
+Summary
+  swap: 0 B → 4.0 GiB
+  created: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus swap apply --size 4G
+
+Running (operation <OPID>)
+  [1/7] create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [2/7] chmod 600 /ramplus.swapfile ... ok
+  [3/7] mkswap /ramplus.swapfile ... ok
+  [4/7] swapon /ramplus.swapfile (priority 10) ... ok
+  [5/7] write /etc/systemd/system/ramplus.swapfile.swap ... ok
+  [6/7] systemctl daemon-reload ... ok
+  [7/7] systemctl enable ramplus.swapfile.swap ... ok
+Done.
+
+$ ramplus profile apply zswap-lz4 --experimental --yes
+Plan: profile zswap-lz4 — experimental: not confirmed by an SSD benchmark
+Command: ramplus profile apply zswap-lz4 --experimental
+Profile: zswap + lz4. zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.
+Evidence: none (no scripts/bench.sh results on a real SSD)
+
+Parameters
+  PARAMETER         NOW     NEW       CURRENT SOURCE
+  zswap.enabled     N    →  Y         kernel default
+  zswap.compressor  lzo  →  lz4       kernel default
+  zswap.zpool       —       zsmalloc  not in this kernel — skipped
+  unchanged: zswap.max_pool_percent=20, vm.swappiness=60, vm.page-cluster=3, vm.watermark_scale_factor=10, vm.vfs_cache_pressure=100
+
+Checks
+  [ok]   root: running as root
+  [warn] status: experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)
+  [info] zswap.zpool: this kernel has no zpool parameter: zsmalloc is used — skipped
+  [info] original values: first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset
+
+Steps
+   1. zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)
+   2. zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)
+   3. write /etc/sysctl.d/99-ramplus.conf
+   4. write /etc/systemd/system/ramplus-zswap.service
+   5. systemctl daemon-reload
+   6. systemctl enable ramplus-zswap.service
+  (content of files to be written: --verbose)
+
+Summary
+  right away (runtime): parameters changed: 2
+  created: /etc/sysctl.d/99-ramplus.conf, /etc/systemd/system/ramplus-zswap.service
+  deleted: —
+  kernel cmdline and GRUB: not changed
+
+Result: the plan can be applied. Apply: sudo ramplus profile apply zswap-lz4 --experimental
+
+Running (operation <OPID>)
+  [1/6] zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor) ... ok
+  [2/6] zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled) ... ok
+  [3/6] write /etc/sysctl.d/99-ramplus.conf ... ok
+  [4/6] write /etc/systemd/system/ramplus-zswap.service ... ok
+  [5/6] systemctl daemon-reload ... ok
+  [6/6] systemctl enable ramplus-zswap.service ... ok
+Done.
+
+$ ramplus swap resize --size 6G --yes
+Plan: swapfile resize
+Command: ramplus swap resize --size 6G
+
+Now
+  swap        /ramplus.swapfile  file  4.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] size: 4.0 GiB → 6.0 GiB
+  [ok]   disk: NVMe (nvme)
+  [ok]   space: / has 300.0 GiB of 500.0 GiB available; after creation 298.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. delete file /ramplus.swapfile (4.0 GiB)
+   3. create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (priority 10)
+
+Summary
+  swap: 4.0 GiB → 6.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus swap resize --size 6G
+
+Running (operation <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] delete file /ramplus.swapfile (4.0 GiB) ... ok
+  [3/6] create /ramplus.swapfile, 6.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (priority 10) ... ok
+Done.
+
+$ ramplus rollback --yes
+Plan: undo of the last operation
+Command: ramplus rollback
+
+Now
+  swap        /ramplus.swapfile  file  6.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 6.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [info] rollback: undoing operation <OPID> from 2026-11-16 12:00:47: ramplus swap resize --size 6G
+  [ok]   state: the system is in the state recorded in the journal after operation <OPID>
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. delete file /ramplus.swapfile (6.0 GiB)
+   3. create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600
+   4. chmod 600 /ramplus.swapfile
+   5. mkswap /ramplus.swapfile
+   6. swapon /ramplus.swapfile (priority 10)
+
+Summary
+  swap: 6.0 GiB → 4.0 GiB
+  created: —
+  disabled: —
+  deleted: —
+
+Result: the plan can be applied. Apply: sudo ramplus rollback
+
+Running (operation <OPID>)
+  [1/6] swapoff /ramplus.swapfile ... ok
+  [2/6] delete file /ramplus.swapfile (6.0 GiB) ... ok
+  [3/6] create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600 ... ok
+  [4/6] chmod 600 /ramplus.swapfile ... ok
+  [5/6] mkswap /ramplus.swapfile ... ok
+  [6/6] swapon /ramplus.swapfile (priority 10) ... ok
+Done.
+
+$ ramplus swap remove --yes
+Plan: swapfile removal
+Command: ramplus swap remove
+
+Now
+  swap        /ramplus.swapfile  file  4.0 GiB  used 0 B  priority 10  RamPlus
+  target FS   ext4 on /dev/fake_, mount / (sda, NVMe, nvme)
+  space on /  300.0 GiB available of 500.0 GiB
+  RAM         8.0 GiB available of 16.0 GiB
+  RamPlus     /ramplus.swapfile, 4.0 GiB, priority 10, unit ramplus.swapfile.swap
+
+Checks
+  [ok]   root: running as root
+  [warn] swap: after removal the system will have no swap
+  [ok]   memory for swapoff /ramplus.swapfile: /ramplus.swapfile is not in use — swapoff is safe
+
+Steps
+   1. swapoff /ramplus.swapfile
+   2. systemctl disable ramplus.swapfile.swap
+   3. delete /etc/systemd/system/ramplus.swapfile.swap
+   4. systemctl daemon-reload
+   5. delete file /ramplus.swapfile (4.0 GiB)
+
+Summary
+  swap: 4.0 GiB → 0 B
+  created: —
+  disabled: /ramplus.swapfile
+  deleted: /etc/systemd/system/ramplus.swapfile.swap, /ramplus.swapfile
+
+Result: the plan can be applied. Apply: sudo ramplus swap remove
+
+Running (operation <OPID>)
+  [1/5] swapoff /ramplus.swapfile ... ERROR: writing the journal /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json
+  undo [1/1] swapon /ramplus.swapfile (priority 10) ... ok
+error: step 1/5 (swapoff /ramplus.swapfile): writing the journal /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; the completed steps were rolled back, the system is in its original state
+
+$ ramplus history
+Journal: /var/lib/ramplus/state.json (operations: 5)
+
+  ID                                 TIME                 STATUS              UNDO  OPERATION                    SOURCE                      COMMAND
+  <OPID>  2026-11-16 12:00:01  completed           yes   4 GB swap from the SSD       from the terminal (golden)  ramplus swap apply --size 4G
+  <OPID>  2026-11-16 12:00:26  completed           next  Mode «Fast compression»      from the terminal (golden)  ramplus profile apply zswap-lz4 --experimental
+  <OPID>  2026-11-16 12:00:47  undone              —     SSD swap: 4 GB → 6 GB        from the terminal (golden)  ramplus swap resize --size 6G
+  <OPID>  2026-11-16 12:00:09  completed           —     Undo: sSD swap: 4 GB → 6 GB  from the terminal (golden)  ramplus rollback (undoes <OPID>)
+  <OPID>  2026-11-16 12:00:31  error, rolled back  —     SSD swap removed             from the terminal (golden)  ramplus swap remove
+
+<OPID>: step 1/5 (swapoff /ramplus.swapfile): writing the journal /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; the completed steps were rolled back, the system is in its original state
+
+UNDO: «next» — ramplus rollback will undo this operation; «yes» — repeated rollbacks will reach it.
+
+$ ramplus history --json
+{
+  "schema_version": 1,
+  "journal": "/var/lib/ramplus/state.json",
+  "journal_version": 3,
+  "operations": [
+    {
+      "id": "<OPID>",
+      "action": "apply",
+      "command": "ramplus swap apply --size 4G",
+      "status": "committed",
+      "started_at": "2026-11-16T12:00:01Z",
+      "finished_at": "2026-11-16T12:00:24Z",
+      "steps": 7,
+      "undoable": true,
+      "rollback_next": false,
+      "title": "4 GB swap from the SSD",
+      "change": {
+        "swap_before_bytes": null,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "",
+        "profile_after": ""
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
+    },
+    {
+      "id": "<OPID>",
+      "action": "profile-apply",
+      "command": "ramplus profile apply zswap-lz4 --experimental",
+      "status": "committed",
+      "started_at": "2026-11-16T12:00:26Z",
+      "finished_at": "2026-11-16T12:00:45Z",
+      "steps": 6,
+      "undoable": true,
+      "rollback_next": true,
+      "title": "Mode «Fast compression»",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
+    },
+    {
+      "id": "<OPID>",
+      "action": "resize",
+      "command": "ramplus swap resize --size 6G",
+      "status": "rolled_back",
+      "started_at": "2026-11-16T12:00:47Z",
+      "finished_at": "2026-11-16T12:00:07Z",
+      "steps": 6,
+      "undoable": false,
+      "rollback_next": false,
+      "title": "SSD swap: 4 GB → 6 GB",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": 6442450944,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
+    },
+    {
+      "id": "<OPID>",
+      "action": "rollback",
+      "command": "ramplus rollback",
+      "status": "committed",
+      "target": "<OPID>",
+      "started_at": "2026-11-16T12:00:09Z",
+      "finished_at": "2026-11-16T12:00:29Z",
+      "steps": 6,
+      "undoable": false,
+      "rollback_next": false,
+      "title": "Undo: sSD swap: 4 GB → 6 GB",
+      "change": {
+        "swap_before_bytes": 6442450944,
+        "swap_after_bytes": 4294967296,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4",
+        "target": {
+          "swap_before_bytes": 4294967296,
+          "swap_after_bytes": 6442450944,
+          "profile_before": "zswap-lz4",
+          "profile_after": "zswap-lz4"
+        }
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
+    },
+    {
+      "id": "<OPID>",
+      "action": "remove",
+      "command": "ramplus swap remove",
+      "status": "failed",
+      "started_at": "2026-11-16T12:00:31Z",
+      "finished_at": "2026-11-16T12:00:37Z",
+      "steps": 0,
+      "error": "step 1/5 (swapoff /ramplus.swapfile): writing the journal /var/lib/ramplus/state.json: injected failure #95 at write /var/lib/ramplus/state.json; the completed steps were rolled back, the system is in its original state",
+      "undoable": false,
+      "rollback_next": false,
+      "title": "SSD swap removed",
+      "change": {
+        "swap_before_bytes": 4294967296,
+        "swap_after_bytes": null,
+        "profile_before": "zswap-lz4",
+        "profile_after": "zswap-lz4"
+      },
+      "source": "cli",
+      "requested_by": {
+        "uid": 1000,
+        "user": "golden"
+      }
+    }
+  ]
+}
+

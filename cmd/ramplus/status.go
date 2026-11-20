@@ -23,17 +23,17 @@ func newStatusCmd() *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Показать состояние памяти, swap, zswap, zram и корневого диска",
-		Long: "Только чтение: команда ничего не меняет в системе и работает без root.\n" +
-			"Недоступные источники показываются как n/a с причиной.",
+		Short: T("cli.status.short"),
+		Long: T("cli.status.long1") +
+			T("cli.status.long2"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if watch {
 				if asJSON {
-					return errors.New("--watch несовместим с --json")
+					return errors.New(T("cli.status.watch_json"))
 				}
 				if interval < minWatchInterval {
-					return fmt.Errorf("--interval: минимум %s", minWatchInterval)
+					return fmt.Errorf(T("cli.status.interval_min"), minWatchInterval)
 				}
 				ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 				defer stop()
@@ -53,11 +53,11 @@ func newStatusCmd() *cobra.Command {
 				enc.SetIndent("", "  ")
 				return enc.Encode(st)
 			}
-			return render.Status(out, st)
+			return render.Status(lang, out, st)
 		},
 	}
-	cmd.Flags().BoolVar(&asJSON, "json", false, "вывод в JSON (та же схема, что у веб-API)")
-	cmd.Flags().BoolVar(&watch, "watch", false, "обновлять на месте: RAM, swap, zswap, PSI и пики за время наблюдения (Ctrl+C — итог)")
-	cmd.Flags().DurationVar(&interval, "interval", time.Second, "период обновления для --watch")
+	cmd.Flags().BoolVar(&asJSON, "json", false, T("cli.flag.status_json"))
+	cmd.Flags().BoolVar(&watch, "watch", false, T("cli.flag.watch"))
+	cmd.Flags().DurationVar(&interval, "interval", time.Second, T("cli.flag.interval"))
 	return cmd
 }

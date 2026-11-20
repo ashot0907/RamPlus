@@ -98,10 +98,30 @@ and shows you what's happening.
 
 ## Quick start
 
-> Tested on **Ubuntu 24.04** (kernels 6.8 and 7.0). Other systemd-based distributions should work;
-> please report your results.
+> Tested on **Ubuntu 24.04**: the full integration test (every operation, the daemon and the web UI)
+> runs in a VM with kernel 6.8; on kernel 7.0 only read-only commands (`status`, plans, `recommend`)
+> have been checked so far. Other systemd-based distributions should work; please report your results.
 
-### Install from source
+### Debian / Ubuntu (.deb)
+
+Download `ramplus_<version>_amd64.deb` from [Releases](https://github.com/ashot0907/ramplus/releases) and:
+
+```sh
+sudo apt install ./ramplus_<version>_amd64.deb
+```
+
+The package installs the binaries, systemd units and system users, but does **not** enable or start
+anything. `apt remove` refuses while RamPlus still manages swap or settings — undo them first
+(History → Undo, or `sudo ramplus rollback`). An arm64 `.deb` is built too, but not tested on real
+hardware yet.
+
+### Arch Linux (AUR)
+
+```sh
+yay -S ramplus-bin        # release binaries; or "ramplus" to build from source
+```
+
+### From source
 
 You need Go (current stable) and Node.js with npm (only to build the web UI).
 
@@ -109,8 +129,11 @@ You need Go (current stable) and Node.js with npm (only to build the web UI).
 git clone https://github.com/ashot0907/ramplus.git
 cd ramplus
 make build
-sudo make install
+sudo make install         # into /usr/local; sudo make uninstall to remove
 ```
+
+Plain binaries for amd64/arm64 (tar.gz, with `SHA256SUMS`) are on the
+[Releases](https://github.com/ashot0907/ramplus/releases) page as well.
 
 ### Open the web interface
 
@@ -135,9 +158,38 @@ ramplus history                # everything RamPlus has done
 sudo ramplus rollback          # undo the last operation
 ```
 
+What `ramplus status` looks like:
+
+```text
+$ ramplus status
+Memory
+  Total           31.1 GiB
+  Available       21.4 GiB (69%)
+  Used            9.7 GiB (31%)
+  Cache (Cached)  13.0 GiB
+  Swap total      8.0 GiB
+  Swap free       8.0 GiB
+  Swap used       0 B (0%)
+
+Swap devices
+  PATH               TYPE  SIZE     USED  PRIORITY  DISK  RAMPLUS
+  /ramplus.swapfile  file  8.0 GiB  0 B   -2        SSD   yes
+
+zswap
+  Enabled           yes
+  Compressor        lz4
+...
+PSI memory (% of time waiting for memory)
+              avg10  avg60  avg300
+  some        0.00   0.00   0.00
+  full        0.00   0.00   0.00
+  assessment  normal (by some avg10)
+...
+```
+
 Every command that changes swap or memory settings has `--dry-run` (show the plan only) and `--yes`
-(for scripts). The CLI currently prints its messages in Russian; the web UI is available in English.
-Full reference: [docs/cli.md](docs/cli.md).
+(for scripts). The CLI speaks English; for Russian use `--lang ru` or a Russian locale
+(`LANG=ru_RU.UTF-8`). The web UI has both languages. Full reference: [docs/cli.md](docs/cli.md).
 
 ## Recommended settings
 
@@ -163,22 +215,29 @@ You are always free to choose differently. RamPlus shows what each choice means
 
 ## Our test results — and why the recommendation is "preliminary"
 
-We stress-tested a virtual machine with 3.8 GB of RAM running a program that needs 5 GB, and measured
-how long a small "interactive" process had to wait for memory (lower is better):
+We stress-tested a virtual machine with 3.8 GB of RAM (kernel 6.8) running a program that needs
+5 GB with all its pages constantly in use (`stress-ng --vm --vm-keep`), and measured how long a small
+"interactive" process had to wait for memory (lower is better):
 
-| Configuration | Worst wait |
-|---|---|
-| No swap | the program is refused memory and fails |
-| Plain swap | **~67 seconds** — a full system freeze |
-| zswap, lz4 or zstd + zsmalloc | **~10 milliseconds** |
-| zswap as in stock Ubuntu 24.04 (lzo + zbud) | ~157 milliseconds |
+| Configuration | Wait, 99th percentile | Time the system was stalled (PSI full, peak) | Run took |
+|---|---|---|---|
+| No swap | — the program fails: not enough memory | — | — |
+| Plain swap | **~67 seconds** — a full system freeze | 99 % | 69 s |
+| zswap, lz4 + zsmalloc | **~8 milliseconds** | 61 % | 17 s |
+| zswap, zstd + zsmalloc | **~10 milliseconds** | 52 % | 15 s |
+| zswap with kernel defaults (lzo + zbud; Ubuntu ships zswap off) | ~157 milliseconds | 99 % | 129 s |
+
+The single worst wait was about 0.16 s for every zswap configuration; the difference is in how often
+long waits happen. Raw data, conditions and all workloads:
+[docs/benchmarks/](docs/benchmarks/README.md).
 
 Two honest caveats:
 
 1. **These are virtual-machine numbers.** A VM's "disk" is cached in the host's RAM, so it does not
    behave like a real SSD. The direction of the result is clear; the exact numbers on real hardware
    will be different.
-2. **Each configuration was run only once** in this series.
+2. **Each configuration was run only once** in this series, with an older version of the
+   benchmark script.
 
 That's why the recommended mode is labelled **preliminary**, and RamPlus asks you to confirm it.
 Our rule: a mode becomes **verified** only with benchmark results from real SSDs. You can help —
@@ -274,7 +333,7 @@ RAM, SSD model and distribution. Details: [scripts/BENCH.md](scripts/BENCH.md).
 - [x] CLI: status, swap management, memory modes, rollback, history
 - [x] Daemon with a Unix-socket API and group-based permissions
 - [x] Web UI with recommendations, plan dialog and one-click undo
-- [ ] `.deb` package, AUR package, GitHub releases
+- [x] Release pipeline: static binaries, `.deb` package, AUR PKGBUILDs (first packaged release pending)
 - [ ] Verified memory modes based on real-SSD benchmarks
 - [ ] Smart mode: move idle background apps to swap *before* memory runs out, and bring an app back
       when you switch to it

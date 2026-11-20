@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"strings"
 	"testing"
@@ -58,7 +60,7 @@ func TestRecommend(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := fakesys.New().WithKernelParams(false)
 			tc.prep(w)
-			r := New(w.System()).Recommend(context.Background(), "")
+			r := New(w.System()).Recommend(context.Background(), "", i18n.RU)
 			var size uint64
 			if r.SwapSizeBytes != nil {
 				size = *r.SwapSizeBytes
@@ -90,7 +92,7 @@ func TestRecommend(t *testing.T) {
 func TestRecommendIsApplicable(t *testing.T) {
 	w := fakesys.New().WithKernelParams(false).WithOldSwap(0)
 	c := New(w.System())
-	r := c.Recommend(context.Background(), "")
+	r := c.Recommend(context.Background(), "", i18n.RU)
 	if r.SwapSizeBytes == nil || r.Existing == nil {
 		t.Fatalf("%+v", r)
 	}
@@ -101,7 +103,7 @@ func TestRecommendIsApplicable(t *testing.T) {
 	if !notes["profile.preliminary"] {
 		t.Errorf("experimental profile must be marked preliminary: %+v", r.Notes)
 	}
-	p := c.SetupPlan(context.Background(), setupReq(*r.SwapSizeBytes, swap.ExistingMode(*r.Existing), r.Profile))
+	p := c.SetupPlan(context.Background(), setupReq(*r.SwapSizeBytes, swap.ExistingMode(*r.Existing), r.Profile), i18n.RU)
 	if p.Blocked() {
 		t.Fatalf("recommended setup blocked: %+v", p.Failures())
 	}
@@ -109,11 +111,11 @@ func TestRecommendIsApplicable(t *testing.T) {
 		t.Fatal(res.Status, res.Error)
 	}
 	// Свой swap уже есть: existing не нужен, размер — для resize.
-	r = c.Recommend(context.Background(), "")
+	r = c.Recommend(context.Background(), "", i18n.RU)
 	if r.Existing != nil || r.ManagedBytes == nil || *r.ManagedBytes != 8*GiB || r.SwapSizeBytes == nil || *r.SwapSizeBytes != 8*GiB {
 		t.Errorf("after setup: %+v", r)
 	}
-	p = c.SetupPlan(context.Background(), setupReq(*r.SwapSizeBytes, "", r.Profile))
+	p = c.SetupPlan(context.Background(), setupReq(*r.SwapSizeBytes, "", r.Profile), i18n.RU)
 	if len(p.Steps) != 0 {
 		t.Errorf("recommended state reached, plan must be empty: %s", kinds(p.Steps))
 	}
@@ -124,11 +126,11 @@ func TestRecommendTargets(t *testing.T) {
 	w.Mounts["/mnt/usb"] = fakesys.Mount{FSType: "ext4", Transport: "usb", Kind: "ssd", Total: 100 * GiB, Avail: 90 * GiB}
 	w.Files["/mnt"] = &fakesys.File{Dir: true}
 	w.Files["/mnt/usb"] = &fakesys.File{Dir: true}
-	r := New(w.System()).Recommend(context.Background(), "")
+	r := New(w.System()).Recommend(context.Background(), "", i18n.RU)
 	if len(r.Targets) != 2 || !r.Targets[0].Selected || !r.Targets[0].Usable || r.Targets[1].Usable || r.Targets[1].Problem == "" {
 		t.Fatalf("targets %+v", r.Targets)
 	}
-	r = New(w.System()).Recommend(context.Background(), "/mnt/usb/ramplus.swapfile")
+	r = New(w.System()).Recommend(context.Background(), "/mnt/usb/ramplus.swapfile", i18n.RU)
 	if r.SwapSizeBytes != nil || r.SwapReasonCode != "blocked.usb" || r.Target.MountPoint != "/mnt/usb" {
 		t.Errorf("usb target: %+v %s", r.Target, r.SwapReasonCode)
 	}

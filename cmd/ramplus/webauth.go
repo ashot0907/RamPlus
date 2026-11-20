@@ -1,6 +1,8 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"errors"
 	"fmt"
@@ -22,7 +24,7 @@ import (
 var lookupWebGroup = func() (int, error) {
 	g, err := user.LookupGroup(webauth.Group)
 	if err != nil {
-		return 0, fmt.Errorf("нет группы %s — сначала установите RamPlus (sudo make install): %w", webauth.Group, err)
+		return 0, i18n.Errorf("cli.webauth.no_group", webauth.Group, err)
 	}
 	return strconv.Atoi(g.Gid)
 }
@@ -37,10 +39,10 @@ func newInitCmd() *cobra.Command {
 	var f passwordFlags
 	cmd := &cobra.Command{
 		Use:   "init",
-		Short: "Задать пароль веб-интерфейса (нужен root)",
-		Long: "Пароль хранится как хеш argon2id в " + webauth.DefaultPath + " (root:" + webauth.Group + ", 0640).\n" +
-			"Пароль спрашивается дважды без эха; для скриптов — --password-stdin (первая строка stdin).\n" +
-			"Сменить: sudo ramplus passwd; отключить вход в веб: sudo ramplus passwd --disable.",
+		Short: T("cli.init.short"),
+		Long: T("cli.init.long1") + webauth.DefaultPath + " (root:" + webauth.Group + ", 0640).\n" +
+			T("cli.init.long2") +
+			T("cli.init.long3"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runWebPassword(cmd, core.WebPasswordInit, f)
@@ -54,9 +56,9 @@ func newPasswdCmd() *cobra.Command {
 	var f passwordFlags
 	cmd := &cobra.Command{
 		Use:   "passwd",
-		Short: "Сменить пароль веб-интерфейса (нужен root); --disable — удалить пароль",
-		Long: "После смены пароля открытые сессии веб-интерфейса завершаются.\n" +
-			"--disable удаляет " + webauth.DefaultPath + ": вход в веб невозможен до sudo ramplus init.",
+		Short: T("cli.passwd.short"),
+		Long: T("cli.passwd.long1") +
+			T("cli.passwd.long2") + webauth.DefaultPath + T("cli.passwd.long3"),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mode := core.WebPasswordChange
@@ -67,20 +69,20 @@ func newPasswdCmd() *cobra.Command {
 		},
 	}
 	addPasswordFlags(cmd, &f)
-	cmd.Flags().BoolVar(&f.disable, "disable", false, "удалить пароль (откат init): веб покажет «выполните sudo ramplus init»")
+	cmd.Flags().BoolVar(&f.disable, "disable", false, T("cli.flag.disable"))
 	return cmd
 }
 
 func addPasswordFlags(cmd *cobra.Command, f *passwordFlags) {
-	cmd.Flags().BoolVar(&f.stdin, "password-stdin", false, "прочитать пароль из первой строки stdin (для скриптов)")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "только показать, что будет записано")
+	cmd.Flags().BoolVar(&f.stdin, "password-stdin", false, T("cli.flag.password_stdin"))
+	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, T("cli.flag.dry_run_write"))
 }
 
 func runWebPassword(cmd *cobra.Command, mode core.WebPasswordMode, f passwordFlags) error {
 	out := cmd.OutOrStdout()
 	c := newCore()
 	if !f.dryRun && c.Sys.Kernel.Geteuid() != 0 {
-		return fmt.Errorf("%w: sudo ramplus %s", journal.ErrNeedRoot, cmd.Name())
+		return i18n.Errorf("cli.need_root_cmd", journal.ErrNeedRoot, cmd.Name())
 	}
 	gid, err := lookupWebGroup()
 	if err != nil && !f.dryRun {
@@ -98,15 +100,15 @@ func runWebPassword(cmd *cobra.Command, mode core.WebPasswordMode, f passwordFla
 	}
 	switch {
 	case res.DryRun && res.Action == "remove":
-		fmt.Fprintf(out, "dry-run: будет удалён %s — вход в веб-интерфейс станет невозможен\n", res.Path)
+		fmt.Fprintf(out, T("cli.webauth.dry_remove"), res.Path)
 	case res.DryRun:
-		fmt.Fprintf(out, "dry-run: будет записан %s (хеш argon2id, владелец %s, права %s); ничего не изменено\n", res.Path, res.Owner, res.Mode)
+		fmt.Fprintf(out, T("cli.webauth.dry_write"), res.Path, res.Owner, res.Mode)
 	case res.Action == "remove":
-		fmt.Fprintf(out, "Пароль веб-интерфейса удалён (%s). Задать снова: sudo ramplus init\n", res.Path)
+		fmt.Fprintf(out, T("cli.webauth.removed"), res.Path)
 	case mode == core.WebPasswordChange:
-		fmt.Fprintf(out, "Пароль веб-интерфейса изменён (%s). Открытые сессии завершены.\n", res.Path)
+		fmt.Fprintf(out, T("cli.webauth.changed"), res.Path)
 	default:
-		fmt.Fprintf(out, "Пароль веб-интерфейса задан (%s).\nЗапустить: sudo systemctl enable --now ramplusd ramplus-web, затем откройте http://127.0.0.1:7781\n", res.Path)
+		fmt.Fprintf(out, T("cli.webauth.set"), res.Path)
 	}
 	return nil
 }
@@ -120,15 +122,15 @@ func readPassword(in io.Reader, out io.Writer, fromStdin bool) (string, error) {
 		}
 		pw := strings.TrimRight(line, "\r\n")
 		if pw == "" {
-			return "", errors.New("--password-stdin: пустой пароль")
+			return "", errors.New(T("cli.webauth.empty"))
 		}
 		return pw, webauth.CheckPassword(pw)
 	}
 	file, ok := in.(*os.File)
 	if !ok || !isTerminal(file) {
-		return "", errors.New("нет терминала для ввода пароля: используйте --password-stdin")
+		return "", errors.New(T("cli.webauth.no_tty"))
 	}
-	fmt.Fprintf(out, "Новый пароль веб-интерфейса (не меньше %d символов): ", webauth.MinPasswordLen)
+	fmt.Fprintf(out, T("cli.webauth.prompt"), webauth.MinPasswordLen)
 	pw, err := readNoEcho(file)
 	if err != nil {
 		return "", err
@@ -136,13 +138,13 @@ func readPassword(in io.Reader, out io.Writer, fromStdin bool) (string, error) {
 	if err := webauth.CheckPassword(pw); err != nil {
 		return "", err
 	}
-	fmt.Fprint(out, "Повторите пароль: ")
+	fmt.Fprint(out, T("cli.webauth.prompt_again"))
 	again, err := readNoEcho(file)
 	if err != nil {
 		return "", err
 	}
 	if again != pw {
-		return "", errors.New("пароли не совпадают — ничего не изменено")
+		return "", errors.New(T("cli.webauth.mismatch"))
 	}
 	return pw, nil
 }

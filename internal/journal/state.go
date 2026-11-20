@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/detect"
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 )
 
@@ -62,7 +63,11 @@ type Operation struct {
 	ProfileBefore    json.RawMessage `json:"profile_before,omitempty"`
 	ProfileAfter     json.RawMessage `json:"profile_after,omitempty"`
 	BaselineCaptured bool            `json:"baseline_captured,omitempty"`
-	Error            string          `json:"error,omitempty"`
+	// Error — текст ошибки по-английски; ErrorMsg — та же ошибка как
+	// сообщение каталога (переводится при выводе). В журналах до этого поля
+	// есть только Error (на языке, на котором он был записан).
+	Error    string       `json:"error,omitempty"`
+	ErrorMsg *i18n.Stored `json:"error_msg,omitempty"`
 	// Source — откуда запрошена операция: cli | daemon ("" — журнал старше
 	// этого поля, источник неизвестен). RequestedBy — кто запросил.
 	Source      string     `json:"source,omitempty"`
@@ -143,10 +148,10 @@ func ParseState(b []byte) (State, error) {
 		}
 	case StateVersion:
 		if hasDuplicateIDs(s.Operations) {
-			return State{}, fmt.Errorf("%w: state.json: повторяющиеся ID операций в журнале v%d", detect.ErrParse, s.Version)
+			return State{}, i18n.Errorf("journal.duplicate_ids", detect.ErrParse, s.Version)
 		}
 	default:
-		return State{}, fmt.Errorf("%w: state.json: неизвестная версия %d", detect.ErrParse, s.Version)
+		return State{}, i18n.Errorf("journal.unknown_version", detect.ErrParse, s.Version)
 	}
 	return s, nil
 }

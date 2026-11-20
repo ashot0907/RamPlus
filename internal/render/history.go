@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"fmt"
 	"io"
 	"strconv"
@@ -9,45 +11,46 @@ import (
 	"github.com/ashot0907/ramplus/internal/journal"
 )
 
-var opStatusText = map[string]string{
-	journal.OpCommitted:      "выполнена",
-	journal.OpRolledBack:     "откачена",
-	journal.OpFailed:         "ошибка, откачена",
-	journal.OpInProgress:     "прервана",
-	journal.OpRollbackFailed: "откат не удался",
+// opStatusText — статус операции для человека ("" — неизвестный).
+func opStatusText(l i18n.Lang, status string) string {
+	switch status {
+	case journal.OpCommitted, journal.OpRolledBack, journal.OpFailed, journal.OpInProgress, journal.OpRollbackFailed:
+		return t(l, "render.op_status."+status)
+	}
+	return ""
 }
 
 // History — ramplus history: операции журнала по порядку.
-func History(w io.Writer, h journal.History) error {
+func History(l i18n.Lang, w io.Writer, h journal.History) error {
 	if len(h.Operations) == 0 {
-		_, err := fmt.Fprintf(w, "Журнал %s пуст: RamPlus ничего не менял.\n", h.Journal)
+		_, err := fmt.Fprintf(w, t(l, "render.history.empty"), h.Journal)
 		return err
 	}
-	fmt.Fprintf(w, "Журнал: %s (операций: %d)\n\n", h.Journal, len(h.Operations))
+	fmt.Fprintf(w, t(l, "render.history.header"), h.Journal, len(h.Operations))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "  ID\tВРЕМЯ\tСТАТУС\tОТКАТ\tОПЕРАЦИЯ\tИСТОЧНИК\tКОМАНДА")
+	fmt.Fprintln(tw, t(l, "render.history.columns"))
 	var errs []journal.HistoryEntry
 	for _, op := range h.Operations {
-		status := opStatusText[op.Status]
+		status := opStatusText(l, op.Status)
 		if status == "" {
 			status = op.Status
 		}
 		undo := "—"
 		switch {
 		case op.RollbackNext:
-			undo = "следующий"
+			undo = t(l, "render.history.undo_next")
 		case op.Undoable:
-			undo = "да"
+			undo = t(l, "render.yes")
 		}
 		cmd := op.Command
 		if op.Target != "" {
-			cmd += " (отменяет " + op.Target + ")"
+			cmd += t(l, "render.history.undoes") + op.Target + ")"
 		}
 		title := op.Title
 		if title == "" {
 			title = "—"
 		}
-		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), status, undo, title, SourceText(op), cmd)
+		fmt.Fprintf(tw, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", op.ID, op.StartedAt.Local().Format("2006-01-02 15:04:05"), status, undo, title, SourceText(l, op), cmd)
 		if op.Error != "" {
 			errs = append(errs, op)
 		}
@@ -58,13 +61,13 @@ func History(w io.Writer, h journal.History) error {
 	for _, op := range errs {
 		fmt.Fprintf(w, "\n%s: %s\n", op.ID, op.Error)
 	}
-	fmt.Fprintln(w, "\nОТКАТ: «следующий» — эту операцию отменит ramplus rollback; «да» — повторные rollback дойдут до неё.")
+	fmt.Fprintln(w, t(l, "render.history.legend"))
 	return nil
 }
 
 // SourceText — откуда запрошена операция: «из терминала (ashot)», «через
 // веб-интерфейс», «через API демона (uid 1001)», «неизвестно» (старый журнал).
-func SourceText(e journal.HistoryEntry) string {
+func SourceText(l i18n.Lang, e journal.HistoryEntry) string {
 	who := ""
 	if r := e.RequestedBy; r != nil {
 		who = r.User
@@ -80,11 +83,11 @@ func SourceText(e journal.HistoryEntry) string {
 	}
 	switch {
 	case e.Source == journal.SourceDaemon && e.RequestedBy != nil && e.RequestedBy.Via == journal.ViaWeb:
-		return "через веб-интерфейс"
+		return t(l, "render.source.web")
 	case e.Source == journal.SourceCLI:
-		return with("из терминала")
+		return with(t(l, "render.source.cli"))
 	case e.Source == journal.SourceDaemon:
-		return with("через API демона")
+		return with(t(l, "render.source.daemon"))
 	}
-	return "неизвестно"
+	return t(l, "render.unknown")
 }

@@ -3,10 +3,10 @@ package journal
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
 	"strings"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 )
 
@@ -14,7 +14,7 @@ import (
 const Marker = "# Managed by RamPlus"
 
 // ErrNotOurs — файл не совпадает с записью журнала: удалять его нельзя.
-var ErrNotOurs = errors.New("файл не совпадает с журналом RamPlus — удаление отменено")
+var ErrNotOurs = i18n.Errorf("journal.not_ours")
 
 // CheckConfig — перед удалением конфига: содержимое как записано RamPlus
 // (если известно), иначе в файле должен быть маркер RamPlus.
@@ -23,11 +23,11 @@ func CheckConfig(s plan.Step, current string) error {
 	case s.Content != "" && current == s.Content:
 		return nil
 	case s.Content != "":
-		return fmt.Errorf("%s: изменён после записи RamPlus: %w", s.Path, ErrNotOurs)
+		return i18n.Errorf("journal.config_changed", s.Path, ErrNotOurs)
 	case strings.Contains(current, Marker):
 		return nil
 	default:
-		return fmt.Errorf("%s: нет маркера RamPlus: %w", s.Path, ErrNotOurs)
+		return i18n.Errorf("journal.config_no_marker", s.Path, ErrNotOurs)
 	}
 }
 
@@ -72,17 +72,17 @@ func init() {
 			}
 			return e.Sys.FS.WriteFileAtomic(s.Path, []byte(s.Content), mode)
 		},
-		Verify: func(e *Env, a Applied) (Verdict, string) {
+		Verify: func(e *Env, a Applied) (Verdict, i18n.Text) {
 			s := a.Step
 			cur, ok := readFile(e, s.Path)
 			prev, hadPrev := PrevContent(a)
 			switch {
 			case ok && cur == s.Content:
-				return VerdictPresent, s.Path + " совпадает с содержимым из журнала RamPlus"
+				return VerdictPresent, i18n.Msg("verify.written_matches", s.Path)
 			case ok && hadPrev && cur == prev, !ok && !hadPrev:
-				return VerdictAbsent, s.Path + " не изменён"
+				return VerdictAbsent, i18n.Msg("verify.unchanged", s.Path)
 			default:
-				return VerdictMismatch, s.Path + " не совпадает ни с прежним, ни с записанным содержимым"
+				return VerdictMismatch, i18n.Msg("verify.written_mismatch", s.Path)
 			}
 		},
 		Expect: func(s plan.Step) []Expectation {
@@ -107,17 +107,17 @@ func init() {
 			return []plan.Step{{Kind: plan.KindWriteFile, Path: s.Path, Content: string(prev), Mode: uint32(e.Perm(s.Path, 0o644)), Reload: s.Reload}}, backup, nil
 		},
 		Do: func(_ context.Context, e *Env, s plan.Step) error { return e.Sys.FS.Remove(s.Path) },
-		Verify: func(e *Env, a Applied) (Verdict, string) {
+		Verify: func(e *Env, a Applied) (Verdict, i18n.Text) {
 			s := a.Step
 			cur, ok := readFile(e, s.Path)
 			prev, _ := PrevContent(a)
 			switch {
 			case !ok:
-				return VerdictPresent, s.Path + " удалён"
+				return VerdictPresent, i18n.Msg("verify.removed", s.Path)
 			case cur == prev:
-				return VerdictAbsent, s.Path + " на месте"
+				return VerdictAbsent, i18n.Msg("verify.in_place", s.Path)
 			default:
-				return VerdictMismatch, s.Path + " изменён после записи в журнал"
+				return VerdictMismatch, i18n.Msg("verify.changed_after", s.Path)
 			}
 		},
 		Expect: func(s plan.Step) []Expectation { return []Expectation{FileExpect(s.Path, false, false, 0, nil)} },
@@ -136,11 +136,11 @@ func init() {
 			return nil, "", nil
 		},
 		Do: func(ctx context.Context, e *Env, s plan.Step) error { return e.Run(ctx, "systemctl", s.Args...) },
-		Verify: func(_ *Env, a Applied) (Verdict, string) {
+		Verify: func(_ *Env, a Applied) (Verdict, i18n.Text) {
 			if len(a.Undo) > 0 {
-				return VerdictPresent, "systemctl " + strings.Join(a.Step.Args, " ") + " — отмена безопасна при любом исходе"
+				return VerdictPresent, i18n.Msg("verify.systemctl_safe", "systemctl "+strings.Join(a.Step.Args, " "))
 			}
-			return VerdictAbsent, "отменять нечего"
+			return VerdictAbsent, i18n.Msg("verify.nothing")
 		},
 	})
 
@@ -175,17 +175,17 @@ func init() {
 }
 
 // VerifyCreated — прерванный шаг, создающий Path.
-func VerifyCreated(e *Env, a Applied) (Verdict, string) {
+func VerifyCreated(e *Env, a Applied) (Verdict, i18n.Text) {
 	if _, err := e.Sys.FS.Stat(a.Step.Path); err == nil {
-		return VerdictPresent, a.Step.Path + " существует"
+		return VerdictPresent, i18n.Msg("verify.exists", a.Step.Path)
 	}
-	return VerdictAbsent, a.Step.Path + " не создан"
+	return VerdictAbsent, i18n.Msg("verify.not_created", a.Step.Path)
 }
 
 // VerifyRemoved — прерванный шаг, удаляющий Path.
-func VerifyRemoved(e *Env, a Applied) (Verdict, string) {
+func VerifyRemoved(e *Env, a Applied) (Verdict, i18n.Text) {
 	if _, err := e.Sys.FS.Stat(a.Step.Path); err == nil {
-		return VerdictAbsent, a.Step.Path + " на месте"
+		return VerdictAbsent, i18n.Msg("verify.in_place", a.Step.Path)
 	}
-	return VerdictPresent, a.Step.Path + " удалён"
+	return VerdictPresent, i18n.Msg("verify.removed", a.Step.Path)
 }

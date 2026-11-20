@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/journal"
 	system "github.com/ashot0907/ramplus/internal/sys"
 )
@@ -139,7 +140,11 @@ func TestCheckExpectedDiscrepancies(t *testing.T) {
 		mod(w)
 		f := Gather(context.Background(), w.System(), "")
 		i, _ := f.State.LastUndoable()
-		return journal.CheckExpected(w.System(), f.State.Operations[i], nil)
+		var out []string
+		for _, d := range journal.CheckExpected(w.System(), f.State.Operations[i], nil) {
+			out = append(out, d.Text(i18n.RU))
+		}
+		return out
 	}
 	if d := mk(func(*fakeWorld) {}); len(d) != 0 {
 		t.Fatalf("untouched system must match: %v", d)

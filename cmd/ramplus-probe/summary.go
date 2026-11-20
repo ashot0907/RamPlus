@@ -115,15 +115,15 @@ func PoolCell(g Group) string {
 	case g.PoolPercent == 0:
 		return "—"
 	case g.PoolHits > 0:
-		return fmt.Sprintf("да (%d)", g.PoolHits)
+		return fmt.Sprintf("yes (%d)", g.PoolHits)
 	case g.PoolHits == 0:
-		return "нет"
+		return "no"
 	case g.OK == 0:
 		return "—"
 	case g.PoolNearLimit:
-		return fmt.Sprintf("вероятно: пик ≈ %d%% RAM", g.PoolPercent)
+		return fmt.Sprintf("likely: peak ≈ %d%% RAM", g.PoolPercent)
 	default:
-		return "нет (по пику)"
+		return "no (by peak)"
 	}
 }
 
@@ -170,17 +170,17 @@ func orDash(s string) string {
 func WriteMarkdown(w io.Writer, env Env, runs []Run) error {
 	groups := GroupRuns(runs, env)
 	var b strings.Builder
-	b.WriteString("# RamPlus bench — сводка\n\n")
-	fmt.Fprintf(&b, "- дата: %s\n- ядро: %s\n- виртуализация: %s\n- RAM: %d MiB, swapfile: %s, нагрузка: %s, %d с, прогонов: %d\n- корневой диск: %s\n\n",
+	b.WriteString("# RamPlus bench — summary\n\n")
+	fmt.Fprintf(&b, "- date: %s\n- kernel: %s\n- virtualization: %s\n- RAM: %d MiB, swapfile: %s, load: %s, %d s, runs: %d\n- root disk: %s\n\n",
 		env.Date, env.Kernel, orDash(env.Virt), env.MemTotalMiB, env.SwapSize, env.WorkSize, env.DurationS, env.Runs, orDash(env.RootDisk))
 	if env.IsVM() {
-		b.WriteString("> **Запуск в VM: цифры производительности нерепрезентативны.** Диск VM кэшируется в RAM хоста, " +
-			"поэтому swap выглядит быстрее реального. Для выбора значений по умолчанию нужен запуск на реальном SSD.\n\n")
+		b.WriteString("> **Run in a VM: performance numbers are not representative.** The VM disk is cached in the host RAM, " +
+			"so swap looks faster than it really is. Default values must be chosen from runs on a real SSD.\n\n")
 	}
-	b.WriteString("Медианы по успешным прогонам. PSI — % времени, когда задачи ждали память (пик avg10 / среднее за прогон). " +
-		"Latency — задержка обхода 50 MiB памяти маленьким процессом раз в 100 мс. " +
-		"Статусы: refused — система отказала в памяти (ожидаемо без swap), failed — ошибка инструмента. " +
-		"Лимит пула — срабатывания pool_limit_hit (debugfs) или, без debugfs, пик пула ≈ max_pool_percent × RAM.\n")
+	b.WriteString("Medians over successful runs. PSI — % of time tasks waited for memory (peak avg10 / average over the run). " +
+		"Latency — the delay of a small process walking 50 MiB of memory every 100 ms. " +
+		"Statuses: refused — the system denied memory (expected without swap), failed — a tool error. " +
+		"Pool limit — pool_limit_hit events (debugfs) or, without debugfs, a pool peak ≈ max_pool_percent × RAM.\n")
 
 	cur := ""
 	for _, g := range groups {
@@ -188,7 +188,7 @@ func WriteMarkdown(w io.Writer, env Env, runs []Run) error {
 		if title != cur {
 			cur = title
 			fmt.Fprintf(&b, "\n## %s\n\n", title)
-			b.WriteString("| конфигурация | успех | длительность, с | пик swap, MiB | пик zswap, MiB | лимит пула | PSI some пик/ср, % | PSI full пик/ср, % | latency p50/p99, мс | обход горячих страниц, GiB/с |\n")
+			b.WriteString("| configuration | success | duration, s | peak swap, MiB | peak zswap, MiB | pool limit | PSI some peak/avg, % | PSI full peak/avg, % | latency p50/p99, ms | hot-page walk, GiB/s |\n")
 			b.WriteString("|---|---|---|---|---|---|---|---|---|---|\n")
 		}
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s |\n",
@@ -196,7 +196,7 @@ func WriteMarkdown(w io.Writer, env Env, runs []Run) error {
 			pair(g.SomePeak, g.SomeAvg, 1), pair(g.FullPeak, g.FullAvg, 1), pair(g.LatP50, g.LatP99, 1), cell(g.GiBps, 2))
 	}
 
-	b.WriteString("\n## Наблюдения\n\n")
+	b.WriteString("\n## Observations\n\n")
 	for _, o := range Observations(env, runs, groups) {
 		b.WriteString("- " + o + "\n")
 	}
@@ -216,12 +216,12 @@ func Observations(env Env, runs []Run, groups []Group) []string {
 	}
 	switch {
 	case n == 1:
-		out = append(out, "Прогонов на конфигурацию: 1 — **одиночные прогоны, выводы ненадёжны**.")
+		out = append(out, "Runs per configuration: 1 — **single runs, conclusions are unreliable**.")
 	case n < MinReliableRuns:
-		out = append(out, fmt.Sprintf("Прогонов на конфигурацию: %d (< %d) — выводы ненадёжны.", n, MinReliableRuns))
+		out = append(out, fmt.Sprintf("Runs per configuration: %d (< %d) — conclusions are unreliable.", n, MinReliableRuns))
 	}
 	if env.IsVM() {
-		out = append(out, "Запуск в VM: абсолютные цифры и соотношения swap/zswap нерепрезентативны.")
+		out = append(out, "Run in a VM: absolute numbers and swap/zswap ratios are not representative.")
 	}
 
 	type wd struct{ w, d string }
@@ -254,18 +254,18 @@ func Observations(env Env, runs []Run, groups []Group) []string {
 		if p99g == nil || maxg == nil {
 			continue
 		}
-		line := fmt.Sprintf("%s / %s: p99 %s мс (%s), max %s мс (%s)", k.w, k.d, cell(p99g.LatP99, 1), p99g.Config, cell(maxg.LatMax, 1), maxg.Config)
+		line := fmt.Sprintf("%s / %s: p99 %s ms (%s), max %s ms (%s)", k.w, k.d, cell(p99g.LatP99, 1), p99g.Config, cell(maxg.LatMax, 1), maxg.Config)
 		if maxg.LatMax > FreezeMs {
-			line += " — **фриз**"
-			freezes = append(freezes, fmt.Sprintf("%s / %s — %s, max %s мс", k.w, k.d, maxg.Config, cell(maxg.LatMax, 0)))
+			line += " — **freeze**"
+			freezes = append(freezes, fmt.Sprintf("%s / %s — %s, max %s ms", k.w, k.d, maxg.Config, cell(maxg.LatMax, 0)))
 		}
 		latLines = append(latLines, line)
 	}
 	if len(freezes) > 0 {
-		out = append(out, fmt.Sprintf("**Фризы** (latency max > %.0f мс): %s.", FreezeMs, strings.Join(freezes, "; ")))
+		out = append(out, fmt.Sprintf("**Freezes** (latency max > %.0f ms): %s.", FreezeMs, strings.Join(freezes, "; ")))
 	}
 	if len(latLines) > 0 {
-		out = append(out, "Худшая latency по нагрузкам: "+strings.Join(latLines, "; ")+".")
+		out = append(out, "Worst latency per workload: "+strings.Join(latLines, "; ")+".")
 	}
 
 	// Лимит пула zswap.
@@ -275,14 +275,14 @@ func Observations(env Env, runs []Run, groups []Group) []string {
 		case g.PoolHits > 0:
 			hit = append(hit, fmt.Sprintf("%s — %s / %s (pool_limit_hit +%d)", g.Config, g.Workload, g.Data, g.PoolHits))
 		case g.PoolHits < 0 && g.PoolNearLimit:
-			near = append(near, fmt.Sprintf("%s — %s / %s (пик %s MiB)", g.Config, g.Workload, g.Data, cell(g.PeakZswap, 0)))
+			near = append(near, fmt.Sprintf("%s — %s / %s (peak %s MiB)", g.Config, g.Workload, g.Data, cell(g.PeakZswap, 0)))
 		}
 	}
 	if len(hit) > 0 {
-		out = append(out, "Сработал лимит пула zswap (debugfs): "+strings.Join(hit, "; ")+".")
+		out = append(out, "The zswap pool limit was hit (debugfs): "+strings.Join(hit, "; ")+".")
 	}
 	if len(near) > 0 {
-		out = append(out, fmt.Sprintf("Пул zswap упирался в max_pool_percent (оценка по пику, debugfs нет; лимит 20%% RAM = %.0f MiB): %s.",
+		out = append(out, fmt.Sprintf("The zswap pool reached max_pool_percent (estimated from the peak, no debugfs; limit 20%% RAM = %.0f MiB): %s.",
 			poolLimitMiB(env, 20), strings.Join(near, "; ")))
 	}
 
@@ -300,9 +300,9 @@ func Observations(env Env, runs []Run, groups []Group) []string {
 		med := Median(durs)
 		for _, g := range byLoad[k] {
 			if g.OK > 0 && g.Duration > OutlierFactor*med {
-				line := fmt.Sprintf("Аномально долго: %s / %s — %s %s с при медиане %s с по конфигурациям", k.w, k.d, g.Config, cell(g.Duration, 1), cell(med, 1))
+				line := fmt.Sprintf("Unusually long: %s / %s — %s %s s with a median of %s s across configurations", k.w, k.d, g.Config, cell(g.Duration, 1), cell(med, 1))
 				if g.PoolHits > 0 || (g.PoolHits < 0 && g.PoolNearLimit) {
-					line += " (пул zswap упирался в лимит)"
+					line += " (the zswap pool hit the limit)"
 				}
 				out = append(out, line+".")
 			}
@@ -331,14 +331,14 @@ func Observations(env Env, runs []Run, groups []Group) []string {
 		}
 		out = append(out, title+": "+strings.Join(parts, "; ")+".")
 	}
-	statusLine(StatusRefused, "Система отказала в памяти (refused — ожидаемо без swap при нагрузке больше RAM)")
-	statusLine(StatusOOM, "Убиты OOM killer (oom)")
-	statusLine(StatusTimeout, "Убиты по таймауту (timeout)")
-	statusLine(StatusFailed, "**Ошибки инструмента (failed)** — эти строки недостоверны")
-	statusLine(StatusSkipped, "Пропущены (skipped — конфигурация недоступна на этом ядре)")
+	statusLine(StatusRefused, "The system denied memory (refused — expected without swap when the load exceeds RAM)")
+	statusLine(StatusOOM, "Killed by the OOM killer (oom)")
+	statusLine(StatusTimeout, "Killed by the timeout (timeout)")
+	statusLine(StatusFailed, "**Tool errors (failed)** — these rows are unreliable")
+	statusLine(StatusSkipped, "Skipped (skipped — the configuration is not available on this kernel)")
 
 	if len(out) == 0 {
-		out = append(out, "Замечаний нет.")
+		out = append(out, "No remarks.")
 	}
 	return out
 }

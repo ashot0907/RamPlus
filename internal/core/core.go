@@ -4,8 +4,9 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
-	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -41,6 +42,8 @@ type Request struct {
 	ProfileReset bool
 	Rollback     bool
 	Setup        *SetupRequest
+	// Lang — язык текстов плана (коды проверок от него не зависят).
+	Lang i18n.Lang
 }
 
 // Plan строит план операции (только чтение, root не нужен) и запоминает
@@ -63,38 +66,42 @@ func (c *Core) build(ctx context.Context, r Request) *plan.Plan {
 func (c *Core) buildDomain(ctx context.Context, r Request) *plan.Plan {
 	switch {
 	case r.Setup != nil:
-		return c.setupPlan(ctx, *r.Setup)
+		return c.setupPlan(ctx, *r.Setup, r.Lang)
 	case r.Swap != nil:
-		return c.swapPlan(ctx, *r.Swap)
+		o := *r.Swap
+		o.Lang = r.Lang
+		return c.swapPlan(ctx, o)
 	case r.Profile != nil:
-		p := profile.PlanProfile(ctx, c.Sys, *r.Profile)
+		pr := *r.Profile
+		pr.Lang = r.Lang
+		p := profile.PlanProfile(ctx, c.Sys, pr)
 		return &p.Plan
 	case r.ProfileReset:
-		p := profile.PlanProfileReset(ctx, c.Sys)
+		p := profile.PlanProfileReset(ctx, c.Sys, r.Lang)
 		return &p.Plan
 	default:
-		return c.swapPlan(ctx, swap.Options{Action: plan.ActionRollback})
+		return c.swapPlan(ctx, swap.Options{Action: plan.ActionRollback, Lang: r.Lang})
 	}
 }
 
 // SwapPlan — план apply/resize/remove swap.
 func (c *Core) SwapPlan(ctx context.Context, o swap.Options) *plan.Plan {
-	return c.Plan(ctx, Request{Swap: &o})
+	return c.Plan(ctx, Request{Swap: &o, Lang: o.Lang})
 }
 
 // ProfilePlan — план применения профиля.
 func (c *Core) ProfilePlan(ctx context.Context, r profile.ProfileRequest) *plan.Plan {
-	return c.Plan(ctx, Request{Profile: &r})
+	return c.Plan(ctx, Request{Profile: &r, Lang: r.Lang})
 }
 
 // ProfileResetPlan — план сброса профиля.
-func (c *Core) ProfileResetPlan(ctx context.Context) *plan.Plan {
-	return c.Plan(ctx, Request{ProfileReset: true})
+func (c *Core) ProfileResetPlan(ctx context.Context, l i18n.Lang) *plan.Plan {
+	return c.Plan(ctx, Request{ProfileReset: true, Lang: l})
 }
 
 // RollbackPlan — план отката последней операции (общий стек).
-func (c *Core) RollbackPlan(ctx context.Context) *plan.Plan {
-	return c.Plan(ctx, Request{Rollback: true})
+func (c *Core) RollbackPlan(ctx context.Context, l i18n.Lang) *plan.Plan {
+	return c.Plan(ctx, Request{Rollback: true, Lang: l})
 }
 
 func (c *Core) swapPlan(ctx context.Context, o swap.Options) *plan.Plan {
@@ -120,7 +127,7 @@ func (c *Core) Apply(ctx context.Context, planID string, h journal.Hooks) Result
 func (c *Core) apply(ctx context.Context, planID string, h journal.Hooks) (*plan.Plan, error) {
 	sp, err := c.plans.take(planID, c.Sys.Now())
 	if err != nil {
-		return nil, fmt.Errorf("%w (%q)", err, planID)
+		return nil, i18n.Errorf("core.plan_ref", err, planID)
 	}
 	return journal.Execute(ctx, c.Sys, func(ctx context.Context) (*plan.Plan, error) {
 		p := c.build(ctx, sp.req)
@@ -190,45 +197,45 @@ func annotateProfile(st *monitor.Status, ap *profile.AppliedProfile, s sys.Syste
 // CleanProblems — что мешает считать систему чистой от RamPlus: по
 // фактическому состоянию, а не по наличию state.json. Журнал с историей
 // (все операции откачены, managed: null) — это чисто.
-func (c *Core) CleanProblems(ctx context.Context) []string {
-	return CleanProblems(swap.Gather(ctx, c.Sys, ""), c.Sys)
+func (c *Core) CleanProblems(ctx context.Context, l i18n.Lang) []string {
+	return CleanProblems(swap.Gather(ctx, c.Sys, ""), c.Sys, l)
 }
 
 // CleanProblems — то же по уже собранным фактам swap.
-func CleanProblems(f swap.Facts, s sys.System) []string {
+func CleanProblems(f swap.Facts, s sys.System, l i18n.Lang) []string {
 	var out []string
+	add := func(key string, a ...any) { out = append(out, i18n.T(l, key, a...)) }
 	if f.StateErr != nil {
-		out = append(out, fmt.Sprintf("не удалось прочитать %s: %v", journal.StatePath, f.StateErr))
+		add("clean.state_unreadable", journal.StatePath, f.StateErr)
 	}
 	if m := f.Managed; m != nil {
-		out = append(out, fmt.Sprintf("RamPlus управляет swap %s (%s)", m.Path, journal.StatePath))
+		add("clean.managed", m.Path, journal.StatePath)
 	}
 	if len(f.Orphans) > 0 {
-		labels := make([]string, len(f.Orphans))
+		labels := make([]i18n.Text, len(f.Orphans))
 		for i, o := range f.Orphans {
 			labels[i] = o.Label()
 		}
-		out = append(out, fmt.Sprintf("найдены следы RamPlus без записи в журнале: %s — sudo ramplus swap remove --orphan",
-			strings.Join(labels, "; ")))
+		add("clean.orphans", i18n.Join{Sep: "; ", Parts: labels})
 	}
 	if p := profile.ProfileOf(f.State); p != nil {
-		out = append(out, fmt.Sprintf("применён профиль RamPlus %s — ramplus profile reset", p.Name))
+		add("clean.profile", p.Name)
 	}
 	for _, op := range f.State.Operations {
 		switch op.Status {
 		case journal.OpInProgress:
-			out = append(out, fmt.Sprintf("незавершённая операция %s (%s) — sudo ramplus rollback", op.ID, op.Command))
+			add("clean.interrupted", op.ID, op.Command)
 		case journal.OpRollbackFailed:
-			out = append(out, fmt.Sprintf("операция %s (%s) откатилась не полностью — ручная проверка", op.ID, op.Command))
+			add("clean.rollback_failed", op.ID, op.Command)
 		}
 	}
 	for _, sw := range f.Swaps {
 		if f.IsOurPath(sw.Path) {
-			out = append(out, "активен swap RamPlus "+sw.Path)
+			add("clean.swap_active", sw.Path)
 		}
 	}
 	for _, u := range f.Units {
-		out = append(out, "есть юнит RamPlus "+u)
+		add("clean.unit", u)
 	}
 	var files []string
 	for _, p := range []string{swap.ManagedPath, swap.BtrfsPath, swap.BtrfsDir, swap.LegacyPath} {
@@ -243,7 +250,7 @@ func CleanProblems(f swap.Facts, s sys.System) []string {
 	}
 	sort.Strings(files)
 	for _, p := range files {
-		out = append(out, "существует "+p)
+		add("clean.file", p)
 	}
 	return out
 }
@@ -282,8 +289,7 @@ func (c *Core) daemonPaths(p *plan.Plan) {
 		seen[dir] = true
 		if err := c.Sys.FS.Writable(dir); err != nil {
 			bad = append(bad, dir)
-			p.Add(plan.LevelFail, "path.not_writable_by_daemon", "путь",
-				"%s: через веб-интерфейс/демон этот путь недоступен (%v), используйте CLI: sudo %s", dir, err, p.Command)
+			p.Add(plan.LevelFail, "path.not_writable_by_daemon", dir, err, p.Command)
 		}
 	}
 	if len(bad) > 0 {

@@ -2,11 +2,14 @@
 package main
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"errors"
 	"fmt"
 	"os"
 	"os/user"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -44,23 +47,73 @@ func newCore() *core.Core {
 	return c
 }
 
+// lang — язык вывода CLI: --lang, иначе LC_ALL/LC_MESSAGES/LANG (ru…),
+// по умолчанию английский. Определяется в main до построения команд
+// (тексты справки тоже переводятся); в тестах задаётся напрямую.
+var lang = i18n.EN
+
+// T — сообщение каталога на языке CLI.
+func T(key string, a ...any) string { return i18n.T(lang, key, a...) }
+
+// detectLang — язык из аргументов (--lang en|ru, флаг важнее переменных)
+// или окружения.
+func detectLang(args []string, getenv func(string) string) (i18n.Lang, error) {
+	for i, a := range args {
+		if a == "--" {
+			break
+		}
+		v, ok := "", false
+		switch {
+		case a == "--lang" && i+1 < len(args):
+			v, ok = args[i+1], true
+		case strings.HasPrefix(a, "--lang="):
+			v, ok = strings.TrimPrefix(a, "--lang="), true
+		}
+		if !ok {
+			continue
+		}
+		switch v {
+		case "en", "ru":
+			return i18n.Lang(v), nil
+		}
+		return i18n.EN, fmt.Errorf("--lang: expected en or ru, got %q", v)
+	}
+	return i18n.FromEnv(getenv), nil
+}
+
 func newRootCmd() *cobra.Command {
+	var langFlag string
 	root := &cobra.Command{
 		Use:           "ramplus",
-		Short:         "Управление виртуальной памятью Linux: swap, zswap, zram, мониторинг",
+		Short:         T("cli.root.short"),
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(*cobra.Command, []string) error {
+			switch langFlag {
+			case "en", "ru":
+				lang = i18n.Lang(langFlag)
+				return nil
+			}
+			return fmt.Errorf("--lang: expected en or ru, got %q", langFlag)
+		},
 	}
+	root.PersistentFlags().StringVar(&langFlag, "lang", string(lang), T("cli.flag.lang"))
 	root.AddCommand(newStatusCmd(), newSwapCmd(), newProfileCmd(), newRollbackCmd(), newHistoryCmd(), newDaemonCmd(),
 		newSetupCmd(), newRecommendCmd(), newInitCmd(), newPasswdCmd())
 	return root
 }
 
 func main() {
+	l, err := detectLang(os.Args[1:], os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ramplus:", err)
+		os.Exit(1)
+	}
+	lang = l
 	if err := newRootCmd().Execute(); err != nil {
 		if !errors.Is(err, errSilent) {
-			fmt.Fprintln(os.Stderr, "ramplus:", err)
+			fmt.Fprintln(os.Stderr, "ramplus:", i18n.ErrText(lang, err))
 		}
 		os.Exit(1)
 	}

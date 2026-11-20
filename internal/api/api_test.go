@@ -1,6 +1,8 @@
 package api
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"bufio"
 	"bytes"
 	"context"
@@ -144,6 +146,7 @@ func (h *harness) do(who, method, path string, body any) response {
 		rd = bytes.NewReader(j)
 	}
 	req, _ := http.NewRequest(method, "http://ramplusd"+path, rd)
+	req.Header.Set("Accept-Language", "ru") // эталоны тестов — на русском
 	resp, err := h.clients[who].Do(req)
 	if err != nil {
 		h.t.Fatalf("%s %s: %v", method, path, err)
@@ -401,7 +404,7 @@ func TestApplyRefusals(t *testing.T) {
 	if r := h.apply("admin", p.ID, false); r.code != 409 || r.errCode(t) != "plan.stale" {
 		t.Errorf("stale: %d %s", r.code, r.body)
 	}
-	if st, _ := h.core.History(); len(st.Operations) != 0 {
+	if st, _ := h.core.History(i18n.RU); len(st.Operations) != 0 {
 		t.Errorf("journal must be untouched: %+v", st.Operations)
 	}
 	// Ничего делать не нужно — 200 nothing.
@@ -458,7 +461,7 @@ func TestBusyAndCLI(t *testing.T) {
 	if v := h.waitOp("admin", acc.OperationID); v.Status != core.ResultDone {
 		t.Fatalf("op: %+v", v)
 	}
-	hist, err := h.core.History()
+	hist, err := h.core.History(i18n.RU)
 	if err != nil || len(hist.Operations) != 1 || hist.Operations[0].Status != journal.OpCommitted {
 		t.Errorf("journal: %v %+v", err, hist.Operations)
 	}
@@ -691,7 +694,7 @@ func TestSetupThroughDaemon(t *testing.T) {
 	if v := h.waitOp("reader", acc.OperationID); v.Status != core.ResultDone {
 		t.Fatalf("rollback op: %+v", v)
 	}
-	if got := h.core.CleanProblems(context.Background()); len(got) != 0 {
+	if got := h.core.CleanProblems(context.Background(), i18n.RU); len(got) != 0 {
 		t.Errorf("not clean: %v", got)
 	}
 }
@@ -738,7 +741,7 @@ func TestRequesterInJournal(t *testing.T) {
 	}
 	run("root")
 	run("admin")
-	hist, err := h.core.History()
+	hist, err := h.core.History(i18n.RU)
 	if err != nil {
 		t.Fatal(err)
 	}

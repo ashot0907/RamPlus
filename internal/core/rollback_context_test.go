@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
 	"strings"
 	"testing"
@@ -31,7 +33,7 @@ func TestRollbackOld(t *testing.T) {
 	mustRun(t, w, apply4G)
 	c := New(w.System())
 
-	p := c.RollbackPlan(context.Background())
+	p := c.RollbackPlan(context.Background(), i18n.RU)
 	if _, ok := hasCode(p, "rollback.old"); ok {
 		t.Error("fresh operation is not old")
 	}
@@ -40,7 +42,7 @@ func TestRollbackOld(t *testing.T) {
 	}
 
 	setStarted(t, w, 0, w.Now().Add(-75*time.Hour))
-	p = c.RollbackPlan(context.Background())
+	p = c.RollbackPlan(context.Background(), i18n.RU)
 	ch, ok := hasCode(p, "rollback.old")
 	if !ok || ch.Level != plan.LevelWarn || !strings.Contains(ch.Message, "3 дня назад") || !strings.Contains(ch.Message, "«создание swap»") {
 		t.Errorf("rollback.old: %+v", ch)
@@ -60,14 +62,14 @@ func TestRollbackOtherDomain(t *testing.T) {
 	c := New(w.System())
 
 	// Отменяется последняя операция (swap) — всё очевидно.
-	p := c.RollbackPlan(context.Background())
+	p := c.RollbackPlan(context.Background(), i18n.RU)
 	if _, ok := hasCode(p, "rollback.other_domain"); ok {
 		t.Error("undoing the last operation needs no warning")
 	}
 	mustRun(t, w, rollback)
 
 	// Swap уже отменён, следующий rollback дойдёт до профиля.
-	p = c.RollbackPlan(context.Background())
+	p = c.RollbackPlan(context.Background(), i18n.RU)
 	ch, ok := hasCode(p, "rollback.other_domain")
 	if !ok || ch.Level != plan.LevelWarn {
 		t.Fatalf("rollback.other_domain missing: %+v", p.Checks)

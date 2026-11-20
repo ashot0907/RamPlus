@@ -1,0 +1,1485 @@
+$ ramplus swap plan --size 4G --json
+{
+  "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
+  "action": "apply",
+  "command": "ramplus swap apply --size 4G --existing=keep",
+  "blocked": false,
+  "choices": [
+    {
+      "title": "Location",
+      "flag": "--path",
+      "value": "/ramplus.swapfile",
+      "defaulted": true,
+      "note": "alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile",
+      "alternatives": [
+        {
+          "value": "/ramplus.swapfile",
+          "selected": true,
+          "summary": "ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB"
+        }
+      ]
+    },
+    {
+      "title": "Size",
+      "flag": "--size",
+      "value": "4.0 GiB",
+      "defaulted": false,
+      "note": "up to 280.0 GiB allowed on /"
+    },
+    {
+      "title": "Existing swap",
+      "flag": "--existing",
+      "value": "keep",
+      "defaulted": true,
+      "alternatives": [
+        {
+          "value": "keep",
+          "selected": true,
+          "summary": "total swap 12.0 GiB: /swap.img stays, the new one is added with priority 10 and used first"
+        },
+        {
+          "value": "replace",
+          "selected": false,
+          "summary": "total swap 4.0 GiB: /swap.img — swapoff and commented out in /etc/fstab; the file stays on disk (to delete: --delete-old)"
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "level": "ok",
+      "code": "root",
+      "title": "root",
+      "message": "running as root"
+    },
+    {
+      "level": "info",
+      "code": "path.selected",
+      "title": "path",
+      "message": "/ramplus.swapfile (default)"
+    },
+    {
+      "level": "ok",
+      "code": "fs.fallocate",
+      "title": "filesystem",
+      "message": "ext4 on /dev/fake_ (mount point /): swapfile via fallocate"
+    },
+    {
+      "level": "ok",
+      "code": "disk.ok",
+      "title": "disk",
+      "message": "NVMe (nvme)"
+    },
+    {
+      "level": "warn",
+      "code": "existing.defaulted_keep",
+      "title": "existing swap",
+      "message": "/swap.img (file, 8.0 GiB, used 0 B, priority -2): --existing not given → the safe keep option was chosen (the old swap stays, the new one is added with a higher priority). To replace: --existing=replace"
+    },
+    {
+      "level": "info",
+      "code": "priority.selected",
+      "title": "priority",
+      "message": "the new swap gets priority 10 (above the existing swap (-2): the new one is used first)"
+    },
+    {
+      "level": "ok",
+      "code": "disk_space.ok",
+      "title": "space",
+      "message": "/ has 300.0 GiB of 500.0 GiB available; after creation 296.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)"
+    }
+  ],
+  "steps": [
+    {
+      "kind": "allocate",
+      "path": "/ramplus.swapfile",
+      "size": 4294967296,
+      "description": "create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600"
+    },
+    {
+      "kind": "chmod",
+      "path": "/ramplus.swapfile",
+      "mode": 384,
+      "description": "chmod 600 /ramplus.swapfile"
+    },
+    {
+      "kind": "mkswap",
+      "path": "/ramplus.swapfile",
+      "description": "mkswap /ramplus.swapfile"
+    },
+    {
+      "kind": "swapon",
+      "path": "/ramplus.swapfile",
+      "size": 4294967296,
+      "priority": 10,
+      "description": "swapon /ramplus.swapfile (priority 10)"
+    },
+    {
+      "kind": "write_file",
+      "path": "/etc/systemd/system/ramplus.swapfile.swap",
+      "mode": 420,
+      "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+      "reload": true,
+      "description": "write /etc/systemd/system/ramplus.swapfile.swap"
+    },
+    {
+      "kind": "systemctl",
+      "args": [
+        "daemon-reload"
+      ],
+      "description": "systemctl daemon-reload"
+    },
+    {
+      "kind": "systemctl",
+      "args": [
+        "enable",
+        "ramplus.swapfile.swap"
+      ],
+      "description": "systemctl enable ramplus.swapfile.swap"
+    }
+  ],
+  "summary": {
+    "swap_before_bytes": 8589934592,
+    "swap_after_bytes": 12884901888,
+    "created": [
+      "/etc/systemd/system/ramplus.swapfile.swap",
+      "/ramplus.swapfile"
+    ],
+    "disabled": [],
+    "deleted": []
+  },
+  "swap": {
+    "swaps": [
+      {
+        "path": "/swap.img",
+        "type": "file",
+        "size_bytes": 8589934592,
+        "used_bytes": 0,
+        "priority": -2,
+        "tag": "in /etc/fstab"
+      }
+    ],
+    "target_fs": {
+      "fs_type": "ext4",
+      "source": "/dev/fake_",
+      "mount_point": "/",
+      "disk": "sda, NVMe, nvme",
+      "total_bytes": 536870912000,
+      "available_bytes": 322122547200
+    },
+    "mem_available_bytes": 8589934592,
+    "mem_total_bytes": 17179869184,
+    "apply_command": "ramplus swap apply --size 4G --existing=keep",
+    "title": "swapfile creation"
+  }
+}
+
+$ ramplus swap apply --size 4G --json
+error: --json when executing requires --yes (there is no confirmation in JSON mode); plan only: --dry-run --json
+
+$ ramplus swap apply --size 4G --json --yes
+{
+  "status": "done",
+  "operation_id": "<OPID>",
+  "events": [
+    {
+      "undo": false,
+      "index": 1,
+      "total": 7,
+      "step": {
+        "kind": "allocate",
+        "path": "/ramplus.swapfile",
+        "size": 4294967296,
+        "description": "create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600"
+      }
+    },
+    {
+      "undo": false,
+      "index": 2,
+      "total": 7,
+      "step": {
+        "kind": "chmod",
+        "path": "/ramplus.swapfile",
+        "mode": 384,
+        "description": "chmod 600 /ramplus.swapfile"
+      }
+    },
+    {
+      "undo": false,
+      "index": 3,
+      "total": 7,
+      "step": {
+        "kind": "mkswap",
+        "path": "/ramplus.swapfile",
+        "description": "mkswap /ramplus.swapfile"
+      }
+    },
+    {
+      "undo": false,
+      "index": 4,
+      "total": 7,
+      "step": {
+        "kind": "swapon",
+        "path": "/ramplus.swapfile",
+        "size": 4294967296,
+        "priority": 10,
+        "description": "swapon /ramplus.swapfile (priority 10)"
+      }
+    },
+    {
+      "undo": false,
+      "index": 5,
+      "total": 7,
+      "step": {
+        "kind": "write_file",
+        "path": "/etc/systemd/system/ramplus.swapfile.swap",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "write /etc/systemd/system/ramplus.swapfile.swap"
+      }
+    },
+    {
+      "undo": false,
+      "index": 6,
+      "total": 7,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      }
+    },
+    {
+      "undo": false,
+      "index": 7,
+      "total": 7,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "enable",
+          "ramplus.swapfile.swap"
+        ],
+        "description": "systemctl enable ramplus.swapfile.swap"
+      }
+    }
+  ],
+  "plan": {
+    "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
+    "action": "apply",
+    "command": "ramplus swap apply --size 4G --existing=keep",
+    "blocked": false,
+    "choices": [
+      {
+        "title": "Location",
+        "flag": "--path",
+        "value": "/ramplus.swapfile",
+        "defaulted": true,
+        "note": "alternatives are mounted filesystems; another path: --path /mount/point/ramplus.swapfile",
+        "alternatives": [
+          {
+            "value": "/ramplus.swapfile",
+            "selected": true,
+            "summary": "ext4 on /dev/fake_, NVMe/nvme, 300.0 GiB free of 500.0 GiB — up to 280.0 GiB"
+          }
+        ]
+      },
+      {
+        "title": "Size",
+        "flag": "--size",
+        "value": "4.0 GiB",
+        "defaulted": false,
+        "note": "up to 280.0 GiB allowed on /"
+      },
+      {
+        "title": "Existing swap",
+        "flag": "--existing",
+        "value": "keep",
+        "defaulted": true,
+        "alternatives": [
+          {
+            "value": "keep",
+            "selected": true,
+            "summary": "total swap 12.0 GiB: /swap.img stays, the new one is added with priority 10 and used first"
+          },
+          {
+            "value": "replace",
+            "selected": false,
+            "summary": "total swap 4.0 GiB: /swap.img — swapoff and commented out in /etc/fstab; the file stays on disk (to delete: --delete-old)"
+          }
+        ]
+      }
+    ],
+    "checks": [
+      {
+        "level": "ok",
+        "code": "root",
+        "title": "root",
+        "message": "running as root"
+      },
+      {
+        "level": "info",
+        "code": "path.selected",
+        "title": "path",
+        "message": "/ramplus.swapfile (default)"
+      },
+      {
+        "level": "ok",
+        "code": "fs.fallocate",
+        "title": "filesystem",
+        "message": "ext4 on /dev/fake_ (mount point /): swapfile via fallocate"
+      },
+      {
+        "level": "ok",
+        "code": "disk.ok",
+        "title": "disk",
+        "message": "NVMe (nvme)"
+      },
+      {
+        "level": "warn",
+        "code": "existing.defaulted_keep",
+        "title": "existing swap",
+        "message": "/swap.img (file, 8.0 GiB, used 0 B, priority -2): --existing not given → the safe keep option was chosen (the old swap stays, the new one is added with a higher priority). To replace: --existing=replace"
+      },
+      {
+        "level": "info",
+        "code": "priority.selected",
+        "title": "priority",
+        "message": "the new swap gets priority 10 (above the existing swap (-2): the new one is used first)"
+      },
+      {
+        "level": "ok",
+        "code": "disk_space.ok",
+        "title": "space",
+        "message": "/ has 300.0 GiB of 500.0 GiB available; after creation 296.0 GiB would remain, at least 20.0 GiB is required (10% of the disk, but no more than 20.0 GiB and no less than 5.0 GiB)"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "allocate",
+        "path": "/ramplus.swapfile",
+        "size": 4294967296,
+        "description": "create /ramplus.swapfile, 4.0 GiB (fallocate; if the filesystem cannot — write zeros), mode 600"
+      },
+      {
+        "kind": "chmod",
+        "path": "/ramplus.swapfile",
+        "mode": 384,
+        "description": "chmod 600 /ramplus.swapfile"
+      },
+      {
+        "kind": "mkswap",
+        "path": "/ramplus.swapfile",
+        "description": "mkswap /ramplus.swapfile"
+      },
+      {
+        "kind": "swapon",
+        "path": "/ramplus.swapfile",
+        "size": 4294967296,
+        "priority": 10,
+        "description": "swapon /ramplus.swapfile (priority 10)"
+      },
+      {
+        "kind": "write_file",
+        "path": "/etc/systemd/system/ramplus.swapfile.swap",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus swap`.\n[Unit]\nDescription=RamPlus swapfile /ramplus.swapfile\nDocumentation=https://github.com/ashot0907/ramplus\n\n[Swap]\nWhat=/ramplus.swapfile\nPriority=10\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "write /etc/systemd/system/ramplus.swapfile.swap"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "enable",
+          "ramplus.swapfile.swap"
+        ],
+        "description": "systemctl enable ramplus.swapfile.swap"
+      }
+    ],
+    "summary": {
+      "swap_before_bytes": 8589934592,
+      "swap_after_bytes": 12884901888,
+      "created": [
+        "/etc/systemd/system/ramplus.swapfile.swap",
+        "/ramplus.swapfile"
+      ],
+      "disabled": [],
+      "deleted": []
+    },
+    "swap": {
+      "swaps": [
+        {
+          "path": "/swap.img",
+          "type": "file",
+          "size_bytes": 8589934592,
+          "used_bytes": 0,
+          "priority": -2,
+          "tag": "in /etc/fstab"
+        }
+      ],
+      "target_fs": {
+        "fs_type": "ext4",
+        "source": "/dev/fake_",
+        "mount_point": "/",
+        "disk": "sda, NVMe, nvme",
+        "total_bytes": 536870912000,
+        "available_bytes": 322122547200
+      },
+      "mem_available_bytes": 8589934592,
+      "mem_total_bytes": 17179869184,
+      "apply_command": "ramplus swap apply --size 4G --existing=keep",
+      "title": "swapfile creation"
+    }
+  }
+}
+
+$ ramplus swap resize --size 4G --json --yes
+{
+  "status": "blocked",
+  "error": "the plan is blocked by checks — nothing changed",
+  "events": [],
+  "plan": {
+    "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
+    "action": "resize",
+    "command": "ramplus swap resize --size 4G",
+    "blocked": true,
+    "choices": [],
+    "checks": [
+      {
+        "level": "ok",
+        "code": "root",
+        "title": "root",
+        "message": "running as root"
+      },
+      {
+        "level": "fail",
+        "code": "size.unchanged",
+        "title": "size",
+        "message": "RamPlus swap is already 4.0 GiB"
+      }
+    ],
+    "steps": [],
+    "summary": {
+      "swap_before_bytes": 12884901888,
+      "swap_after_bytes": 12884901888,
+      "created": [],
+      "disabled": [],
+      "deleted": []
+    },
+    "swap": {
+      "swaps": [
+        {
+          "path": "/ramplus.swapfile",
+          "type": "file",
+          "size_bytes": 4294967296,
+          "used_bytes": 0,
+          "priority": 10,
+          "tag": "RamPlus"
+        },
+        {
+          "path": "/swap.img",
+          "type": "file",
+          "size_bytes": 8589934592,
+          "used_bytes": 0,
+          "priority": -2,
+          "tag": "in /etc/fstab"
+        }
+      ],
+      "target_fs": {
+        "fs_type": "ext4",
+        "source": "/dev/fake_",
+        "mount_point": "/",
+        "disk": "sda, NVMe, nvme",
+        "total_bytes": 536870912000,
+        "available_bytes": 322122547200
+      },
+      "mem_available_bytes": 8589934592,
+      "mem_total_bytes": 17179869184,
+      "managed": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 4294967296,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap"
+      },
+      "apply_command": "ramplus swap resize --size 4G",
+      "title": "swapfile resize"
+    }
+  }
+}
+error: silent failure
+
+$ ramplus profile plan zswap-lz4 --json
+{
+  "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
+  "action": "profile-apply",
+  "command": "ramplus profile apply zswap-lz4",
+  "blocked": false,
+  "choices": [],
+  "checks": [
+    {
+      "level": "ok",
+      "code": "root",
+      "title": "root",
+      "message": "running as root"
+    },
+    {
+      "level": "warn",
+      "code": "profile.experimental",
+      "title": "status",
+      "message": "experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)"
+    },
+    {
+      "level": "info",
+      "code": "zswap.zpool_skipped",
+      "title": "zswap.zpool",
+      "message": "this kernel has no zpool parameter: zsmalloc is used — skipped"
+    },
+    {
+      "level": "info",
+      "code": "profile.baseline_capture",
+      "title": "original values",
+      "message": "first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset"
+    }
+  ],
+  "steps": [
+    {
+      "kind": "set_value",
+      "path": "/sys/module/zswap/parameters/compressor",
+      "content": "lz4",
+      "description": "zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)"
+    },
+    {
+      "kind": "set_value",
+      "path": "/sys/module/zswap/parameters/enabled",
+      "content": "Y",
+      "description": "zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)"
+    },
+    {
+      "kind": "write_file",
+      "path": "/etc/sysctl.d/99-ramplus.conf",
+      "mode": 420,
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+      "description": "write /etc/sysctl.d/99-ramplus.conf"
+    },
+    {
+      "kind": "write_file",
+      "path": "/etc/systemd/system/ramplus-zswap.service",
+      "mode": 420,
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+      "reload": true,
+      "description": "write /etc/systemd/system/ramplus-zswap.service"
+    },
+    {
+      "kind": "systemctl",
+      "args": [
+        "daemon-reload"
+      ],
+      "description": "systemctl daemon-reload"
+    },
+    {
+      "kind": "systemctl",
+      "args": [
+        "enable",
+        "ramplus-zswap.service"
+      ],
+      "description": "systemctl enable ramplus-zswap.service"
+    }
+  ],
+  "summary": {
+    "swap_before_bytes": 0,
+    "swap_after_bytes": 0,
+    "created": [
+      "/etc/sysctl.d/99-ramplus.conf",
+      "/etc/systemd/system/ramplus-zswap.service"
+    ],
+    "disabled": [],
+    "deleted": []
+  },
+  "profile": {
+    "name": "zswap-lz4",
+    "title": "zswap + lz4",
+    "description": "zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.",
+    "status": "experimental",
+    "base_status": "experimental",
+    "experimental": true,
+    "reset": false,
+    "rows": [
+      {
+        "key": "zswap.enabled",
+        "title": "zswap enabled",
+        "current": "N",
+        "new": "Y",
+        "source": "kernel default",
+        "change": true
+      },
+      {
+        "key": "zswap.compressor",
+        "title": "compressor",
+        "current": "lzo",
+        "new": "lz4",
+        "source": "kernel default",
+        "change": true
+      },
+      {
+        "key": "zswap.zpool",
+        "title": "pool allocator",
+        "current": "",
+        "new": "zsmalloc",
+        "source": "not in this kernel",
+        "change": false,
+        "skip": "not in this kernel"
+      },
+      {
+        "key": "zswap.max_pool_percent",
+        "title": "max pool, % of RAM",
+        "current": "20",
+        "new": "20",
+        "source": "kernel default",
+        "change": false
+      },
+      {
+        "key": "vm.swappiness",
+        "title": "tendency to swap",
+        "current": "60",
+        "new": "60",
+        "source": "kernel default",
+        "change": false
+      },
+      {
+        "key": "vm.page-cluster",
+        "title": "swap readahead, 2^N pages",
+        "current": "3",
+        "new": "3",
+        "source": "kernel default",
+        "change": false
+      },
+      {
+        "key": "vm.watermark_scale_factor",
+        "title": "kswapd memory reserve, ‱",
+        "current": "10",
+        "new": "10",
+        "source": "kernel default",
+        "change": false
+      },
+      {
+        "key": "vm.vfs_cache_pressure",
+        "title": "dentry/inode cache reclaim",
+        "current": "100",
+        "new": "100",
+        "source": "kernel default",
+        "change": false
+      }
+    ],
+    "status_text": "experimental: not confirmed by an SSD benchmark"
+  }
+}
+
+$ ramplus profile apply zswap-lz4 --json --yes
+{
+  "status": "experimental_not_confirmed",
+  "error": "experimental profile (not confirmed by an SSD benchmark): in scripts add --experimental",
+  "events": [],
+  "plan": {
+    "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
+    "action": "profile-apply",
+    "command": "ramplus profile apply zswap-lz4",
+    "blocked": false,
+    "choices": [],
+    "checks": [
+      {
+        "level": "ok",
+        "code": "root",
+        "title": "root",
+        "message": "running as root"
+      },
+      {
+        "level": "warn",
+        "code": "profile.experimental",
+        "title": "status",
+        "message": "experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)"
+      },
+      {
+        "level": "info",
+        "code": "zswap.zpool_skipped",
+        "title": "zswap.zpool",
+        "message": "this kernel has no zpool parameter: zsmalloc is used — skipped"
+      },
+      {
+        "level": "info",
+        "code": "profile.baseline_capture",
+        "title": "original values",
+        "message": "first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/compressor",
+        "content": "lz4",
+        "description": "zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)"
+      },
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/enabled",
+        "content": "Y",
+        "description": "zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)"
+      },
+      {
+        "kind": "write_file",
+        "path": "/etc/sysctl.d/99-ramplus.conf",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+        "description": "write /etc/sysctl.d/99-ramplus.conf"
+      },
+      {
+        "kind": "write_file",
+        "path": "/etc/systemd/system/ramplus-zswap.service",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "write /etc/systemd/system/ramplus-zswap.service"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "enable",
+          "ramplus-zswap.service"
+        ],
+        "description": "systemctl enable ramplus-zswap.service"
+      }
+    ],
+    "summary": {
+      "swap_before_bytes": 0,
+      "swap_after_bytes": 0,
+      "created": [
+        "/etc/sysctl.d/99-ramplus.conf",
+        "/etc/systemd/system/ramplus-zswap.service"
+      ],
+      "disabled": [],
+      "deleted": []
+    },
+    "profile": {
+      "name": "zswap-lz4",
+      "title": "zswap + lz4",
+      "description": "zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.",
+      "status": "experimental",
+      "base_status": "experimental",
+      "experimental": true,
+      "reset": false,
+      "rows": [
+        {
+          "key": "zswap.enabled",
+          "title": "zswap enabled",
+          "current": "N",
+          "new": "Y",
+          "source": "kernel default",
+          "change": true
+        },
+        {
+          "key": "zswap.compressor",
+          "title": "compressor",
+          "current": "lzo",
+          "new": "lz4",
+          "source": "kernel default",
+          "change": true
+        },
+        {
+          "key": "zswap.zpool",
+          "title": "pool allocator",
+          "current": "",
+          "new": "zsmalloc",
+          "source": "not in this kernel",
+          "change": false,
+          "skip": "not in this kernel"
+        },
+        {
+          "key": "zswap.max_pool_percent",
+          "title": "max pool, % of RAM",
+          "current": "20",
+          "new": "20",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.swappiness",
+          "title": "tendency to swap",
+          "current": "60",
+          "new": "60",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.page-cluster",
+          "title": "swap readahead, 2^N pages",
+          "current": "3",
+          "new": "3",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.watermark_scale_factor",
+          "title": "kswapd memory reserve, ‱",
+          "current": "10",
+          "new": "10",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.vfs_cache_pressure",
+          "title": "dentry/inode cache reclaim",
+          "current": "100",
+          "new": "100",
+          "source": "kernel default",
+          "change": false
+        }
+      ],
+      "status_text": "experimental: not confirmed by an SSD benchmark"
+    }
+  }
+}
+error: silent failure
+
+$ ramplus profile apply zswap-lz4 --json --yes --experimental
+{
+  "status": "done",
+  "operation_id": "<OPID>",
+  "events": [
+    {
+      "undo": false,
+      "index": 1,
+      "total": 6,
+      "step": {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/compressor",
+        "content": "lz4",
+        "description": "zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)"
+      }
+    },
+    {
+      "undo": false,
+      "index": 2,
+      "total": 6,
+      "step": {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/enabled",
+        "content": "Y",
+        "description": "zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)"
+      }
+    },
+    {
+      "undo": false,
+      "index": 3,
+      "total": 6,
+      "step": {
+        "kind": "write_file",
+        "path": "/etc/sysctl.d/99-ramplus.conf",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+        "description": "write /etc/sysctl.d/99-ramplus.conf"
+      }
+    },
+    {
+      "undo": false,
+      "index": 4,
+      "total": 6,
+      "step": {
+        "kind": "write_file",
+        "path": "/etc/systemd/system/ramplus-zswap.service",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "write /etc/systemd/system/ramplus-zswap.service"
+      }
+    },
+    {
+      "undo": false,
+      "index": 5,
+      "total": 6,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      }
+    },
+    {
+      "undo": false,
+      "index": 6,
+      "total": 6,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "enable",
+          "ramplus-zswap.service"
+        ],
+        "description": "systemctl enable ramplus-zswap.service"
+      }
+    }
+  ],
+  "plan": {
+    "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
+    "action": "profile-apply",
+    "command": "ramplus profile apply zswap-lz4 --experimental",
+    "blocked": false,
+    "choices": [],
+    "checks": [
+      {
+        "level": "ok",
+        "code": "root",
+        "title": "root",
+        "message": "running as root"
+      },
+      {
+        "level": "warn",
+        "code": "profile.experimental",
+        "title": "status",
+        "message": "experimental profile: not confirmed by scripts/bench.sh on a real SSD — applied only with explicit confirmation (in scripts: --experimental)"
+      },
+      {
+        "level": "info",
+        "code": "zswap.zpool_skipped",
+        "title": "zswap.zpool",
+        "message": "this kernel has no zpool parameter: zsmalloc is used — skipped"
+      },
+      {
+        "level": "info",
+        "code": "profile.baseline_capture",
+        "title": "original values",
+        "message": "first profile apply: the current system values are saved to /var/lib/ramplus/state.json for ramplus profile reset"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/compressor",
+        "content": "lz4",
+        "description": "zswap.compressor = lz4 (write to /sys/module/zswap/parameters/compressor)"
+      },
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/enabled",
+        "content": "Y",
+        "description": "zswap.enabled = Y (write to /sys/module/zswap/parameters/enabled)"
+      },
+      {
+        "kind": "write_file",
+        "path": "/etc/sysctl.d/99-ramplus.conf",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+        "description": "write /etc/sysctl.d/99-ramplus.conf"
+      },
+      {
+        "kind": "write_file",
+        "path": "/etc/systemd/system/ramplus-zswap.service",
+        "mode": 420,
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "write /etc/systemd/system/ramplus-zswap.service"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "enable",
+          "ramplus-zswap.service"
+        ],
+        "description": "systemctl enable ramplus-zswap.service"
+      }
+    ],
+    "summary": {
+      "swap_before_bytes": 0,
+      "swap_after_bytes": 0,
+      "created": [
+        "/etc/sysctl.d/99-ramplus.conf",
+        "/etc/systemd/system/ramplus-zswap.service"
+      ],
+      "disabled": [],
+      "deleted": []
+    },
+    "profile": {
+      "name": "zswap-lz4",
+      "title": "zswap + lz4",
+      "description": "zswap on: lz4, zsmalloc, pool up to 20% of RAM; sysctl as in default.",
+      "status": "experimental",
+      "base_status": "experimental",
+      "experimental": true,
+      "reset": false,
+      "rows": [
+        {
+          "key": "zswap.enabled",
+          "title": "zswap enabled",
+          "current": "N",
+          "new": "Y",
+          "source": "kernel default",
+          "change": true
+        },
+        {
+          "key": "zswap.compressor",
+          "title": "compressor",
+          "current": "lzo",
+          "new": "lz4",
+          "source": "kernel default",
+          "change": true
+        },
+        {
+          "key": "zswap.zpool",
+          "title": "pool allocator",
+          "current": "",
+          "new": "zsmalloc",
+          "source": "not in this kernel",
+          "change": false,
+          "skip": "not in this kernel"
+        },
+        {
+          "key": "zswap.max_pool_percent",
+          "title": "max pool, % of RAM",
+          "current": "20",
+          "new": "20",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.swappiness",
+          "title": "tendency to swap",
+          "current": "60",
+          "new": "60",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.page-cluster",
+          "title": "swap readahead, 2^N pages",
+          "current": "3",
+          "new": "3",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.watermark_scale_factor",
+          "title": "kswapd memory reserve, ‱",
+          "current": "10",
+          "new": "10",
+          "source": "kernel default",
+          "change": false
+        },
+        {
+          "key": "vm.vfs_cache_pressure",
+          "title": "dentry/inode cache reclaim",
+          "current": "100",
+          "new": "100",
+          "source": "kernel default",
+          "change": false
+        }
+      ],
+      "status_text": "experimental: not confirmed by an SSD benchmark"
+    }
+  }
+}
+
+$ ramplus rollback --dry-run --json
+{
+  "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
+  "action": "rollback",
+  "command": "ramplus rollback",
+  "blocked": false,
+  "choices": [],
+  "checks": [
+    {
+      "level": "ok",
+      "code": "root",
+      "title": "root",
+      "message": "running as root"
+    },
+    {
+      "level": "info",
+      "code": "rollback.target",
+      "title": "rollback",
+      "message": "undoing operation <OPID> from 2026-11-16 12:00:28: ramplus profile apply zswap-lz4 --experimental"
+    },
+    {
+      "level": "ok",
+      "code": "rollback.state_ok",
+      "title": "state",
+      "message": "the system is in the state recorded in the journal after operation <OPID>"
+    }
+  ],
+  "steps": [
+    {
+      "kind": "systemctl",
+      "args": [
+        "disable",
+        "ramplus-zswap.service"
+      ],
+      "description": "systemctl disable ramplus-zswap.service"
+    },
+    {
+      "kind": "delete_config",
+      "path": "/etc/systemd/system/ramplus-zswap.service",
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+      "reload": true,
+      "description": "delete /etc/systemd/system/ramplus-zswap.service"
+    },
+    {
+      "kind": "systemctl",
+      "args": [
+        "daemon-reload"
+      ],
+      "description": "systemctl daemon-reload"
+    },
+    {
+      "kind": "delete_config",
+      "path": "/etc/sysctl.d/99-ramplus.conf",
+      "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+      "description": "delete /etc/sysctl.d/99-ramplus.conf"
+    },
+    {
+      "kind": "set_value",
+      "path": "/sys/module/zswap/parameters/enabled",
+      "content": "N",
+      "description": "zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)"
+    },
+    {
+      "kind": "set_value",
+      "path": "/sys/module/zswap/parameters/compressor",
+      "content": "lzo",
+      "description": "zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)"
+    }
+  ],
+  "summary": {
+    "swap_before_bytes": 12884901888,
+    "swap_after_bytes": 12884901888,
+    "created": [],
+    "disabled": [],
+    "deleted": [
+      "/etc/sysctl.d/99-ramplus.conf",
+      "/etc/systemd/system/ramplus-zswap.service"
+    ]
+  },
+  "swap": {
+    "swaps": [
+      {
+        "path": "/ramplus.swapfile",
+        "type": "file",
+        "size_bytes": 4294967296,
+        "used_bytes": 0,
+        "priority": 10,
+        "tag": "RamPlus"
+      },
+      {
+        "path": "/swap.img",
+        "type": "file",
+        "size_bytes": 8589934592,
+        "used_bytes": 0,
+        "priority": -2,
+        "tag": "in /etc/fstab"
+      }
+    ],
+    "target_fs": {
+      "fs_type": "ext4",
+      "source": "/dev/fake_",
+      "mount_point": "/",
+      "disk": "sda, NVMe, nvme",
+      "total_bytes": 536870912000,
+      "available_bytes": 322122547200
+    },
+    "mem_available_bytes": 8589934592,
+    "mem_total_bytes": 17179869184,
+    "managed": {
+      "path": "/ramplus.swapfile",
+      "size_bytes": 4294967296,
+      "priority": 10,
+      "unit": "ramplus.swapfile.swap"
+    },
+    "apply_command": "ramplus rollback",
+    "title": "undo of the last operation"
+  },
+  "rollback": {
+    "operation_id": "<OPID>",
+    "action": "profile-apply",
+    "domain": "profile",
+    "command": "ramplus profile apply zswap-lz4 --experimental",
+    "started_at": "2026-11-16T12:00:28Z",
+    "age_seconds": 20
+  }
+}
+
+$ ramplus rollback --json --yes
+{
+  "status": "done",
+  "operation_id": "<OPID>",
+  "events": [
+    {
+      "undo": false,
+      "index": 1,
+      "total": 6,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "disable",
+          "ramplus-zswap.service"
+        ],
+        "description": "systemctl disable ramplus-zswap.service"
+      }
+    },
+    {
+      "undo": false,
+      "index": 2,
+      "total": 6,
+      "step": {
+        "kind": "delete_config",
+        "path": "/etc/systemd/system/ramplus-zswap.service",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "delete /etc/systemd/system/ramplus-zswap.service"
+      }
+    },
+    {
+      "undo": false,
+      "index": 3,
+      "total": 6,
+      "step": {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      }
+    },
+    {
+      "undo": false,
+      "index": 4,
+      "total": 6,
+      "step": {
+        "kind": "delete_config",
+        "path": "/etc/sysctl.d/99-ramplus.conf",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+        "description": "delete /etc/sysctl.d/99-ramplus.conf"
+      }
+    },
+    {
+      "undo": false,
+      "index": 5,
+      "total": 6,
+      "step": {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/enabled",
+        "content": "N",
+        "description": "zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)"
+      }
+    },
+    {
+      "undo": false,
+      "index": 6,
+      "total": 6,
+      "step": {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/compressor",
+        "content": "lzo",
+        "description": "zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)"
+      }
+    }
+  ],
+  "plan": {
+    "schema_version": 1,
+    "id": "<PLANID>",
+    "fingerprint": "<FP>",
+    "action": "rollback",
+    "command": "ramplus rollback",
+    "blocked": false,
+    "choices": [],
+    "checks": [
+      {
+        "level": "ok",
+        "code": "root",
+        "title": "root",
+        "message": "running as root"
+      },
+      {
+        "level": "info",
+        "code": "rollback.target",
+        "title": "rollback",
+        "message": "undoing operation <OPID> from 2026-11-16 12:00:28: ramplus profile apply zswap-lz4 --experimental"
+      },
+      {
+        "level": "ok",
+        "code": "rollback.state_ok",
+        "title": "state",
+        "message": "the system is in the state recorded in the journal after operation <OPID>"
+      }
+    ],
+    "steps": [
+      {
+        "kind": "systemctl",
+        "args": [
+          "disable",
+          "ramplus-zswap.service"
+        ],
+        "description": "systemctl disable ramplus-zswap.service"
+      },
+      {
+        "kind": "delete_config",
+        "path": "/etc/systemd/system/ramplus-zswap.service",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Пишет параметры zswap при загрузке (kernel cmdline не меняется).\n[Unit]\nDescription=RamPlus zswap parameters (profile zswap-lz4)\nDocumentation=https://github.com/ashot0907/ramplus\nDefaultDependencies=no\nAfter=local-fs.target systemd-modules-load.service\nBefore=swap.target\nConditionPathIsDirectory=/sys/module/zswap/parameters\n\n[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/bin/sh -c 'echo lz4 \u003e /sys/module/zswap/parameters/compressor'\nExecStart=/bin/sh -c 'echo 20 \u003e /sys/module/zswap/parameters/max_pool_percent'\nExecStart=/bin/sh -c 'echo Y \u003e /sys/module/zswap/parameters/enabled'\n\n[Install]\nWantedBy=swap.target\n",
+        "reload": true,
+        "description": "delete /etc/systemd/system/ramplus-zswap.service"
+      },
+      {
+        "kind": "systemctl",
+        "args": [
+          "daemon-reload"
+        ],
+        "description": "systemctl daemon-reload"
+      },
+      {
+        "kind": "delete_config",
+        "path": "/etc/sysctl.d/99-ramplus.conf",
+        "content": "# Managed by RamPlus: do not edit, use `ramplus profile`.\n# Профиль: zswap-lz4 (экспериментальный: не подтверждён бенчмарком на SSD)\n# Применяется systemd-sysctl при загрузке; имя 99-ramplus.conf — чтобы идти после остальных.\nvm.swappiness = 60\nvm.page-cluster = 3\nvm.watermark_scale_factor = 10\nvm.vfs_cache_pressure = 100\n",
+        "description": "delete /etc/sysctl.d/99-ramplus.conf"
+      },
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/enabled",
+        "content": "N",
+        "description": "zswap.enabled = N (write to /sys/module/zswap/parameters/enabled)"
+      },
+      {
+        "kind": "set_value",
+        "path": "/sys/module/zswap/parameters/compressor",
+        "content": "lzo",
+        "description": "zswap.compressor = lzo (write to /sys/module/zswap/parameters/compressor)"
+      }
+    ],
+    "summary": {
+      "swap_before_bytes": 12884901888,
+      "swap_after_bytes": 12884901888,
+      "created": [],
+      "disabled": [],
+      "deleted": [
+        "/etc/sysctl.d/99-ramplus.conf",
+        "/etc/systemd/system/ramplus-zswap.service"
+      ]
+    },
+    "swap": {
+      "swaps": [
+        {
+          "path": "/ramplus.swapfile",
+          "type": "file",
+          "size_bytes": 4294967296,
+          "used_bytes": 0,
+          "priority": 10,
+          "tag": "RamPlus"
+        },
+        {
+          "path": "/swap.img",
+          "type": "file",
+          "size_bytes": 8589934592,
+          "used_bytes": 0,
+          "priority": -2,
+          "tag": "in /etc/fstab"
+        }
+      ],
+      "target_fs": {
+        "fs_type": "ext4",
+        "source": "/dev/fake_",
+        "mount_point": "/",
+        "disk": "sda, NVMe, nvme",
+        "total_bytes": 536870912000,
+        "available_bytes": 322122547200
+      },
+      "mem_available_bytes": 8589934592,
+      "mem_total_bytes": 17179869184,
+      "managed": {
+        "path": "/ramplus.swapfile",
+        "size_bytes": 4294967296,
+        "priority": 10,
+        "unit": "ramplus.swapfile.swap"
+      },
+      "apply_command": "ramplus rollback",
+      "title": "undo of the last operation"
+    },
+    "rollback": {
+      "operation_id": "<OPID>",
+      "action": "profile-apply",
+      "domain": "profile",
+      "command": "ramplus profile apply zswap-lz4 --experimental",
+      "started_at": "2026-11-16T12:00:28Z",
+      "age_seconds": 21
+    }
+  }
+}
+
+$ ramplus profile reset --dry-run --json
+{
+  "schema_version": 1,
+  "id": "<PLANID>",
+  "fingerprint": "<FP>",
+  "action": "profile-reset",
+  "command": "ramplus profile reset",
+  "blocked": true,
+  "choices": [],
+  "checks": [
+    {
+      "level": "ok",
+      "code": "root",
+      "title": "root",
+      "message": "running as root"
+    },
+    {
+      "level": "fail",
+      "code": "reset.nothing",
+      "title": "reset",
+      "message": "no RamPlus profile was applied — nothing to reset"
+    }
+  ],
+  "steps": [],
+  "summary": {
+    "swap_before_bytes": 0,
+    "swap_after_bytes": 0,
+    "created": [],
+    "disabled": [],
+    "deleted": []
+  },
+  "profile": {
+    "name": "original values",
+    "experimental": false,
+    "reset": true,
+    "rows": []
+  }
+}
+

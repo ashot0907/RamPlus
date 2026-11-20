@@ -2,12 +2,12 @@ package journal
 
 import (
 	"context"
-	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/sys"
 )
@@ -75,14 +75,14 @@ func (e *Env) Backup(path string, content []byte) (string, error) {
 
 // Handler — как выполнять, отменять и проверять шаги одного вида.
 type Handler struct {
-	Describe func(plan.Step) string
+	Describe plan.Describer
 	// Prepare читает состояние до шага и вычисляет отмену; систему не
 	// меняет (кроме копии в BackupDir). nil — отменять нечего.
 	Prepare func(e *Env, s plan.Step) (undo []plan.Step, backup string, err error)
 	Do      func(ctx context.Context, e *Env, s plan.Step) error
 	// Verify — что осталось от шага, прерванного на середине (pending).
 	// nil — отменять нечего.
-	Verify func(e *Env, a Applied) (Verdict, string)
+	Verify func(e *Env, a Applied) (Verdict, i18n.Text)
 	// Expect — каким должно быть состояние после шага (сверка перед rollback).
 	Expect func(s plan.Step) []Expectation
 	// Recovered — поправка шага отмены прерванного шага (например, файл мог
@@ -120,4 +120,4 @@ func Recovered(s plan.Step) plan.Step {
 	return s
 }
 
-func unknown(kind plan.StepKind) error { return fmt.Errorf("неизвестный шаг %q", kind) }
+func unknown(kind plan.StepKind) error { return i18n.Errorf("journal.unknown_step", string(kind)) }

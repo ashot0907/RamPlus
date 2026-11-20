@@ -1,6 +1,8 @@
 package render
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"fmt"
 	"io"
 	"strings"
@@ -25,68 +27,68 @@ func avg10(l *monitor.PSILine) string {
 }
 
 // WatchFrame — кадр ramplus status --watch.
-func WatchFrame(w io.Writer, st monitor.Status, p *monitor.Peaks, now time.Time, interval time.Duration) {
-	fmt.Fprintf(w, "RamPlus — наблюдение (каждые %s, Ctrl+C — выход)   %s\n\n", interval, now.Local().Format("15:04:05"))
+func WatchFrame(l i18n.Lang, w io.Writer, st monitor.Status, p *monitor.Peaks, now time.Time, interval time.Duration) {
+	fmt.Fprintf(w, t(l, "render.watch.header"), interval, now.Local().Format("15:04:05"))
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	m := st.Memory
 	if m.Error != nil {
-		fmt.Fprintf(tw, "RAM\t%s\n", reasonText(m.Error, nil))
+		fmt.Fprintf(tw, "RAM\t%s\n", reasonText(l, m.Error, nil))
 	} else {
-		fmt.Fprintf(tw, "RAM\tзанято %s из %s%s, доступно %s\n",
+		fmt.Fprintf(tw, t(l, "render.watch.ram"),
 			bytesOrNA(m.UsedBytes), bytesOrNA(m.TotalBytes), pct(m.UsedBytes, m.TotalBytes), bytesOrNA(m.AvailableBytes))
 		if m.SwapTotalBytes != nil && *m.SwapTotalBytes == 0 {
-			fmt.Fprintf(tw, "swap\tнет\n")
+			fmt.Fprint(tw, t(l, "render.watch.no_swap"))
 		} else {
-			fmt.Fprintf(tw, "swap\tзанято %s из %s%s\n", bytesOrNA(m.SwapUsedBytes), bytesOrNA(m.SwapTotalBytes), pct(m.SwapUsedBytes, m.SwapTotalBytes))
+			fmt.Fprintf(tw, t(l, "render.watch.swap"), bytesOrNA(m.SwapUsedBytes), bytesOrNA(m.SwapTotalBytes), pct(m.SwapUsedBytes, m.SwapTotalBytes))
 		}
 	}
 	z := st.Zswap
 	switch {
 	case !z.Present:
-		fmt.Fprintf(tw, "zswap\tнет в ядре\n")
+		fmt.Fprint(tw, t(l, "render.watch.no_zswap"))
 	default:
-		state := "выключен"
+		state := t(l, "render.watch.off")
 		if z.Params.Enabled != nil && *z.Params.Enabled {
-			state = "включён"
+			state = t(l, "render.watch.on")
 		}
-		fmt.Fprintf(tw, "zswap\tпул %s / данные %s (%s)\n", bytesOrNA(z.PoolBytes), bytesOrNA(z.StoredBytes), state)
+		fmt.Fprintf(tw, t(l, "render.watch.zswap"), bytesOrNA(z.PoolBytes), bytesOrNA(z.StoredBytes), state)
 	}
 	if st.PSI.Error != nil {
-		fmt.Fprintf(tw, "PSI\t%s\n", reasonText(st.PSI.Error, map[string]string{"not_present": "ядро без PSI"}))
+		fmt.Fprintf(tw, "PSI\t%s\n", reasonText(l, st.PSI.Error, map[string]string{"not_present": t(l, "render.status.no_psi")}))
 	} else {
-		fmt.Fprintf(tw, "PSI avg10\tsome %s  full %s — %s\n", avg10(st.PSI.Some), avg10(st.PSI.Full), pressureText(st.PSI.PressureLevel))
+		fmt.Fprintf(tw, "PSI avg10\tsome %s  full %s — %s\n", avg10(st.PSI.Some), avg10(st.PSI.Full), pressureText(l, st.PSI.PressureLevel))
 	}
 	tw.Flush()
 
-	fmt.Fprintf(w, "\nПики за %s (замеров: %d)\n", now.Sub(p.Since).Round(time.Second), p.Samples)
+	fmt.Fprintf(w, t(l, "render.watch.peaks"), now.Sub(p.Since).Round(time.Second), p.Samples)
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "  swap занято\t%s%s\n", humanBytes(p.SwapUsedBytes), at(p.SwapUsedAt))
+	fmt.Fprintf(tw, t(l, "render.watch.peak_swap"), humanBytes(p.SwapUsedBytes), at(l, p.SwapUsedAt))
 	if !p.PSISomeAt.IsZero() {
-		fmt.Fprintf(tw, "  PSI some avg10\t%.2f%s — %s\n", p.PSISomeAvg10, at(p.PSISomeAt), pressureText(p.PressureLevel))
-		fmt.Fprintf(tw, "  PSI full avg10\t%.2f%s\n", p.PSIFullAvg10, at(p.PSIFullAt))
+		fmt.Fprintf(tw, "  PSI some avg10\t%.2f%s — %s\n", p.PSISomeAvg10, at(l, p.PSISomeAt), pressureText(l, p.PressureLevel))
+		fmt.Fprintf(tw, "  PSI full avg10\t%.2f%s\n", p.PSIFullAvg10, at(l, p.PSIFullAt))
 	}
 	tw.Flush()
 }
 
-func at(t time.Time) string {
-	if t.IsZero() {
+func at(l i18n.Lang, when time.Time) string {
+	if when.IsZero() {
 		return ""
 	}
-	return " в " + t.Local().Format("15:04:05")
+	return t(l, "render.watch.at") + when.Local().Format("15:04:05")
 }
 
 // WatchSummary — итог наблюдения (по Ctrl+C).
-func WatchSummary(w io.Writer, p *monitor.Peaks, now time.Time) error {
+func WatchSummary(l i18n.Lang, w io.Writer, p *monitor.Peaks, now time.Time) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "\nИтог наблюдения: %s, замеров: %d\n", now.Sub(p.Since).Round(time.Second), p.Samples)
-	fmt.Fprintf(&b, "  макс. swap занято: %s%s\n", humanBytes(p.SwapUsedBytes), at(p.SwapUsedAt))
-	fmt.Fprintf(&b, "  макс. RAM занято:  %s\n", humanBytes(p.MemUsedBytes))
+	fmt.Fprintf(&b, t(l, "render.watch.summary"), now.Sub(p.Since).Round(time.Second), p.Samples)
+	fmt.Fprintf(&b, t(l, "render.watch.max_swap"), humanBytes(p.SwapUsedBytes), at(l, p.SwapUsedAt))
+	fmt.Fprintf(&b, t(l, "render.watch.max_ram"), humanBytes(p.MemUsedBytes))
 	if p.ZswapPoolBytes > 0 {
-		fmt.Fprintf(&b, "  макс. пул zswap:   %s\n", humanBytes(p.ZswapPoolBytes))
+		fmt.Fprintf(&b, t(l, "render.watch.max_pool"), humanBytes(p.ZswapPoolBytes))
 	}
 	if !p.PSISomeAt.IsZero() {
-		fmt.Fprintf(&b, "  макс. PSI some avg10: %.2f%s — %s\n", p.PSISomeAvg10, at(p.PSISomeAt), pressureText(p.PressureLevel))
-		fmt.Fprintf(&b, "  макс. PSI full avg10: %.2f%s\n", p.PSIFullAvg10, at(p.PSIFullAt))
+		fmt.Fprintf(&b, t(l, "render.watch.max_psi_some"), p.PSISomeAvg10, at(l, p.PSISomeAt), pressureText(l, p.PressureLevel))
+		fmt.Fprintf(&b, t(l, "render.watch.max_psi_full"), p.PSIFullAvg10, at(l, p.PSIFullAt))
 	}
 	_, err := io.WriteString(w, b.String())
 	return err

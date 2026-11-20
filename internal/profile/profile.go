@@ -6,6 +6,7 @@ package profile
 
 import (
 	"embed"
+
 	"encoding/json"
 	"fmt"
 	"path"
@@ -13,6 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/ashot0907/ramplus/internal/i18n"
 )
 
 // Статусы профиля.
@@ -24,28 +27,20 @@ const (
 )
 
 // StatusText — статус для человека.
-func StatusText(status string) string {
+func StatusText(l i18n.Lang, status string) string {
 	switch status {
-	case StatusStandard:
-		return "стандарт Ubuntu"
-	case StatusExperimental:
-		return "экспериментальный: не подтверждён бенчмарком на SSD"
-	case StatusVerified:
-		return "проверенный"
-	case StatusModified:
-		return "изменённый пользователем"
+	case StatusStandard, StatusExperimental, StatusVerified, StatusModified:
+		return i18n.T(l, "profile.status."+status)
 	}
 	return status
 }
 
 // Profile — встроенный профиль.
 type Profile struct {
-	Name  string `json:"name"`
-	Title string `json:"title"`
-	// Friendly — название режима для человека (веб, история): «Сжатие — быстрое».
-	Friendly    string `json:"friendly"`
-	Description string `json:"description"`
-	Status      string `json:"status"`
+	// Name — имя профиля. Название, описание и название режима для человека
+	// — в каталоге сообщений: profile.<name>.title / .description / .friendly.
+	Name   string `json:"name"`
+	Status string `json:"status"`
 	// Evidence — ссылка на результат scripts/bench.sh на реальном SSD.
 	Evidence string `json:"evidence"`
 	// Comment — откуда значения (правило CLAUDE.md: ссылка на результат).
@@ -83,7 +78,12 @@ func load() (map[string]Profile, error) {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}
 		if want := strings.TrimSuffix(e.Name(), path.Ext(e.Name())); p.Name != want {
-			return nil, fmt.Errorf("%s: имя профиля %q не совпадает с файлом", e.Name(), p.Name)
+			return nil, i18n.Errorf("profile.err.name_mismatch", e.Name(), p.Name)
+		}
+		for _, k := range []string{".title", ".description", ".friendly"} {
+			if !i18n.Has("profile." + p.Name + k) {
+				return nil, fmt.Errorf("%s: no catalog entry profile.%s%s", e.Name(), p.Name, k)
+			}
 		}
 		if err := Validate(p); err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
@@ -100,13 +100,13 @@ func Validate(p Profile) error {
 	case StatusStandard, StatusExperimental:
 	case StatusVerified:
 		if strings.TrimSpace(p.Evidence) == "" {
-			return fmt.Errorf("статус %q без evidence: проверенным профиль становится только по результату scripts/bench.sh на реальном SSD", p.Status)
+			return i18n.Errorf("profile.err.verified_without_evidence", p.Status)
 		}
 	default:
-		return fmt.Errorf("неизвестный статус %q", p.Status)
+		return i18n.Errorf("profile.err.unknown_status", p.Status)
 	}
 	if len(p.Params) == 0 {
-		return fmt.Errorf("профиль %q без параметров", p.Name)
+		return i18n.Errorf("profile.err.no_params", p.Name)
 	}
 	for k, v := range p.Params {
 		n, err := Normalize(k, v)
@@ -114,7 +114,7 @@ func Validate(p Profile) error {
 			return err
 		}
 		if n != v {
-			return fmt.Errorf("%s: значение %q нужно записать как %q", k, v, n)
+			return i18n.Errorf("profile.err.not_normalized", k, v, n)
 		}
 	}
 	return nil
@@ -137,12 +137,24 @@ func All() []Profile {
 
 // FriendlyName — название режима для человека («Сжатие — быстрое»);
 // неизвестный профиль — его имя.
-func FriendlyName(name string) string {
-	if p, ok := catalog[name]; ok && p.Friendly != "" {
-		return p.Friendly
+func FriendlyName(l i18n.Lang, name string) string {
+	if i18n.Has("profile." + name + ".friendly") {
+		return i18n.T(l, "profile."+name+".friendly")
 	}
 	return name
 }
+
+// Title — название профиля («zswap + lz4»).
+func (p Profile) Title(l i18n.Lang) string { return i18n.T(l, "profile."+p.Name+".title") }
+
+// Description — описание профиля.
+func (p Profile) Description(l i18n.Lang) string { return i18n.T(l, "profile."+p.Name+".description") }
+
+// Friendly — название режима для человека.
+func (p Profile) Friendly(l i18n.Lang) string { return FriendlyName(l, p.Name) }
+
+// ParamTitle — что это за параметр, для человека.
+func ParamTitle(l i18n.Lang, key string) string { return i18n.T(l, "param."+key) }
 
 // Get — профиль по имени.
 func Get(name string) (Profile, bool) {
@@ -182,7 +194,6 @@ type Param struct {
 	Kind     Kind
 	Min, Max int
 	Words    []string // допустимые слова (пусто — любое [a-z0-9-])
-	Title    string
 }
 
 // ZswapParamDir — параметры модуля zswap.
@@ -190,15 +201,15 @@ const ZswapParamDir = "/sys/module/zswap/parameters"
 
 // Params — все параметры, которые может менять профиль (порядок вывода).
 var Params = []Param{
-	{Key: "zswap.enabled", Path: ZswapParamDir + "/enabled", Group: GroupZswap, Kind: KindBool, Title: "zswap включён"},
-	{Key: "zswap.compressor", Path: ZswapParamDir + "/compressor", Group: GroupZswap, Kind: KindWord, Title: "компрессор"},
-	{Key: "zswap.zpool", Path: ZswapParamDir + "/zpool", Group: GroupZswap, Kind: KindWord, Words: []string{"zsmalloc", "zbud", "z3fold"}, Title: "аллокатор пула"},
-	{Key: "zswap.max_pool_percent", Path: ZswapParamDir + "/max_pool_percent", Group: GroupZswap, Kind: KindInt, Min: 1, Max: 100, Title: "макс. пул, % RAM"},
-	{Key: "zswap.shrinker_enabled", Path: ZswapParamDir + "/shrinker_enabled", Group: GroupZswap, Kind: KindBool, Title: "вытеснение холодного из пула"},
-	{Key: "vm.swappiness", Path: "/proc/sys/vm/swappiness", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 200, Title: "склонность к swap"},
-	{Key: "vm.page-cluster", Path: "/proc/sys/vm/page-cluster", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 10, Title: "readahead swap, 2^N страниц"},
-	{Key: "vm.watermark_scale_factor", Path: "/proc/sys/vm/watermark_scale_factor", Group: GroupSysctl, Kind: KindInt, Min: 1, Max: 3000, Title: "запас памяти kswapd, ‱"},
-	{Key: "vm.vfs_cache_pressure", Path: "/proc/sys/vm/vfs_cache_pressure", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 10000, Title: "вытеснение кэша dentry/inode"},
+	{Key: "zswap.enabled", Path: ZswapParamDir + "/enabled", Group: GroupZswap, Kind: KindBool},
+	{Key: "zswap.compressor", Path: ZswapParamDir + "/compressor", Group: GroupZswap, Kind: KindWord},
+	{Key: "zswap.zpool", Path: ZswapParamDir + "/zpool", Group: GroupZswap, Kind: KindWord, Words: []string{"zsmalloc", "zbud", "z3fold"}},
+	{Key: "zswap.max_pool_percent", Path: ZswapParamDir + "/max_pool_percent", Group: GroupZswap, Kind: KindInt, Min: 1, Max: 100},
+	{Key: "zswap.shrinker_enabled", Path: ZswapParamDir + "/shrinker_enabled", Group: GroupZswap, Kind: KindBool},
+	{Key: "vm.swappiness", Path: "/proc/sys/vm/swappiness", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 200},
+	{Key: "vm.page-cluster", Path: "/proc/sys/vm/page-cluster", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 10},
+	{Key: "vm.watermark_scale_factor", Path: "/proc/sys/vm/watermark_scale_factor", Group: GroupSysctl, Kind: KindInt, Min: 1, Max: 3000},
+	{Key: "vm.vfs_cache_pressure", Path: "/proc/sys/vm/vfs_cache_pressure", Group: GroupSysctl, Kind: KindInt, Min: 0, Max: 10000},
 }
 
 // Lookup — параметр по ключу.
@@ -228,7 +239,7 @@ var wordRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 func Normalize(key, value string) (string, error) {
 	p, ok := Lookup(key)
 	if !ok {
-		return "", fmt.Errorf("неизвестный параметр %q (доступны: %s)", key, strings.Join(Keys(), ", "))
+		return "", i18n.Errorf("param.err.unknown", key, strings.Join(Keys(), ", "))
 	}
 	v := strings.TrimSpace(value)
 	switch p.Kind {
@@ -239,22 +250,22 @@ func Normalize(key, value string) (string, error) {
 		case "n", "0", "no", "off", "false":
 			return "N", nil
 		}
-		return "", fmt.Errorf("%s: ожидается Y/N, получено %q", key, value)
+		return "", i18n.Errorf("param.err.bool", key, value)
 	case KindInt:
 		n, err := strconv.Atoi(v)
 		if err != nil {
-			return "", fmt.Errorf("%s: ожидается целое число, получено %q", key, value)
+			return "", i18n.Errorf("param.err.int", key, value)
 		}
 		if n < p.Min || n > p.Max {
-			return "", fmt.Errorf("%s: %d вне допустимого диапазона %d..%d", key, n, p.Min, p.Max)
+			return "", i18n.Errorf("param.err.range", key, n, p.Min, p.Max)
 		}
 		return strconv.Itoa(n), nil
 	default:
 		if !wordRe.MatchString(v) {
-			return "", fmt.Errorf("%s: недопустимое значение %q", key, value)
+			return "", i18n.Errorf("param.err.word", key, value)
 		}
 		if len(p.Words) > 0 && !contains(p.Words, v) {
-			return "", fmt.Errorf("%s: %q не из %s", key, v, strings.Join(p.Words, ", "))
+			return "", i18n.Errorf("param.err.words", key, v, strings.Join(p.Words, ", "))
 		}
 		return v, nil
 	}
@@ -284,11 +295,11 @@ func ParseSet(items []string) (map[string]string, error) {
 	for _, it := range items {
 		k, v, ok := strings.Cut(it, "=")
 		if !ok {
-			return nil, fmt.Errorf("--set %q: ожидается ключ=значение", it)
+			return nil, i18n.Errorf("param.err.set_syntax", it)
 		}
 		n, err := Normalize(strings.TrimSpace(k), v)
 		if err != nil {
-			return nil, fmt.Errorf("--set: %w", err)
+			return nil, i18n.Errorf("cli.flag_error", "--set", err)
 		}
 		out[strings.TrimSpace(k)] = n
 	}

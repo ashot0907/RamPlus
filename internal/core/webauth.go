@@ -1,6 +1,8 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"errors"
 	"fmt"
 	"io/fs"
@@ -11,8 +13,8 @@ import (
 
 // Ошибки ramplus init / passwd.
 var (
-	ErrWebPasswordSet    = errors.New("пароль веб-интерфейса уже задан — сменить: sudo ramplus passwd")
-	ErrWebPasswordNotSet = errors.New("пароль веб-интерфейса не задан — задать: sudo ramplus init")
+	ErrWebPasswordSet    = i18n.Errorf("webauth.err.already_set")
+	ErrWebPasswordNotSet = i18n.Errorf("webauth.err.not_set")
 )
 
 // WebPasswordMode — что делает команда.
@@ -76,7 +78,7 @@ func (c *Core) WebPassword(r WebPasswordRequest) (WebPasswordResult, error) {
 			return res, ErrWebPasswordNotSet
 		}
 	default:
-		return res, fmt.Errorf("неизвестный режим %q", r.Mode)
+		return res, i18n.Errorf("webauth.err.mode", string(r.Mode))
 	}
 	if r.Mode != WebPasswordDisable {
 		if err := webauth.CheckPassword(r.Password); err != nil {

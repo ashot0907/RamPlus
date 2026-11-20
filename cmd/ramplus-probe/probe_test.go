@@ -177,15 +177,15 @@ func TestReport(t *testing.T) {
 	}
 	out := md.String()
 	for _, want := range []string{
-		"Запуск в VM: цифры производительности нерепрезентативны",
+		"Run in a VM: performance numbers are not representative",
 		"## cold / random",
 		"| swap | 2/3 (oom ×1) | 35.5 | 2200 | 0 | — | 75.0 / 32.0 | 45.0 / 13.0 | 1.3 / 90.0 | 2.50 |",
 		"| zswap-lz4 | 1/1 | 30.2 |",
-		"| да (12) |",
+		"| yes (12) |",
 		"| zswap-zstd | 0/1 (skipped ×1) | — |",
 		"| no-swap | 0/1 (failed ×1) | — |",
-		"## Наблюдения",
-		"Сработал лимит пула zswap (debugfs): zswap-lz4 — cold / random (pool_limit_hit +12)",
+		"## Observations",
+		"The zswap pool limit was hit (debugfs): zswap-lz4 — cold / random (pool_limit_hit +12)",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("summary lacks %q:\n%s", want, out)
@@ -194,7 +194,7 @@ func TestReport(t *testing.T) {
 	env.Virt = "none"
 	md.Reset()
 	WriteMarkdown(&md, env, runs)
-	if strings.Contains(md.String(), "нерепрезентативны") {
+	if strings.Contains(md.String(), "not representative") {
 		t.Error("no VM warning on bare metal")
 	}
 }
@@ -203,7 +203,7 @@ func TestAllocate(t *testing.T) {
 	enomem := func(int) ([]byte, error) { return nil, unix.ENOMEM }
 	_, err := allocate(5<<30, enomem)
 	var nm *NoMemoryError
-	if !errors.As(err, &nm) || !strings.Contains(err.Error(), "не удалось выделить 5120 MiB: недостаточно памяти") {
+	if !errors.As(err, &nm) || !strings.Contains(err.Error(), "could not allocate 5120 MiB: not enough memory") {
 		t.Fatalf("err = %v", err)
 	}
 	if exitCode(err) != ExitRefused || exitCode(nil) != 0 || exitCode(errors.New("x")) != 1 {
@@ -253,7 +253,7 @@ func TestClassify(t *testing.T) {
 			Log: "ramplus-probe: не удалось выделить 5082 MiB: недостаточно памяти (cannot allocate memory)"}, StatusRefused, "5082 MiB"},
 		{"stress-ng no resource", ClassifyInput{Workload: "hot", ExitCode: 3, Log: stressNoRes}, StatusRefused, "skipped"},
 		{"stress-ng no resource, old log", ClassifyInput{Workload: "hot", ExitCode: 3,
-			Log: "stress-ng: info:  [16892] successful run completed in 10.01 secs"}, StatusRefused, "код 3"},
+			Log: "stress-ng: info:  [16892] successful run completed in 10.01 secs"}, StatusRefused, "code 3"},
 		{"stress-ng no available memory", ClassifyInput{Workload: "hot", ExitCode: 2,
 			Log: "stress-ng: error: [1] vm: no available memory"}, StatusRefused, "no available memory"},
 		{"go fatal error", ClassifyInput{Workload: "cold", ExitCode: 2,
@@ -326,18 +326,18 @@ func TestObservationsVMQuick(t *testing.T) {
 	}
 	obs := strings.Join(Observations(env, runs, GroupRuns(runs, env)), "\n")
 	for _, want := range []string{
-		"одиночные прогоны, выводы ненадёжны",
-		"hot / stress-ng — swap, max 66942 мс",
-		"hot / stress-ng: p99 66942.2 мс (swap), max 66942.2 мс (swap) — **фриз**",
-		"cold / compressible: p99 5.6 мс (zswap-lzo-zbud), max 194.4 мс (zswap-zstd)",
-		"лимит 20% RAM = 782 MiB",
-		"zswap-zstd — hot-probe / compressible (пик 782 MiB)",
-		"zswap-lzo-zbud — cold / compressible (пик 765 MiB)",
-		"Аномально долго: hot-probe / compressible — zswap-zstd 106.1 с при медиане 24.6 с по конфигурациям (пул zswap упирался в лимит)",
-		"Аномально долго: hot / stress-ng — zswap-lzo-zbud 128.7 с при медиане 43.0 с по конфигурациям (пул zswap упирался в лимит)",
-		"refused — ожидаемо без swap",
+		"single runs, conclusions are unreliable",
+		"hot / stress-ng — swap, max 66942 ms",
+		"hot / stress-ng: p99 66942.2 ms (swap), max 66942.2 ms (swap) — **freeze**",
+		"cold / compressible: p99 5.6 ms (zswap-lzo-zbud), max 194.4 ms (zswap-zstd)",
+		"limit 20% RAM = 782 MiB",
+		"zswap-zstd — hot-probe / compressible (peak 782 MiB)",
+		"zswap-lzo-zbud — cold / compressible (peak 765 MiB)",
+		"Unusually long: hot-probe / compressible — zswap-zstd 106.1 s with a median of 24.6 s across configurations (the zswap pool hit the limit)",
+		"Unusually long: hot / stress-ng — zswap-lzo-zbud 128.7 s with a median of 43.0 s across configurations (the zswap pool hit the limit)",
+		"refused — expected without swap",
 		"no-swap: hot / stress-ng",
-		"**Ошибки инструмента (failed)**",
+		"**Tool errors (failed)**",
 	} {
 		if !strings.Contains(obs, want) {
 			t.Errorf("observations lack %q:\n%s", want, obs)

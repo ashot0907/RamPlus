@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ashot0907/ramplus/internal/core"
+	"github.com/ashot0907/ramplus/internal/i18n"
 	"github.com/ashot0907/ramplus/internal/plan"
 	"github.com/ashot0907/ramplus/internal/profile"
 	"github.com/ashot0907/ramplus/internal/swap"
@@ -110,7 +110,7 @@ func (s *Size) UnmarshalJSON(b []byte) error {
 	}
 	var n uint64
 	if err := json.Unmarshal(b, &n); err != nil {
-		return errors.New("size: ожидается строка (\"4G\") или число байт")
+		return i18n.Errorf("api.err.size")
 	}
 	*s = Size(n)
 	return nil
@@ -138,11 +138,11 @@ func (s *Server) routes() {
 			r2 := r.Clone(r.Context())
 			r2.Method = method
 			if _, pat := m.Handler(r2); pat != "/" && pat != "" {
-				writeError(w, http.StatusMethodNotAllowed, "request.method_not_allowed", "метод "+r.Method+" не поддерживается для "+r.URL.Path)
+				writeError(w, http.StatusMethodNotAllowed, "request.method_not_allowed", i18n.T(langOf(r), "api.err.method", r.Method, r.URL.Path))
 				return
 			}
 		}
-		writeError(w, http.StatusNotFound, "request.not_found", "нет такого эндпоинта: "+r.URL.Path)
+		writeError(w, http.StatusNotFound, "request.not_found", i18n.T(langOf(r), "api.err.not_found", r.URL.Path))
 	})
 	s.mux = m
 }
@@ -152,9 +152,9 @@ func (s *Server) authorize(a Access, h http.HandlerFunc) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := PeerFrom(r.Context())
 		if err != nil || !s.Policy.Allow(p, a) {
-			s.Log.Warn("доступ запрещён", "event", EventAuthForbidden, "uid", p.UID, "gid", p.GID, "gids", gidList(p.Groups),
+			s.Log.Warn("access denied", "event", EventAuthForbidden, "uid", p.UID, "gid", p.GID, "gids", gidList(p.Groups),
 				"pid", p.PID, "method", r.Method, "path", r.URL.Path, "need", a.String(), "peer_error", errText(err))
-			msg := "нет прав: чтение — root или группа ramplus, изменения — root или группа ramplus-admin"
+			msg := i18n.T(langOf(r), "api.err.forbidden")
 			writeError(w, http.StatusForbidden, "auth.forbidden", msg)
 			return
 		}
@@ -181,6 +181,12 @@ func gidList(gids []uint32) string {
 		parts[i] = strconv.FormatUint(uint64(g), 10)
 	}
 	return strings.Join(parts, ",")
+}
+
+// langOf — язык текстов ответа (Accept-Language, по умолчанию английский).
+// Коды ошибок и проверок от языка не зависят.
+func langOf(r *http.Request) i18n.Lang {
+	return i18n.FromAcceptLanguage(r.Header.Get("Accept-Language"))
 }
 
 func errText(err error) string {
@@ -210,16 +216,16 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	dec.DisallowUnknownFields()
 	err := dec.Decode(v)
 	if err == nil && dec.More() {
-		err = errors.New("лишние данные после JSON")
+		err = i18n.Errorf("api.err.trailing")
 	}
 	var tooLarge *http.MaxBytesError
 	switch {
 	case err == nil, errors.Is(err, io.EOF):
 		return true
 	case errors.As(err, &tooLarge):
-		writeError(w, http.StatusRequestEntityTooLarge, "request.too_large", fmt.Sprintf("тело запроса больше %d байт", MaxRequestBytes))
+		writeError(w, http.StatusRequestEntityTooLarge, "request.too_large", i18n.T(langOf(r), "api.err.too_large", MaxRequestBytes))
 	default:
-		writeError(w, http.StatusBadRequest, "request.invalid", "неверный JSON: "+err.Error())
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "api.err.bad_json", err))
 	}
 	return false
 }
@@ -233,10 +239,10 @@ func (s *Server) status(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.Core.Status())
 }
 
-func (s *Server) history(w http.ResponseWriter, _ *http.Request) {
-	h, err := s.Core.History()
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	h, err := s.Core.History(langOf(r))
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "journal.unreadable", err.Error())
+		writeError(w, http.StatusInternalServerError, "journal.unreadable", i18n.ErrText(langOf(r), err))
 		return
 	}
 	writeJSON(w, http.StatusOK, h)
@@ -250,17 +256,17 @@ func (s *Server) planSwap(w http.ResponseWriter, r *http.Request) {
 	switch req.Action {
 	case swap.ActionApply, swap.ActionResize, swap.ActionRemove:
 	default:
-		writeError(w, http.StatusBadRequest, "request.invalid", fmt.Sprintf("action: ожидается apply, resize или remove, получено %q", req.Action))
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "api.err.action", string(req.Action)))
 		return
 	}
 	switch swap.ExistingMode(req.Existing) {
 	case "", swap.ExistingKeep, swap.ExistingReplace:
 	default:
-		writeError(w, http.StatusBadRequest, "request.invalid", fmt.Sprintf("existing: ожидается keep или replace, получено %q", req.Existing))
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "api.err.existing", "existing", req.Existing))
 		return
 	}
 	o := swap.Options{Action: req.Action, Size: uint64(req.Size), Existing: swap.ExistingMode(req.Existing),
-		DeleteOld: req.DeleteOld, Path: req.Path, Force: req.Force, Orphan: req.Orphan}
+		DeleteOld: req.DeleteOld, Path: req.Path, Force: req.Force, Orphan: req.Orphan, Lang: langOf(r)}
 	writeJSON(w, http.StatusOK, s.Core.SwapPlan(r.Context(), o))
 }
 
@@ -271,9 +277,10 @@ func (s *Server) planProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	pr, err := req.request()
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "request.invalid", err.Error())
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.ErrText(langOf(r), err))
 		return
 	}
+	pr.Lang = langOf(r)
 	writeJSON(w, http.StatusOK, s.Core.ProfilePlan(r.Context(), pr))
 }
 
@@ -285,7 +292,7 @@ func (req ProfilePlanRequest) request() (profile.ProfileRequest, error) {
 	sort.Strings(pairs)
 	set, err := profile.ParseSet(pairs)
 	if err != nil {
-		return profile.ProfileRequest{}, errors.New("set: " + err.Error())
+		return profile.ProfileRequest{}, i18n.Errorf("api.err.set", err)
 	}
 	return profile.ProfileRequest{Name: req.Name, Set: set, Force: req.Force, Experimental: req.Experimental}, nil
 }
@@ -300,7 +307,7 @@ func (s *Server) planSetup(w http.ResponseWriter, r *http.Request) {
 		switch swap.ExistingMode(sw.Existing) {
 		case "", swap.ExistingKeep, swap.ExistingReplace:
 		default:
-			writeError(w, http.StatusBadRequest, "request.invalid", fmt.Sprintf("swap.existing: ожидается keep или replace, получено %q", sw.Existing))
+			writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "api.err.existing", "swap.existing", sw.Existing))
 			return
 		}
 		sr.Swap = &swap.Options{Size: uint64(sw.Size), Existing: swap.ExistingMode(sw.Existing), DeleteOld: sw.DeleteOld, Path: sw.Path, Force: sw.Force}
@@ -308,20 +315,20 @@ func (s *Server) planSetup(w http.ResponseWriter, r *http.Request) {
 	if req.Profile != nil {
 		pr, err := req.Profile.request()
 		if err != nil {
-			writeError(w, http.StatusBadRequest, "request.invalid", "profile."+err.Error())
+			writeError(w, http.StatusBadRequest, "request.invalid", "profile."+i18n.ErrText(langOf(r), err))
 			return
 		}
 		sr.Profile = &pr
 	}
-	writeJSON(w, http.StatusOK, s.Core.SetupPlan(r.Context(), sr))
+	writeJSON(w, http.StatusOK, s.Core.SetupPlan(r.Context(), sr, langOf(r)))
 }
 
 func (s *Server) recommendation(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Core.Recommend(r.Context(), r.URL.Query().Get("path")))
+	writeJSON(w, http.StatusOK, s.Core.Recommend(r.Context(), r.URL.Query().Get("path"), langOf(r)))
 }
 
 func (s *Server) profiles(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.Core.Profiles(r.Context()))
+	writeJSON(w, http.StatusOK, s.Core.Profiles(r.Context(), langOf(r)))
 }
 
 func (s *Server) planProfileReset(w http.ResponseWriter, r *http.Request) {
@@ -329,7 +336,7 @@ func (s *Server) planProfileReset(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Core.ProfileResetPlan(r.Context()))
+	writeJSON(w, http.StatusOK, s.Core.ProfileResetPlan(r.Context(), langOf(r)))
 }
 
 func (s *Server) planRollback(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +344,7 @@ func (s *Server) planRollback(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	o := swap.Options{Action: plan.ActionRollback, Force: req.Force}
+	o := swap.Options{Action: plan.ActionRollback, Force: req.Force, Lang: langOf(r)}
 	writeJSON(w, http.StatusOK, s.Core.SwapPlan(r.Context(), o))
 }
 
@@ -364,14 +371,14 @@ func (s *Server) apply(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.PlanID == "" {
-		writeError(w, http.StatusBadRequest, "request.invalid", "plan_id: обязательное поле (POST /v1/plan/...)")
+		writeError(w, http.StatusBadRequest, "request.invalid", i18n.T(langOf(r), "api.err.plan_id"))
 		return
 	}
 	p, _ := PeerFrom(r.Context())
 	who := core.DaemonRequester(p.UID, s.WebUID, s.LookupUser)
-	op, res := s.Core.Start(req.PlanID, core.StartOptions{ConfirmExperimental: req.ConfirmExperimental, RequestedBy: who})
+	op, res := s.Core.Start(req.PlanID, core.StartOptions{ConfirmExperimental: req.ConfirmExperimental, RequestedBy: who, Lang: langOf(r)})
 	if op != nil {
-		s.Log.Info("операция запущена", "event", EventOperationStarted, "user", who.User, "via", who.Via, "id", op.ID, "plan_id", req.PlanID, "command", op.Command, "uid", p.UID, "pid", p.PID)
+		s.Log.Info("operation started", "event", EventOperationStarted, "user", who.User, "via", who.Via, "id", op.ID, "plan_id", req.PlanID, "command", op.Command, "uid", p.UID, "pid", p.PID)
 		self := "/v1/operations/" + op.ID
 		writeJSON(w, http.StatusAccepted, ApplyAccepted{OperationID: op.ID, PlanID: req.PlanID, Status: string(core.StatusRunning),
 			Self: self, Events: self + "/events"})
@@ -395,7 +402,7 @@ func (s *Server) apply(w http.ResponseWriter, r *http.Request) {
 func (s *Server) lookupOp(w http.ResponseWriter, r *http.Request) (*core.Operation, bool) {
 	op, err := s.Core.Operation(r.PathValue("id"))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "op.not_found", "операция "+strconv.Quote(r.PathValue("id"))+" не найдена (демон помнит только запущенные им операции; история — GET /v1/history)")
+		writeError(w, http.StatusNotFound, "op.not_found", i18n.T(langOf(r), "api.err.op_not_found", r.PathValue("id")))
 		return nil, false
 	}
 	return op, true

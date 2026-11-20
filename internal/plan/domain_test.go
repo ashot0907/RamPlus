@@ -1,6 +1,8 @@
 package plan
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"testing"
 	"time"
 )
@@ -20,8 +22,8 @@ func TestHumanAge(t *testing.T) {
 		21 * 24 * time.Hour: "21 день назад",
 	}
 	for d, want := range tests {
-		if got := HumanAge(d); got != want {
-			t.Errorf("HumanAge(%s) = %q, want %q", d, got, want)
+		if got := HumanAge(i18n.RU, d); got != want {
+			t.Errorf("HumanAge(i18n.RU, %s) = %q, want %q", d, got, want)
 		}
 	}
 }
@@ -30,7 +32,7 @@ func TestHumanDate(t *testing.T) {
 	old := time.Local
 	time.Local = time.UTC
 	defer func() { time.Local = old }()
-	if got := HumanDate(time.Date(2026, 11, 17, 14, 3, 0, 0, time.UTC)); got != "17 ноября 14:03" {
+	if got := HumanDate(i18n.RU, time.Date(2026, 11, 17, 14, 3, 0, 0, time.UTC)); got != "17 ноября 14:03" {
 		t.Errorf("got %q", got)
 	}
 }

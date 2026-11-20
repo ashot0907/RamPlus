@@ -46,7 +46,7 @@ type PeerCred struct {
 func (pc PeerCred) PeerOf(c net.Conn) (Peer, error) {
 	uc, ok := c.(*net.UnixConn)
 	if !ok {
-		return Peer{}, fmt.Errorf("не unix-сокет: %T", c)
+		return Peer{}, fmt.Errorf("not a unix socket: %T", c)
 	}
 	raw, err := uc.SyscallConn()
 	if err != nil {
@@ -101,7 +101,7 @@ func ParseStatusGroups(r io.Reader) ([]uint32, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	return nil, fmt.Errorf("%w: status: нет строки Groups", detect.ErrParse)
+	return nil, fmt.Errorf("%w: status: no Groups line", detect.ErrParse)
 }
 
 // Access — какой доступ нужен эндпоинту.
@@ -156,7 +156,7 @@ func withPeer(ctx context.Context, p Peer, err error) context.Context {
 func PeerFrom(ctx context.Context) (Peer, error) {
 	pi, ok := ctx.Value(peerKey{}).(peerInfo)
 	if !ok {
-		return Peer{}, errors.New("неизвестный клиент")
+		return Peer{}, errors.New("unknown client")
 	}
 	return pi.peer, pi.err
 }

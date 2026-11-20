@@ -1,9 +1,10 @@
 package plan
 
 import (
-	"fmt"
 	"sync"
 	"time"
+
+	"github.com/ashot0907/ramplus/internal/i18n"
 )
 
 // Домены операций: что меняет операция (для истории, rollback и веба).
@@ -15,16 +16,21 @@ const (
 )
 
 // DomainNoun — что меняет домен, для человека («а не изменение swap»).
-var DomainNoun = map[string]string{
-	DomainSwap:    "изменение swap",
-	DomainProfile: "настройка профиля",
-	DomainSetup:   "настройка памяти (swap и профиль)",
-}
+func DomainNoun(l i18n.Lang, domain string) string { return i18n.T(l, "domain."+domain) }
 
-// ActionInfo — домен операции и её название для человека.
+// ActionInfo — домен операции. Название для человека — сообщение каталога
+// "action.<операция>" (ActionTitle).
 type ActionInfo struct {
 	Domain string
-	Title  string // «создание swap», «сброс профиля»
+}
+
+// ActionTitle — название операции для человека («создание swap»);
+// неизвестная — сам код.
+func ActionTitle(l i18n.Lang, a Action) string {
+	if i18n.Has("action." + string(a)) {
+		return i18n.T(l, "action."+string(a))
+	}
+	return string(a)
 }
 
 var (
@@ -39,15 +45,11 @@ func RegisterAction(a Action, info ActionInfo) {
 	actions[a] = info
 }
 
-// InfoOf — домен и название операции (неизвестная — пустой домен,
-// название — сам код операции).
+// InfoOf — домен операции (неизвестная — пустой домен).
 func InfoOf(a Action) ActionInfo {
 	actionsMu.RLock()
 	defer actionsMu.RUnlock()
-	if i, ok := actions[a]; ok {
-		return i
-	}
-	return ActionInfo{Title: string(a)}
+	return actions[a]
 }
 
 // RollbackView — что отменяет план rollback (для JSON/веба).
@@ -60,45 +62,24 @@ type RollbackView struct {
 	AgeSeconds  int64     `json:"age_seconds"`
 }
 
-var monthsGenitive = [...]string{"января", "февраля", "марта", "апреля", "мая", "июня",
-	"июля", "августа", "сентября", "октября", "ноября", "декабря"}
-
-// HumanDate — «17 ноября 14:03» (в местном времени).
-func HumanDate(t time.Time) string {
+// HumanDate — «17 ноября 14:03» / «November 17 14:03» (в местном времени).
+func HumanDate(l i18n.Lang, t time.Time) string {
 	t = t.Local()
-	return fmt.Sprintf("%d %s %s", t.Day(), monthsGenitive[t.Month()-1], t.Format("15:04"))
+	return i18n.T(l, "date.day_month_time", t.Day(), i18n.T(l, "date.month."+t.Format("01")), t.Format("15:04"))
 }
 
 // HumanAge — «только что», «5 минут назад», «3 часа назад», «2 дня назад».
-func HumanAge(d time.Duration) string {
+func HumanAge(l i18n.Lang, d time.Duration) string {
 	switch {
 	case d < time.Minute:
-		return "только что"
+		return i18n.T(l, "age.now")
 	case d < time.Hour:
-		n := int(d / time.Minute)
-		return fmt.Sprintf("%d %s назад", n, plural(n, "минуту", "минуты", "минут"))
+		return i18n.Plural(l, int(d/time.Minute), "age.minutes")
 	case d < 48*time.Hour:
-		n := int(d / time.Hour)
-		return fmt.Sprintf("%d %s назад", n, plural(n, "час", "часа", "часов"))
+		return i18n.Plural(l, int(d/time.Hour), "age.hours")
 	default:
-		n := int(d / (24 * time.Hour))
-		return fmt.Sprintf("%d %s назад", n, plural(n, "день", "дня", "дней"))
+		return i18n.Plural(l, int(d/(24*time.Hour)), "age.days")
 	}
-}
-
-// plural — русская форма числительного: 1 час, 2 часа, 5 часов, 21 час.
-func plural(n int, one, few, many string) string {
-	n %= 100
-	if n >= 11 && n <= 14 {
-		return many
-	}
-	switch n % 10 {
-	case 1:
-		return one
-	case 2, 3, 4:
-		return few
-	}
-	return many
 }
 
 // ChangeView — что меняет операция: размер swap RamPlus и профиль до и
@@ -111,3 +92,21 @@ type ChangeView struct {
 	// Target — rollback: что отменяется.
 	Target *ChangeView `json:"target,omitempty"`
 }
+
+// ActionText — название операции (переводится при выводе).
+func ActionText(a Action) i18n.Text {
+	return i18n.Func(func(l i18n.Lang) string { return ActionTitle(l, a) })
+}
+
+// DateText — HumanDate на языке вывода.
+func DateText(t time.Time) i18n.Text {
+	return i18n.Func(func(l i18n.Lang) string { return HumanDate(l, t) })
+}
+
+// AgeText — HumanAge на языке вывода.
+func AgeText(d time.Duration) i18n.Text {
+	return i18n.Func(func(l i18n.Lang) string { return HumanAge(l, d) })
+}
+
+// DomainText — DomainNoun на языке вывода.
+func DomainText(domain string) i18n.Text { return i18n.Msg("domain." + domain) }

@@ -1,7 +1,8 @@
 package swap
 
 import (
-	"fmt"
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"strings"
 
 	"github.com/ashot0907/ramplus/internal/detect"
@@ -70,13 +71,13 @@ func DisableFstabLine(content, line string) (string, error) {
 	for i, l := range lines {
 		if l == line {
 			if idx >= 0 {
-				return "", fmt.Errorf("строка fstab встречается несколько раз: %q", line)
+				return "", i18n.Errorf("fstab.err.duplicate", line)
 			}
 			idx = i
 		}
 	}
 	if idx < 0 {
-		return "", fmt.Errorf("строка не найдена в fstab: %q", line)
+		return "", i18n.Errorf("fstab.err.not_found", line)
 	}
 	lines[idx] = fstabDisabledBy + line
 	return strings.Join(lines, "\n"), nil
@@ -93,5 +94,5 @@ func EnableFstabLine(content, line string) (string, error) {
 			return strings.Join(lines, "\n"), nil
 		}
 	}
-	return "", fmt.Errorf("в fstab нет строки, отключённой RamPlus: %q", line)
+	return "", i18n.Errorf("fstab.err.not_disabled", line)
 }

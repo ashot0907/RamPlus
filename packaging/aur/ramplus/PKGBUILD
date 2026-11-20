@@ -1,0 +1,67 @@
+# Maintainer: RamPlus maintainers <ashot0907@users.noreply.github.com>
+#
+# Built from source: the web UI (npm) is embedded into ramplus-web, then
+# the three Go binaries. Update: set _ver and the source sha256 (see
+# ../README.md).
+pkgname=ramplus
+# Release tag without "v". Prereleases are fine: "-" is dropped for pkgver
+# (0.2.0-alpha.3 → 0.2.0alpha.3, which pacman sorts before 0.2.0).
+_ver=0.2.0-alpha.3
+pkgver=${_ver//-/}
+pkgrel=1
+pkgdesc="Virtual memory manager: SSD swapfile, zswap, memory pressure monitoring, rollback"
+arch=('x86_64' 'aarch64')
+url="https://github.com/ashot0907/ramplus"
+license=('Apache-2.0')
+depends=('glibc' 'systemd')
+makedepends=('go' 'nodejs' 'npm')
+conflicts=('ramplus-bin')
+install=ramplus.install
+options=('!debug')
+source=("$pkgname-$_ver.tar.gz::$url/archive/refs/tags/v$_ver.tar.gz")
+sha256sums=('SKIP') # replace before publishing: sha256sum of the tag tarball
+
+prepare() {
+	cd "$pkgname-$_ver"
+	export GOPATH="$srcdir/gopath"
+	go mod download
+	cd web
+	npm ci --no-audit --no-fund --cache "$srcdir/npm-cache"
+}
+
+build() {
+	cd "$pkgname-$_ver"
+	(cd web && npm run build)
+	export GOPATH="$srcdir/gopath"
+	# Arch Go package guidelines: PIE + external linker with the system
+	# CFLAGS/LDFLAGS (full RELRO). The release tarballs (ramplus-bin) are
+	# static CGO_ENABLED=0 builds instead.
+	export CGO_CPPFLAGS="${CPPFLAGS}"
+	export CGO_CFLAGS="${CFLAGS}"
+	export CGO_CXXFLAGS="${CXXFLAGS}"
+	export CGO_LDFLAGS="${LDFLAGS}"
+	export GOFLAGS="-buildmode=pie -trimpath -mod=readonly -modcacherw"
+	for b in ramplus ramplusd ramplus-web; do
+		go build -ldflags "-linkmode=external -X main.version=$_ver" -o "build/$b" "./cmd/$b"
+	done
+}
+
+check() {
+	cd "$pkgname-$_ver"
+	export GOPATH="$srcdir/gopath"
+	go test ./...
+}
+
+package() {
+	cd "$pkgname-$_ver"
+	install -Dm755 build/ramplus build/ramplusd build/ramplus-web -t "$pkgdir/usr/bin/"
+	install -d "$pkgdir/usr/lib/systemd/system"
+	for u in ramplusd ramplus-web; do
+		sed 's|@BINDIR@|/usr/bin|g' "packaging/systemd/$u.service" >"$pkgdir/usr/lib/systemd/system/$u.service"
+		chmod 644 "$pkgdir/usr/lib/systemd/system/$u.service"
+	done
+	install -Dm644 packaging/sysusers.d/ramplus.conf "$pkgdir/usr/lib/sysusers.d/ramplus.conf"
+	install -Dm644 packaging/tmpfiles.d/ramplus.conf "$pkgdir/usr/lib/tmpfiles.d/ramplus.conf"
+	install -Dm644 README.md "$pkgdir/usr/share/doc/ramplus/README.md"
+	install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

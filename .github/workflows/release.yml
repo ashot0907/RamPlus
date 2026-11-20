@@ -1,0 +1,53 @@
+# Release on a tag v*: tests, frontend, GoReleaser (tar.gz, .deb, SHA256SUMS)
+# and the GitHub Release. Tags with -alpha/-beta/-rc become prereleases
+# (release.prerelease: auto in .goreleaser.yaml).
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history: version and changelog come from git
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: go vet and tests
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: frontend tests
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Gate is the CI "package" job on main (same lintian run before tagging);
+      # here it only re-checks the published .deb.
+      - name: lintian (Ubuntu 24.04)
+        run: make lintian

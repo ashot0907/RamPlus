@@ -1,8 +1,9 @@
 package core
 
 import (
+	"github.com/ashot0907/ramplus/internal/i18n"
+
 	"context"
-	"errors"
 	"sync"
 	"time"
 
@@ -11,10 +12,10 @@ import (
 )
 
 // ErrBusy — уже выполняется операция (в этом процессе).
-var ErrBusy = errors.New("уже выполняется другая операция — дождитесь её завершения")
+var ErrBusy = i18n.Errorf("core.busy")
 
 // ErrOpNotFound — нет операции с таким ID (в памяти этого процесса).
-var ErrOpNotFound = errors.New("операция не найдена")
+var ErrOpNotFound = i18n.Errorf("core.op_not_found")
 
 // maxKeptOps — сколько завершённых операций помнить (GET /v1/operations/{id}).
 const maxKeptOps = 32
@@ -99,6 +100,8 @@ type StartOptions struct {
 	ConfirmExperimental bool
 	// RequestedBy — кто запросил (SO_PEERCRED); в журнал с source=daemon.
 	RequestedBy *journal.Requester
+	// Lang — язык событий и ошибок операции.
+	Lang i18n.Lang
 }
 
 // opRegistry — операции процесса: одна выполняется, несколько последних
@@ -124,7 +127,7 @@ func (c *Core) Start(planID string, opts StartOptions) (*Operation, *Result) {
 	r.mu.Lock()
 	if r.busy {
 		r.mu.Unlock()
-		return nil, &Result{Status: ResultBusy, Error: ErrBusy.Error(), Events: []EventView{}}
+		return nil, &Result{Status: ResultBusy, Error: i18n.ErrText(opts.Lang, ErrBusy), Events: []EventView{}}
 	}
 	r.busy = true
 	r.running.Add(1)
@@ -147,8 +150,9 @@ func (c *Core) Start(planID string, opts StartOptions) (*Operation, *Result) {
 			c.ops.remember(op)
 			started <- op
 		},
-		Progress: func(ev journal.Event) { op.addEvent(eventView(ev)) },
+		Progress: func(ev journal.Event) { op.addEvent(eventView(ev, opts.Lang)) },
 		Origin:   journal.Origin{Source: journal.SourceDaemon, RequestedBy: opts.RequestedBy},
+		Lang:     opts.Lang,
 	}
 	done := make(chan Result, 1)
 	go func() {
@@ -180,10 +184,10 @@ func (c *Core) Start(planID string, opts StartOptions) (*Operation, *Result) {
 	}
 }
 
-func eventView(ev journal.Event) EventView {
-	v := EventView{Undo: ev.Undo, Index: ev.Index, Total: ev.Total, Step: plan.ViewOf(ev.Step)}
+func eventView(ev journal.Event, l i18n.Lang) EventView {
+	v := EventView{Undo: ev.Undo, Index: ev.Index, Total: ev.Total, Step: plan.ViewOf(ev.Step, l)}
 	if ev.Err != nil {
-		v.Error = ev.Err.Error()
+		v.Error = i18n.ErrText(l, ev.Err)
 	}
 	return v
 }
