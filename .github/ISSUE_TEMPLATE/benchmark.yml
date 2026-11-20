@@ -1,0 +1,96 @@
+name: Benchmark result
+description: Share scripts/bench.sh results from real hardware — this is how memory modes get verified
+title: "Benchmark: <CPU> / <RAM> / <SSD model>"
+labels: [benchmark]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you! Results from **real SSDs** are what turns a "preliminary" memory mode into a
+        verified one. How to run: `sudo scripts/bench.sh --i-know-this-changes-swap`
+        (details in scripts/BENCH.md). Results from virtual machines are welcome too, but please say so:
+        they are not used to choose defaults.
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU
+      placeholder: AMD Ryzen 7 5800U (8 cores)
+    validations:
+      required: true
+  - type: input
+    id: ram
+    attributes:
+      label: RAM
+      placeholder: 16 GB DDR4
+    validations:
+      required: true
+  - type: input
+    id: ssd
+    attributes:
+      label: SSD model
+      description: From `lsblk -d -o NAME,MODEL,TRAN,ROTA` — model and interface (NVMe/SATA).
+      placeholder: Samsung 980 PRO 1TB, NVMe
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution
+      placeholder: Ubuntu 24.04
+    validations:
+      required: true
+  - type: input
+    id: kernel
+    attributes:
+      label: Kernel
+      description: Output of `uname -r`.
+      placeholder: 6.8.0-49-generic
+    validations:
+      required: true
+  - type: dropdown
+    id: machine
+    attributes:
+      label: Machine type
+      options:
+        - Real hardware
+        - Virtual machine
+    validations:
+      required: true
+  - type: input
+    id: filesystem
+    attributes:
+      label: Filesystem of the swapfile
+      placeholder: ext4 on /
+  - type: input
+    id: version
+    attributes:
+      label: RamPlus version / commit
+      description: Output of `ramplus --version` or `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: bench.sh command line
+      placeholder: sudo scripts/bench.sh --i-know-this-changes-swap
+    validations:
+      required: true
+  - type: textarea
+    id: results_csv
+    attributes:
+      label: results.csv
+      description: Attach the file (drag and drop it here) or paste its content.
+    validations:
+      required: true
+  - type: textarea
+    id: summary_md
+    attributes:
+      label: summary.md
+      description: Attach the file (drag and drop it here) or paste its content.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Anything unusual — other heavy programs running, thermal throttling, the machine froze, etc.

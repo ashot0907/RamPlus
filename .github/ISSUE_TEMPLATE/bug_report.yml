@@ -1,0 +1,71 @@
+name: Bug report
+description: Something in RamPlus does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Security problems must not be reported here** — see SECURITY.md
+        (GitHub → Security → Report a vulnerability).
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. sudo ramplus setup --size 8G --profile zswap-lz4 --dry-run
+        2. …
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options:
+        - Web UI
+        - CLI
+        - Daemon API
+        - Installation / packaging
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RamPlus version
+      description: Output of `ramplus --version` (or the git commit).
+    validations:
+      required: true
+  - type: input
+    id: distro
+    attributes:
+      label: Distribution and kernel
+      placeholder: Ubuntu 24.04, kernel 6.8.0-49-generic (uname -r)
+    validations:
+      required: true
+  - type: textarea
+    id: plan
+    attributes:
+      label: Plan or error output
+      description: The plan (`--dry-run`) or the error message. `--json` output is welcome.
+      render: text
+  - type: textarea
+    id: status
+    attributes:
+      label: ramplus status --json
+      description: Optional. Remove anything you consider private (hostname).
+      render: json
+  - type: textarea
+    id: history
+    attributes:
+      label: ramplus history and logs
+      description: |
+        Optional: `ramplus history`, and for daemon/web problems
+        `journalctl -u ramplusd -u ramplus-web -n 100 --no-pager`.
+      render: text
