@@ -115,11 +115,18 @@ anything. `apt remove` refuses while RamPlus still manages swap or settings — 
 (History → Undo, or `sudo ramplus rollback`). An arm64 `.deb` is built too, but not tested on real
 hardware yet.
 
-### Arch Linux (AUR)
+### Arch Linux
+
+An AUR package is coming soon. Until then, build it from the PKGBUILD in this repository:
 
 ```sh
-yay -S ramplus-bin        # release binaries; or "ramplus" to build from source
+git clone https://github.com/ashot0907/RamPlus.git
+cd RamPlus/packaging/aur/ramplus-bin
+makepkg -si
 ```
+
+This uses the release binaries; `packaging/aur/ramplus` builds from source instead (needs `go`,
+`nodejs`, `npm`). To remove: `sudo pacman -R ramplus-bin` (or `ramplus`).
 
 ### From source
 
@@ -333,7 +340,8 @@ RAM, SSD model and distribution. Details: [scripts/BENCH.md](scripts/BENCH.md).
 - [x] CLI: status, swap management, memory modes, rollback, history
 - [x] Daemon with a Unix-socket API and group-based permissions
 - [x] Web UI with recommendations, plan dialog and one-click undo
-- [x] Release pipeline: static binaries, `.deb` package, AUR PKGBUILDs (first packaged release pending)
+- [x] Release pipeline: static binaries, `.deb` package
+- [ ] AUR package (PKGBUILDs are in `packaging/aur/`, not published yet)
 - [ ] Verified memory modes based on real-SSD benchmarks
 - [ ] Smart mode: move idle background apps to swap *before* memory runs out, and bring an app back
       when you switch to it

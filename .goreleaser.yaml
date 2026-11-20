@@ -118,7 +118,7 @@ release:
   prerelease: auto
   footer: |
     ---
-    **Install:** `sudo apt install ./ramplus_<version>_amd64.deb` (Debian/Ubuntu), `yay -S ramplus-bin` (Arch), or unpack the tar.gz — see the README.
+    **Install:** `sudo apt install ./ramplus_<version>_amd64.deb` (Debian/Ubuntu), `makepkg -si` in `packaging/aur/ramplus-bin` (Arch; AUR package coming soon), or unpack the tar.gz — see the README.
 
     **arm64:** binaries and the arm64 .deb are built but **not tested** on real arm64 hardware yet. Reports are welcome.
 
